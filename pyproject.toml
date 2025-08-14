@@ -1,0 +1,21 @@
+[project]
+name = "yasha"
+version = "0.1.0"
+description = "Yet another self-hosted agent"
+authors = [
+    { name = "Alex Margarit" }
+]
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.12"
+dependencies = [
+    "argparse>=1.4.0",
+    "asyncio>=4.0.0",
+    "fastapi>=0.116.1",
+    "flashinfer-python>=0.2.11.post3",
+    "openai>=1.90.0",
+    "pydantic>=2.11.7",
+    "ray[data,llm,serve]>=2.48.0",
+    "transformers>=4.55.0",
+    "vllm>=0.10.0",
+    "xgrammar>=0.1.21",
+]
