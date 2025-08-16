@@ -24,5 +24,7 @@ llm_config = LLMConfig(
 )
 
 # Deploy the application
-deployment = LLMServer.as_deployment(llm_config.get_serve_options(name_prefix="vLLM:")).bind(llm_config)
+serve_options = llm_config.get_serve_options(name_prefix="vLLM:")
+# serve_options["ray_actor_options"] = dict(num_cpus=3, num_gpus=1)
+deployment = LLMServer.as_deployment().options(**serve_options).bind(llm_config)
 app = LLMRouter.as_deployment().bind([deployment])

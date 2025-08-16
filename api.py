@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from src.yasha.agents.simple import SimpleAgent
 from src.yasha.agents.translator import TranslatorAgent
+from src.yasha.agents.wake_word_detector import WakeWordDetectorAgent
 
 from ray.data.llm import vLLMEngineProcessorConfig, build_llm_processor
 
@@ -20,7 +21,7 @@ class Instruct(BaseModel):
 
 app = FastAPI()
 
-@serve.deployment(num_replicas=1, name="api")
+@serve.deployment(num_replicas=1)
 @serve.ingress(app)
 class YashaAPI:
     # @staticmethod
@@ -36,21 +37,25 @@ class YashaAPI:
     # async def root(self):
     #     return StreamingResponse(self.generate_numbers(10), media_type="text/plain", status_code=200)
 
-    def __init__(self, simple_agent = None, translator_agent = None):
+    def __init__(self, simple_agent = None, translator_agent = None, wake_word_detector_agent = None):
         self.simple_agent = simple_agent
         self.translator_agent = translator_agent
+        self.wake_word_detector_agent = wake_word_detector_agent
 
     @app.post("/instruct")
     async def instruct(self, instruct: Instruct):
+        response = ""
         # response = await self.simple_agent(self.processor)
-        response = await self.translator_agent.remote(instruct.input)
+        # response = await self.translator_agent.remote(instruct.input)
+        # await self.wake_word_detector_agent.remote()
         return response
 
 
 app = YashaAPI.bind(
     # simple_agent=SimpleAgent.bind(),
     translator_agent=TranslatorAgent.bind(),
+    # wake_word_detector_agent=WakeWordDetectorAgent.bind()
 )
-# serve.run(app, route_prefix="/v1", blocking=True)
+serve.run(app, route_prefix="/api", name="api", blocking=True)
 
 
