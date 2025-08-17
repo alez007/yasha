@@ -14,7 +14,9 @@ from src.yasha.agents.wake_word_detector import WakeWordDetectorAgent
 
 from ray.data.llm import vLLMEngineProcessorConfig, build_llm_processor
 
-# ray.init(num_cpus=6, num_gpus=0, dashboard_host="0.0.0.0")
+# ray.init(
+#     address="ray://0.0.0.0:10001"
+# )
 
 class Instruct(BaseModel):
     input: str
@@ -37,10 +39,10 @@ class YashaAPI:
     # async def root(self):
     #     return StreamingResponse(self.generate_numbers(10), media_type="text/plain", status_code=200)
 
-    def __init__(self, simple_agent = None, translator_agent = None, wake_word_detector_agent = None):
-        self.simple_agent = simple_agent
-        self.translator_agent = translator_agent
-        self.wake_word_detector_agent = wake_word_detector_agent
+    # def __init__(self, simple_agent = None, translator_agent = None, wake_word_detector_agent = None):
+        # self.simple_agent = simple_agent
+        # self.translator_agent = translator_agent
+        # self.wake_word_detector_agent = wake_word_detector_agent
 
     @app.post("/instruct")
     async def instruct(self, instruct: Instruct):
@@ -53,9 +55,10 @@ class YashaAPI:
 
 app = YashaAPI.bind(
     # simple_agent=SimpleAgent.bind(),
-    translator_agent=TranslatorAgent.bind(),
+    # translator_agent=TranslatorAgent.bind(),
     # wake_word_detector_agent=WakeWordDetectorAgent.bind()
 )
+
 serve.run(app, route_prefix="/api", name="api", blocking=True)
 
 

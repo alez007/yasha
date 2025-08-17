@@ -1,0 +1,7 @@
+ARG PYTHON_VERSION
+
+FROM python:${PYTHON_VERSION}-slim
+
+ARG RAY_VERSION
+
+RUN pip install -U "ray[default]==${RAY_VERSION}"

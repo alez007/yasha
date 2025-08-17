@@ -1,0 +1,28 @@
+ARG PYTHON_VERSION
+
+FROM python:${PYTHON_VERSION}-slim
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+ENV UV_LINK_MODE=copy
+
+# Change the working directory to the `app` directory
+WORKDIR /yasha
+
+# Install dependencies
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --locked --no-install-project
+
+# Copy the project into the image
+ADD . /yasha
+
+# Sync the project
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked
+
+ENV PATH="/yasha/.venv/bin:$PATH"
+
+# CMD uv run --env-file .env --cache-dir=/root/.cache/uv -- serve run --route-prefix=/api --name=api --address=ray://ray-head:${RAY_HEAD_PORT} api:app
+CMD uv run --env-file .env --cache-dir=/root/.cache/uv api.py
