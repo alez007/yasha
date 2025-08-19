@@ -1,7 +1,5 @@
-ARG PYTHON_VERSION
+FROM yasha.base
 
-FROM python:${PYTHON_VERSION}-slim
+WORKDIR /yasha
 
-ARG RAY_VERSION
-
-RUN pip install -U "ray[default]==${RAY_VERSION}"
+ENTRYPOINT ./.venv/bin/ray start --head --temp-dir=/tmp/ray --dashboard-port=${RAY_DASHBOARD_PORT} --port=${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --block

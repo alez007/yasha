@@ -2,4 +2,4 @@ FROM yasha.base
 
 WORKDIR /yasha
 
-ENTRYPOINT uv run --env-file .env -- serve run --route-prefix=/api --name=api --address=ray://ray-head:${RAY_HEAD_PORT} api:app
+ENTRYPOINT uv run --env-file .env --directory ./ -- serve run --route-prefix=/api --name=api --address=ray://ray-head:${RAY_HEAD_PORT} --runtime-env-json='{"working_dir": "./"}' api:app

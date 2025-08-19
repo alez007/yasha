@@ -23,6 +23,3 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked
 
 ENV PATH="/yasha/.venv/bin:$PATH"
-
-# CMD uv run --env-file .env --cache-dir=/root/.cache/uv -- serve run --route-prefix=/api --name=api --address=ray://ray-head:${RAY_HEAD_PORT} api:app
-CMD uv run --env-file .env --cache-dir=/root/.cache/uv api.py
