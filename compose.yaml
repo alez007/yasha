@@ -1,56 +1,69 @@
 services:
   ray-head:
-    # build:
-    #   context: ./
-    #   dockerfile: ./docker/Dockerfile.ray
     image: yasha.base
     depends_on:
       - yasha-base
     shm_size: ${RAY_OBJECT_STORE_SHM_SIZE}
     working_dir: /yasha
-    command: ./.venv/bin/ray start --head --dashboard-port=${RAY_DASHBOARD_PORT} --port=${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --block
+    command: ./.venv/bin/ray start --head --dashboard-port=${RAY_DASHBOARD_PORT} --port=${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --node-ip-address=0.0.0.0 --block
     environment:
-      RAY_DASHBOARD_PORT: ${RAY_DASHBOARD_PORT}
-      RAY_REDIS_PORT: ${RAY_REDIS_PORT}
+      HF_TOKEN: ${HF_TOKEN}
     ports:
       - "${RAY_REDIS_PORT}:${RAY_REDIS_PORT}"
       - "${RAY_DASHBOARD_PORT}:${RAY_DASHBOARD_PORT}"
       - "${RAY_HEAD_PORT}:${RAY_HEAD_PORT}"
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "./.venv/bin/ray", "status", "--address=localhost:${RAY_REDIS_PORT}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - yasha
+  
+  ray-serve:
+    image: yasha.base
+    depends_on: 
+      ray-head:
+        condition: service_healthy
+    working_dir: /yasha
+    command: ["/bin/sh", "-c", "./.venv/bin/serve start --http-host 0.0.0.0 --http-port 8000 --address=ray://ray-head:${RAY_HEAD_PORT} && sleep 120"]
+    healthcheck:
+      test: ["CMD", "./.venv/bin/serve", "status", "--address=http://ray-head:${RAY_DASHBOARD_PORT}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - yasha
 
-  ray-worker-gpu:
-    image: yasha.base
-    depends_on: 
-      - ray-head
-    working_dir: /yasha
-    command: ./.venv/bin/ray start --address=ray-head:${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=3 --block
-    shm_size: ${RAY_OBJECT_STORE_SHM_SIZE}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    networks:
-      - yasha
+  # ray-worker-gpu:
+  #   image: yasha.base
+  #   depends_on: 
+  #     ray-head:
+  #       condition: service_healthy
+  #   working_dir: /yasha
+  #   command: ./.venv/bin/ray start --address=ray-head:${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --node-ip-address=0.0.0.0 --num-cpus=3 --block
+  #   shm_size: ${RAY_OBJECT_STORE_SHM_SIZE}
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  #   networks:
+  #     - yasha
 
-  ray-worker-cpu:
-    image: yasha.base
-    depends_on: 
-      - ray-head
-    working_dir: /yasha
-    command: ./.venv/bin/ray start --address=ray-head:${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=${RAY_WORKER_CPU_NUM} --block
-    shm_size: ${RAY_OBJECT_STORE_SHM_SIZE}
-    deploy:
-      mode: replicated
-      replicas: ${RAY_TOTAL_WORKERS} 
-      resources:
-        limits:
-          cpus: ${RAY_WORKER_CPU_NUM}
-    networks:
-      - yasha
+  # ray-worker-cpu:
+  #   image: yasha.base
+  #   depends_on: 
+  #     ray-head:
+  #       condition: service_healthy
+  #   working_dir: /yasha
+  #   command: ./.venv/bin/ray start --address=ray-head:${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --node-ip-address=0.0.0.0 --num-cpus=${RAY_WORKER_CPU_NUM} --block
+  #   shm_size: ${RAY_OBJECT_STORE_SHM_SIZE}
+  #   networks:
+  #     - yasha
 
   yasha-base:
     build:
@@ -64,18 +77,34 @@ services:
     networks:
       - yasha
 
-  yasha-api:
-    build:
-      context: ./
-      dockerfile: ./docker/Dockerfile.api
-    depends_on:
-      - ray-worker-cpu
-    ports:
-      - "8000:8000"
-    environment:
-      RAY_HEAD_PORT: ${RAY_HEAD_PORT}
-    networks:
-      - yasha
+  # yasha-api:
+  #   build:
+  #     context: ./
+  #     dockerfile: ./docker/Dockerfile.api
+  #   depends_on: 
+  #     ray-serve:
+  #       condition: service_healthy
+  #   environment:
+  #     RAY_HEAD_PORT: ${RAY_HEAD_PORT}
+  #     RAY_DASHBOARD_PORT: ${RAY_DASHBOARD_PORT}
+  #   networks:
+  #     - yasha
+
+  # yasha-instruct:
+  #   build:
+  #     context: ./
+  #     dockerfile: ./docker/Dockerfile.instruct
+  #   depends_on:
+  #     - ray-worker-cpu
+  #   ports:
+  #     - "8001:8000"
+  #   environment:
+  #     RAY_HEAD_PORT: ${RAY_HEAD_PORT}
+  #   networks:
+  #     - yasha
   
 networks:
   yasha:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.host_binding_ipv4: "0.0.0.0"

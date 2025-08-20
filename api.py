@@ -1,3 +1,4 @@
+import os
 import asyncio
 import time
 from typing import AsyncGenerator
@@ -13,6 +14,10 @@ from src.yasha.agents.translator import TranslatorAgent
 from src.yasha.agents.wake_word_detector import WakeWordDetectorAgent
 
 from ray.data.llm import vLLMEngineProcessorConfig, build_llm_processor
+
+ray.init(
+    address="ray://0.0.0.0:10001",
+)
 
 class Instruct(BaseModel):
     input: str
@@ -47,6 +52,10 @@ class YashaAPI:
         # await self.wake_word_detector_agent.remote()
         return response
 
+    @app.get("/healthy")
+    async def healthy(self):
+        return os.getenv('HF_TOKEN')
+
 
 app = YashaAPI.bind(
     # simple_agent=SimpleAgent.bind(),
@@ -54,6 +63,7 @@ app = YashaAPI.bind(
     # wake_word_detector_agent=WakeWordDetectorAgent.bind()
 )
 
-# serve.run(app, route_prefix="/api", name="api", blocking=True)
+
+serve.run(app, route_prefix="/api", name="api")
 
 
