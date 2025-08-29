@@ -6,7 +6,12 @@ from ray import serve
 
 from transformers import pipeline
 
-@serve.deployment(num_replicas=1)
+@serve.deployment(
+    num_replicas=1,
+    ray_actor_options=dict(
+        num_cpus=0.3
+    )
+)
 class TranslatorAgent:
     def __init__(self):
         self.model = pipeline("translation_en_to_fr", model="t5-small")

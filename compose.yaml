@@ -5,9 +5,11 @@ services:
       - yasha-base
     shm_size: ${RAY_OBJECT_STORE_SHM_SIZE}
     working_dir: /yasha
-    command: ./.venv/bin/ray start --head --dashboard-port=${RAY_DASHBOARD_PORT} --port=${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --node-ip-address=0.0.0.0 --block
+    command: ./.venv/bin/ray start --head --dashboard-port=${RAY_DASHBOARD_PORT} --port=${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=5 --num-gpus=1 --block
     environment:
       HF_TOKEN: ${HF_TOKEN}
+      VLLM_LOGGING_LEVEL: "DEBUG"
+      VLLM_USE_V1: 1
     ports:
       - "${RAY_REDIS_PORT}:${RAY_REDIS_PORT}"
       - "${RAY_DASHBOARD_PORT}:${RAY_DASHBOARD_PORT}"
@@ -20,6 +22,13 @@ services:
       retries: 5
     networks:
       - yasha
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
   
   ray-serve:
     image: yasha.base
@@ -42,8 +51,12 @@ services:
   #     ray-head:
   #       condition: service_healthy
   #   working_dir: /yasha
-  #   command: ./.venv/bin/ray start --address=ray-head:${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --node-ip-address=0.0.0.0 --num-cpus=3 --block
+  #   command: ./.venv/bin/ray start --address=ray-head:${RAY_REDIS_PORT} --num-cpus=5 --num-gpus=1 --block
   #   shm_size: ${RAY_OBJECT_STORE_SHM_SIZE}
+  #   environment:
+  #     HF_TOKEN: ${HF_TOKEN}
+  #     VLLM_LOGGING_LEVEL: "DEBUG"
+  #     VLLM_USE_V1: 1
   #   deploy:
   #     resources:
   #       reservations:
@@ -60,7 +73,7 @@ services:
   #     ray-head:
   #       condition: service_healthy
   #   working_dir: /yasha
-  #   command: ./.venv/bin/ray start --address=ray-head:${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --node-ip-address=0.0.0.0 --num-cpus=${RAY_WORKER_CPU_NUM} --block
+  #   command: ./.venv/bin/ray start --address=ray-head:${RAY_REDIS_PORT} --num-cpus=3 --num-gpus=0 --block
   #   shm_size: ${RAY_OBJECT_STORE_SHM_SIZE}
   #   networks:
   #     - yasha
@@ -78,9 +91,9 @@ services:
       - yasha
 
   # yasha-api:
-  #   build:
-  #     context: ./
-  #     dockerfile: ./docker/Dockerfile.api
+  #   image: yasha.base
+  #   working_dir: /yasha
+  #   command: uv run api.py
   #   depends_on: 
   #     ray-serve:
   #       condition: service_healthy

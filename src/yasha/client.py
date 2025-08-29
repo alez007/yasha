@@ -13,25 +13,25 @@ import requests
 #         break
 
 
-r = requests.post("http://127.0.0.1:8000/app1/instruct", json={"input": "how are you today ?"})
+# r = requests.post("http://127.0.0.1:8000/app1/instruct", json={"input": "how are you today ?"})
 # print(r.json())
 
-# from openai import OpenAI
+from openai import OpenAI
 
-# # Initialize client
-# client = OpenAI(base_url="http://127.0.0.1:8000/app2/v1", api_key="fake-key")
+# Initialize client
+client = OpenAI(base_url="http://192.168.2.27:8000/api/v1", api_key="fake-key")
 
-# # Basic completion
-# response = client.chat.completions.create(
-#     model="gemma-3-1b-it",
-#     messages=[{"role": "user", "content": "thanks"}],
-#     stream=True
-# )
+# Basic completion
+response = client.chat.completions.create(
+    model="unsloth/Llama-3.2-3B-Instruct-bnb-4bit",
+    messages=[{"role": "user", "content": "capital of france is"}],
+    stream=True
+)
 
-# for chunk in response:
-#     sys.stdout.write(chunk.choices[0].delta.content)
-#     # print(chunk)
-#     # print(chunk.choices[0].delta.content)
-#     # print("****************")
+for chunk in response:
+    sys.stdout.write(chunk.choices[0].delta.content)
+    # print(chunk)
+    # print(chunk.choices[0].delta.content)
+    # print("****************")
 
 
