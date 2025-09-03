@@ -15,7 +15,16 @@ dependencies = [
     "flashinfer-python>=0.2.14.post1",
     "httpx>=0.28.1",
     "pydantic==2.11.7",
+    "pydantic-yaml>=1.6.0",
     "ray[data,default,serve-grpc]>=2.48.0",
     "transformers==4.53.2",
     "vllm==0.10.0",
 ]
+
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "yasha"
+module-root = ""

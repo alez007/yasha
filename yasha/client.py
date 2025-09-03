@@ -19,12 +19,14 @@ import requests
 from openai import OpenAI
 
 # Initialize client
-client = OpenAI(base_url="http://192.168.2.27:8000/api/v1", api_key="fake-key")
+client = OpenAI(base_url="http://192.168.2.27:8000/app1/v1", api_key="fake-key")
 
 # Basic completion
+# for i in range(10):
 response = client.chat.completions.create(
-    model="unsloth/Llama-3.2-3B-Instruct-bnb-4bit",
-    messages=[{"role": "user", "content": "capital of france is"}],
+    model="Llama-3.2-3B-Instruct-bnb-4bit",
+    messages=[
+        {"role": "user", "content": "how about a good joke?"}],
     stream=True
 )
 

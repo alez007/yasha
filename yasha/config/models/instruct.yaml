@@ -1,0 +1,7 @@
+name: "Llama-3.2-3B-Instruct-bnb-4bit"
+vllm_engine_kwargs:
+  model: "unsloth/Llama-3.2-3B-Instruct-bnb-4bit"
+  tensor_parallel_size: 1
+  max_model_len: 2000
+  
+

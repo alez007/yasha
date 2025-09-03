@@ -1,28 +1,34 @@
 import os
-import asyncio
-import time
-from typing import AsyncGenerator
+from typing import Dict, Optional, List, Union
+import logging
 import ray
-import requests
-from fastapi import FastAPI
+
+from fastapi import FastAPI, Depends
 from ray import serve
-from fastapi.responses import StreamingResponse
+from time import sleep
+from ray.serve.handle import DeploymentHandle
+import asyncio
+from pydantic_yaml import parse_yaml_raw_as
 from pydantic import BaseModel
 
-from src.yasha.agents.main import MainAgentChat
-from src.yasha.agents.translator import TranslatorAgent
-from src.yasha.agents.wake_word_detector import WakeWordDetectorAgent
+from yasha.config.infer_config import YashaModelConfig
+from yasha.infer.vllm.vllm_infer import VllmInfer
 
-from ray.data.llm import vLLMEngineProcessorConfig, build_llm_processor
-
-# Import placement group APIs.
-from ray.util.placement_group import (
-    placement_group,
-    placement_group_table,
-    remove_placement_group,
+from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
+from vllm.entrypoints.openai.protocol import (
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ErrorResponse
 )
-from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
-from ray.llm._internal.serve.configs.openai_api_models import ChatCompletionRequest
+from vllm.entrypoints.openai.serving_models import (BaseModelPath,
+                                                    LoRAModulePath,
+                                                    OpenAIServingModels)
+
+from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from http import HTTPStatus
+
+logger = logging.getLogger(__name__)
 
 if ray.is_initialized():
     ray.shutdown()
@@ -31,73 +37,80 @@ ray.init(
     address="ray://0.0.0.0:10001"
 )
 
-class Instruct(BaseModel):
-    input: str
-
 app = FastAPI()
 
-# pg = placement_group([{"CPU": 2, "GPU": 1}])
+def yasha_app():
+    _config_file = os.path.dirname(os.path.abspath(__file__)) + "/yasha/config/models/instruct.yaml"
+    _instruct_model_config = {}
+    _yml_conf: YashaModelConfig = None
+    with open(_config_file, "r") as f:
+        _yml_conf = parse_yaml_raw_as(YashaModelConfig, f)
 
-# try:
-#     ray.get(pg.ready(), timeout=10)
-# except Exception as e:
-#     print(
-#         "Cannot create a placement group for API actor"
-#     )
-#     print(e)
+    assert _yml_conf != None
 
-@serve.deployment(
-    num_replicas=1,
-    # placement_group_bundles=[{"CPU": 2, "GPU": 1}]
-)
-@serve.ingress(app)
+    logger.info("Init yasha app with config: %s", _yml_conf)
+
+    deployment = serve.deployment(serve.ingress(app)(YashaAPI), name="yasha api")
+    
+    return deployment.options(
+        num_replicas=1,
+        ray_actor_options=dict(
+            num_cpus=3,
+            num_gpus=1,
+        )
+    ).bind(_yml_conf)
+
 class YashaAPI:
-    # @staticmethod
-    # async def generate_numbers(max_num: int) -> AsyncGenerator[str, None]:
-    #     try:
-    #         for i in range(max_num):
-    #             yield str(i)
-    #             await asyncio.sleep(0.1)
-    #     except asyncio.CancelledError:
-    #         print("Cancelled! Exiting.")
-    #
-    # @app.get("/")
-    # async def root(self):
-    #     return StreamingResponse(self.generate_numbers(10), media_type="text/plain", status_code=200)
+    def __init__(self, yml_model_config: YashaModelConfig):
+        logger = logging.getLogger("ray.serve")
 
-    def __init__(self, main_agent = None, translator_agent = None, wake_word_detector_agent = None):
-        self.main_agent = main_agent
-        self.translator_agent = translator_agent
-        # self.wake_word_detector_agent = wake_word_detector_agent
+        self.yml_model_config = yml_model_config
+        self.vllm = VllmInfer(yml_model_config)
+        
+        asyncio.ensure_future(self.start())
 
-    @app.post("/instruct")
-    async def instruct(self, instruct: Instruct):
-        # response = await self.simple_agent.remote()
-        response = await self.translator_agent.remote(instruct.input)
-        # await self.wake_word_detector_agent.remote()
-        return response
+    async def start(self):
+        vllm_config = await self.vllm.engine.get_vllm_config()
 
-    @app.get("/healthy")
-    async def healthy(self):
-        return os.getenv('HF_TOKEN')
+        model_config = vllm_config.model_config
+
+        supported_tasks = model_config.supported_tasks
+        logger.info("Supported_tasks: %s", supported_tasks)
+
+        self.serving_chat = OpenAIServingChat(
+            engine_client=self.vllm.engine,
+            model_config=model_config,
+            models=OpenAIServingModels(
+                engine_client=self.vllm.engine,
+                model_config=model_config,
+                base_model_paths=[
+                    BaseModelPath(name=self.yml_model_config.name, model_path=self.yml_model_config.vllm_engine_kwargs.model)
+                ]
+            ),
+            response_role="assistant",
+            request_logger=None,
+            chat_template=None,
+            chat_template_content_format='auto',
+        ) if "generate" in supported_tasks else None
 
     @app.post("/v1/chat/completions")
     async def create_chat_completion(
-        self, request: ChatCompletionRequest
+        self, request: ChatCompletionRequest, raw_request: Request
     ):
-        print("===============================", request)
-        response = await self.main_agent.remote(request)
-        return response
+        try:
+            generator = await self.serving_chat.create_chat_completion(request, raw_request)
+        except Exception as e:
+            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
+                                detail=str(e)) from e
+        if isinstance(generator, ErrorResponse):
+            return JSONResponse(content=generator.model_dump(),
+                                status_code=generator.code)
 
+        elif isinstance(generator, ChatCompletionResponse):
+            return JSONResponse(content=generator.model_dump())
 
-app = YashaAPI.bind(
-    main_agent=MainAgentChat.bind(),
-    # translator_agent=TranslatorAgent.bind(),
-    # wake_word_detector_agent=WakeWordDetectorAgent.bind()
-)
+        return StreamingResponse(content=generator, media_type="text/event-stream")
 
-serve.run(app, route_prefix="/api", name="api")
-
-
-
-
+    
+serve.run(yasha_app(), route_prefix='/app1', name='yasha app')
+# serve.run(yasha_app(), route_prefix='/app2', name='app2')
