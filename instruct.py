@@ -30,12 +30,11 @@ instruct_config = LLMConfig(
     ),
 )
 
-instruct_deployment = LLMServer.as_deployment(instruct_config.get_serve_options(name_prefix="mainLLM:")).options(
-    placement_group_bundles=[{"CPU": 1}, {"CPU": 0, "GPU": 0.45}], placement_group_strategy="PACK"
-).bind(instruct_config)
+instruct_deployment = LLMServer.as_deployment(instruct_config.get_serve_options(name_prefix="mainLLM:")).bind(instruct_config)
 
 app = LLMRouter.as_deployment().bind([
     instruct_deployment,
+    instruct_deployment
 ])
 
 

@@ -1,0 +1,18 @@
+# vllm engine args reference: https://docs.vllm.ai/en/latest/configuration/engine_args.html
+
+models:
+  # -
+  #   name: "Llama-3.2-3B-Instruct-bnb-4bit"
+  #   vllm_engine_kwargs:
+  #     model: "unsloth/Llama-3.2-3B-Instruct-bnb-4bit"
+  #     tensor_parallel_size: 1
+  #     max_model_len: 2000
+  #     gpu_memory_utilization: 0.60
+  #     task: "generate"
+  - 
+    name: "nomic-embed-text-v1.5"
+    vllm_engine_kwargs:
+      model: "nomic-ai/nomic-embed-text-v1.5"
+      tensor_parallel_size: 1
+      gpu_memory_utilization: 0.20
+      task: "embedding"

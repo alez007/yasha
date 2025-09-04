@@ -1,3 +1,4 @@
+from typing import Dict, Optional, List
 from pydantic import BaseModel, Field
 
 class VllmEngineConfig(BaseModel):
@@ -9,8 +10,12 @@ class VllmEngineConfig(BaseModel):
     trust_remote_code: bool = True
     gpu_memory_utilization: float = 0.9
     distributed_executor_backend: str = "mp"
+    task: str = "auto"
     
-
 class YashaModelConfig(BaseModel):
     name: str
+    api_path: Optional[str]
     vllm_engine_kwargs: VllmEngineConfig
+
+class YashaConfig(BaseModel):
+    models: List[YashaModelConfig]
