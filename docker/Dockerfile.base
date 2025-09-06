@@ -1,14 +1,12 @@
 ARG PYTHON_VERSION
 
-FROM vllm/vllm-openai:v0.10.0
+FROM vllm/vllm-openai:v0.10.1.1
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV UV_LINK_MODE=copy
 
-RUN uv pip install --system vllm[audio]==0.10.0
-# RUN uv pip install --system git+https://github.com/huggingface/transformers.git
-RUN uv pip install --system transformers==4.53.2
+RUN uv pip install --system vllm[audio]==0.10.1.1
 
 # Change the working directory to the `app` directory
 WORKDIR /yasha

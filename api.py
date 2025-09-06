@@ -33,7 +33,7 @@ from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from http import HTTPStatus
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ray.serve")
 
 if ray.is_initialized():
     ray.shutdown()
@@ -45,6 +45,8 @@ ray.init(
 app = FastAPI()
 
 def yasha_app():
+    global logger
+    
     _config_file = os.path.dirname(os.path.abspath(__file__)) + "/yasha/config/models.yaml"
     _instruct_model_config = {}
     _yml_conf: YashaConfig = None
@@ -54,12 +56,9 @@ def yasha_app():
     assert _yml_conf != None
 
     logger.info("Init yasha app with config: %s", _yml_conf)
-
     
     deployment = serve.deployment(serve.ingress(app)(YashaAPI), name="yasha api")
     
-    logger = logging.getLogger("ray.serve")
-
     return deployment.options(
         num_replicas=1,
         ray_actor_options=dict(
@@ -115,7 +114,10 @@ class YashaAPI:
                         BaseModelPath(name=model_name, model_path=model_config.model)
                     ]
                 ),
-            ) if "embedding" in supported_tasks else None
+                request_logger=None,
+                chat_template=None,
+                chat_template_content_format='auto',
+            ) if "embed" in supported_tasks else None
 
 
     @app.post("/v1/chat/completions")
@@ -143,19 +145,19 @@ class YashaAPI:
 
         return StreamingResponse(content=generator, media_type="text/event-stream")
 
-    @app.post("v1/embeddings")
+    @app.post("/v1/embeddings")
     async def create_embeddings(
-        self, request: ChatCompletionRequest, raw_request: Request
+        self, request: EmbeddingRequest, raw_request: Request
     ):
         try:
             model_name = request.model
-            serving_chat = self.serving_chat[model_name]
+            serving_embedding = self.serving_embedding[model_name]
 
-            if serving_chat is None:
+            if serving_embedding is None:
                 raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
                         detail="model not found")
 
-            generator = await serving_chat.create_chat_completion(request, raw_request)
+            generator = await serving_embedding.create_embedding(request, raw_request)
         except Exception as e:
             raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
                                 detail=str(e)) from e
@@ -163,13 +165,9 @@ class YashaAPI:
             return JSONResponse(content=generator.model_dump(),
                                 status_code=generator.code)
 
-        elif isinstance(generator, ChatCompletionResponse):
+        elif isinstance(generator, EmbeddingResponse):
             return JSONResponse(content=generator.model_dump())
 
         return StreamingResponse(content=generator, media_type="text/event-stream")
 
-    
-
-    
-serve.run(yasha_app(), route_prefix='/app1', name='yasha app')
-# serve.run(yasha_app(), route_prefix='/app2', name='app2')
+serve.run(yasha_app(), route_prefix='/', name='yasha api')
