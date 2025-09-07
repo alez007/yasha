@@ -2,12 +2,12 @@
 
 models:
   -
-    name: "Llama-3.2-3B-Instruct-bnb-4bit"
+    name: "Llama-3.1-8B"
     vllm_engine_kwargs:
-      model: "unsloth/Llama-3.2-3B-Instruct-bnb-4bit"
+      model: "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit"
       tensor_parallel_size: 1
-      max_model_len: 2000
-      gpu_memory_utilization: 0.60
+      max_model_len: 40000
+      gpu_memory_utilization: 0.75
       task: "generate"
   - 
     name: "nomic-embed-text-v1.5"
@@ -15,3 +15,5 @@ models:
       model: "nomic-ai/nomic-embed-text-v1.5"
       tensor_parallel_size: 1
       task: "embed"
+      gpu_memory_utilization: 0.1
+      trust_remote_code: 1

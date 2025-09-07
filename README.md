@@ -1,7 +1,16 @@
-# start cluster(s)
-uv run --env-file .env -- ray start --head --dashboard-host="0.0.0.0" --port=6379
-uv run --env-file .env -- ray start --head --dashboard-host="0.0.0.0" --port=6380
+This is a proof of concept of how to deploy 2 or more models on the same GPU using [VLLm](https://github.com/vllm-project/vllm) and [Ray](https://github.com/ray-project/ray).
 
-# serve apps
-uv run --env-file .env -- serve run --route-prefix=/api --name=api api:app
+# requirements:
+ - Nvidia GPU
+ - patience to play with the gpu memory percentages to maximise the context length for the available memory
+
+# build project
+ - uv sync
+ - docker compose build
+
+# start project
+docker compose up
+
+# deploy the openai api
+uv run -- api.py
 

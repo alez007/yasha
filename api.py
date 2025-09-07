@@ -45,8 +45,6 @@ ray.init(
 app = FastAPI()
 
 def yasha_app():
-    global logger
-    
     _config_file = os.path.dirname(os.path.abspath(__file__)) + "/yasha/config/models.yaml"
     _instruct_model_config = {}
     _yml_conf: YashaConfig = None
@@ -64,7 +62,8 @@ def yasha_app():
         ray_actor_options=dict(
             num_cpus=3,
             num_gpus=1,
-        )
+        ),
+        health_check_period_s=60
     ).bind(_yml_conf.models)
 
 class YashaAPI:
