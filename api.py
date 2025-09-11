@@ -41,7 +41,6 @@ def yasha_app():
             num_cpus=3,
             num_gpus=1,
         ),
-        health_check_period_s=60
     ).bind(_yml_conf.models)
 
 

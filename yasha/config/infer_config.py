@@ -12,6 +12,7 @@ class VllmEngineConfig(BaseModel):
     distributed_executor_backend: str = "mp"
     task: str = "auto"
     model_impl: Optional[str] = None
+    enable_log_requests: Optional[bool] = False
     
 class YashaModelConfig(BaseModel):
     name: str

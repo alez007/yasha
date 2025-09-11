@@ -24,10 +24,23 @@ from vllm.entrypoints.openai.serving_models import (
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from http import HTTPStatus
+from vllm.entrypoints.logger import RequestLogger
+from fastapi.middleware.cors import CORSMiddleware
 
 logger = logging.getLogger("ray.serve")
 
-app = FastAPI()
+def build_app():
+    app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    return app
+
+app = build_app()
 
 class OpenAiModelCard(BaseModel):
     id: str
@@ -53,6 +66,7 @@ class YashaAPI:
         self.models: List[OpenAiModelCard] = []
 
         self.serving_chat: Dict[str, OpenAIServingChat] = {}
+        self.serving_embedding: Dict[str, OpenAIServingEmbedding] = {}
         
         for model_name, vllm in self.vllm_infers.items():
             vllm_config = await vllm.engine.get_vllm_config()
@@ -73,15 +87,10 @@ class YashaAPI:
                     ]
                 ),
                 response_role="assistant",
-                request_logger=None,
+                request_logger=RequestLogger(max_log_len=None),
                 chat_template=None,
                 chat_template_content_format='auto',
             ) if "generate" in supported_tasks else None
-
-            if self.serving_chat[model_name] is not None:
-                self.models.append(OpenAiModelCard(
-                    id = model_name
-                ))
 
             self.serving_embedding[model_name] = OpenAIServingEmbedding(
                 engine_client=vllm.engine,
@@ -98,10 +107,35 @@ class YashaAPI:
                 chat_template_content_format='auto',
             ) if "embed" in supported_tasks else None
 
+        for model_name in self.serving_chat.keys():
+            self.models.append(OpenAiModelCard(
+                id = model_name
+            ))
+
+    def find_model(self, model_name: str) -> OpenAiModelCard:
+        """
+            Checks if a specific model has been found
+        """
+        found_model: OpenAiModelCard = None
+        for model_info in self.models:
+            if model_info.id == model_name:
+                found_model = model_info
+        return found_model
+
     @app.get("/v1/models", response_model=OpenaiModelList)
     async def list_models(self):
-        logger.info("models: %s", self.models)
         return OpenaiModelList(data=self.models)
+    
+    @app.get("/v1/models/{model}", response_model=OpenAiModelCard)
+    async def model_info(self, model: str) -> OpenAiModelCard:
+        logger.info("found models: %s", self.models)
+        found_model = self.find_model(model)
+        
+        if found_model is None:
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
+                        detail="model not found")
+
+        return found_model
 
 
     @app.post("/v1/chat/completions")

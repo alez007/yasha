@@ -19,7 +19,8 @@ class VllmInfer():
             tokenizer=model_config.vllm_engine_kwargs.tokenizer,
             trust_remote_code=model_config.vllm_engine_kwargs.trust_remote_code,
             gpu_memory_utilization=model_config.vllm_engine_kwargs.gpu_memory_utilization,
-            distributed_executor_backend=model_config.vllm_engine_kwargs.distributed_executor_backend
+            distributed_executor_backend=model_config.vllm_engine_kwargs.distributed_executor_backend,
+            enable_log_requests=model_config.vllm_engine_kwargs.enable_log_requests,
         )
         engine_args.engine_use_ray = True
 

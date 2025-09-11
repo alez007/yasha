@@ -2,14 +2,14 @@
 
 models:
   -
-    name: "Llama-3.1-8B"
+    name: "gemma-3n-e4b"
     vllm_engine_kwargs:
-      model: "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit"
-      # model: "unsloth/Llama-3.2-1B-Instruct-bnb-4bit"
+      model: "unsloth/gemma-3n-E4B-it-unsloth-bnb-4bit"
       tensor_parallel_size: 1
-      max_model_len: 40000
+      # max_model_len: 90000
       gpu_memory_utilization: 0.75
       task: "generate"
+      enable_log_requests: 1
   - 
     name: "nomic-embed-text-v1.5"
     vllm_engine_kwargs:

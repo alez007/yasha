@@ -2347,6 +2347,22 @@ wheels = [
 ]
 
 [[package]]
+name = "timm"
+version = "1.0.19"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "pyyaml" },
+    { name = "safetensors" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1c/78/0789838cf20ba1cc09907914a008c1823d087132b48aa1ccde5e7934175a/timm-1.0.19.tar.gz", hash = "sha256:6e71e1f67ac80c229d3a78ca58347090514c508aeba8f2e2eb5289eda86e9f43", size = 2353261, upload-time = "2025-07-24T03:04:05.281Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dc/74/661c63260cccf19ed5932e8b3f22f95ecd8bb34b9d9e6af9e1e7b961f254/timm-1.0.19-py3-none-any.whl", hash = "sha256:c07b56c32f3d3226c656f75c1b5479c08eb34eefed927c82fd8751a852f47931", size = 2497950, upload-time = "2025-07-24T03:04:03.097Z" },
+]
+
+[[package]]
 name = "tokenizers"
 version = "0.22.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2794,6 +2810,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-yaml" },
     { name = "ray", extra = ["data", "default", "serve-grpc"] },
+    { name = "timm" },
     { name = "transformers" },
     { name = "vllm" },
 ]
@@ -2809,6 +2826,7 @@ requires-dist = [
     { name = "pydantic", specifier = "==2.11.7" },
     { name = "pydantic-yaml", specifier = "==1.6.0" },
     { name = "ray", extras = ["data", "default", "serve-grpc"], specifier = ">=2.48.0" },
+    { name = "timm", specifier = "==1.0.19" },
     { name = "transformers", specifier = "==4.56.1" },
     { name = "vllm", specifier = "==0.10.1.1" },
 ]
