@@ -19,17 +19,17 @@ if ray.is_initialized():
     ray.shutdown()
 
 ray.init(
-    address="ray://0.0.0.0:10001"
+    address="ray://0.0.0.0:10001",
 )
 
 def yasha_app():
     _config_file = os.path.dirname(os.path.abspath(__file__)) + "/yasha/config/models.yaml"
     _instruct_model_config = {}
-    _yml_conf: YashaConfig = None
+    _yml_conf: Optional[YashaConfig] = None
     with open(_config_file, "r") as f:
         _yml_conf = parse_yaml_raw_as(YashaConfig, f)
 
-    assert _yml_conf != None
+    assert _yml_conf is not None
 
     logger.info("Init yasha app with config: %s", _yml_conf)
     

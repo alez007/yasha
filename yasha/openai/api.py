@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Dict
 import time
 from yasha.config.infer_config import YashaModelConfig
 from yasha.infer.vllm.vllm_infer import VllmInfer
@@ -60,14 +60,14 @@ class YashaAPI:
         for yml_model_config in yml_api_config:
             self.vllm_infers[yml_model_config.name] = VllmInfer(yml_model_config)
 
-        asyncio.ensure_future(self.start())
-
-    async def start(self):
         self.models: List[OpenAiModelCard] = []
 
         self.serving_chat: Dict[str, OpenAIServingChat] = {}
         self.serving_embedding: Dict[str, OpenAIServingEmbedding] = {}
-        
+
+        asyncio.ensure_future(self.start())
+
+    async def start(self):
         for model_name, vllm in self.vllm_infers.items():
             vllm_config = await vllm.engine.get_vllm_config()
 
