@@ -1,14 +1,9 @@
 import os
-from typing import Dict, Optional, List, Union
 import logging
 import ray
 
-from fastapi import FastAPI
 from ray import serve
-from time import sleep
-from ray.serve.handle import DeploymentHandle
 from pydantic_yaml import parse_yaml_raw_as
-from pydantic import BaseModel
 
 from yasha.config.infer_config import YashaConfig
 from yasha.openai.api import YashaAPI, app
@@ -22,10 +17,10 @@ ray.init(
     address="ray://0.0.0.0:10001",
 )
 
-def yasha_app():
+def yasha_app() -> serve.Application:
     _config_file = os.path.dirname(os.path.abspath(__file__)) + "/yasha/config/models.yaml"
     _instruct_model_config = {}
-    _yml_conf: Optional[YashaConfig] = None
+    _yml_conf: YashaConfig | None = None
     with open(_config_file, "r") as f:
         _yml_conf = parse_yaml_raw_as(YashaConfig, f)
 
