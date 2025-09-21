@@ -10,7 +10,8 @@ logger = logging.getLogger("ray.serve")
 
 class VllmInfer():
     def __init__(self, model_config: YashaModelConfig):
-        logger.info("initialising vllm engine with args: %s", model_config.vllm_engine_kwargs.dict())
+        logger.info("initialising vllm engine with args: %s", model_config.vllm_engine_kwargs.model_dump())
+
         engine_args = AsyncEngineArgs(
             model=model_config.vllm_engine_kwargs.model,
             tensor_parallel_size=model_config.vllm_engine_kwargs.tensor_parallel_size,
@@ -22,7 +23,7 @@ class VllmInfer():
             distributed_executor_backend=model_config.vllm_engine_kwargs.distributed_executor_backend,
             enable_log_requests=model_config.vllm_engine_kwargs.enable_log_requests,
         )
-        engine_args.engine_use_ray = True
+        # engine_args.engine_use_ray = True
 
         usage_context = UsageContext.OPENAI_API_SERVER
         vllm_config = engine_args.create_engine_config(usage_context=usage_context)
