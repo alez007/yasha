@@ -18,6 +18,7 @@ dependencies = [
     "pydantic-yaml==1.6.0",
     "ray[data,default,serve-grpc]>=2.48.0",
     "timm==1.0.19",
+    "torch==2.7.1",
     "transformers==4.56.1",
     "vllm==0.10.1.1",
 ]
