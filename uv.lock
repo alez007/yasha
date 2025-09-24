@@ -2811,6 +2811,7 @@ dependencies = [
     { name = "pydantic-yaml" },
     { name = "ray", extra = ["data", "default", "serve-grpc"] },
     { name = "timm" },
+    { name = "torch" },
     { name = "transformers" },
     { name = "vllm" },
 ]
@@ -2827,6 +2828,7 @@ requires-dist = [
     { name = "pydantic-yaml", specifier = "==1.6.0" },
     { name = "ray", extras = ["data", "default", "serve-grpc"], specifier = ">=2.48.0" },
     { name = "timm", specifier = "==1.0.19" },
+    { name = "torch", specifier = "==2.7.1" },
     { name = "transformers", specifier = "==4.56.1" },
     { name = "vllm", specifier = "==0.10.1.1" },
 ]

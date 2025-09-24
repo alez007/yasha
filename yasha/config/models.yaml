@@ -1,20 +1,25 @@
 # vllm engine args reference: https://docs.vllm.ai/en/latest/configuration/engine_args.html
 
 models:
+  - 
+    name: "whisper-medium"
+    model: "openai/whisper-medium"
+    use_vllm: false
+    usecase: "transcription"
+  - 
+    name: "nomic-embed-text-v1.5"
+    model: "nomic-ai/nomic-embed-text-v1.5"
+    usecase: "embed"
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      gpu_memory_utilization: 0.1
+      trust_remote_code: 1
   -
     name: "gemma-3n-e4b"
+    model: "unsloth/gemma-3n-E4B-it-unsloth-bnb-4bit"
+    usecase: "generate"
     vllm_engine_kwargs:
-      model: "unsloth/gemma-3n-E4B-it-unsloth-bnb-4bit"
       tensor_parallel_size: 1
       # max_model_len: 90000
       gpu_memory_utilization: 0.72
-      task: "generate"
       enable_log_requests: 1
-  - 
-    name: "nomic-embed-text-v1.5"
-    vllm_engine_kwargs:
-      model: "nomic-ai/nomic-embed-text-v1.5"
-      tensor_parallel_size: 1
-      task: "embed"
-      gpu_memory_utilization: 0.1
-      trust_remote_code: 1
