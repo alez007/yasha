@@ -16,11 +16,12 @@ dependencies = [
     "httpx==0.28.1",
     "pydantic==2.11.7",
     "pydantic-yaml==1.6.0",
+    "python-multipart==0.0.20",
     "ray[data,default,serve-grpc]>=2.48.0",
     "timm==1.0.19",
-    "torch==2.7.1",
+    "torch==2.8.0",
     "transformers==4.56.1",
-    "vllm==0.10.1.1",
+    "vllm[audio]==0.10.2",
 ]
 
 [build-system]

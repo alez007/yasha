@@ -2,24 +2,28 @@
 
 models:
   - 
-    name: "whisper-medium"
+    name: "whisper"
     model: "openai/whisper-medium"
-    use_vllm: false
+    # use_vllm: false
     usecase: "transcription"
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      gpu_memory_utilization: 0.15
+      trust_remote_code: 1
   - 
     name: "nomic-embed-text-v1.5"
     model: "nomic-ai/nomic-embed-text-v1.5"
     usecase: "embed"
     vllm_engine_kwargs:
       tensor_parallel_size: 1
-      gpu_memory_utilization: 0.1
+      gpu_memory_utilization: 0.05
       trust_remote_code: 1
   -
-    name: "gemma-3n-e4b"
-    model: "unsloth/gemma-3n-E4B-it-unsloth-bnb-4bit"
+    name: "gemma-3n-E4B-it"
+    model: "google/gemma-3-4b-it"
     usecase: "generate"
     vllm_engine_kwargs:
       tensor_parallel_size: 1
-      # max_model_len: 90000
+      max_model_len: 60000
       gpu_memory_utilization: 0.72
       enable_log_requests: 1
