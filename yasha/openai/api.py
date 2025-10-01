@@ -3,7 +3,7 @@ import asyncio
 from typing import Annotated
 from pydantic import BaseModel, Field
 import time
-from yasha.config.infer_config import YashaModelConfig
+from yasha.infer.infer_config import YashaModelConfig
 from yasha.infer.vllm.vllm_infer import VllmInfer
 from yasha.infer.transformers.transformers_infer import TransformersInfer
 from vllm.entrypoints.openai.protocol import (
@@ -136,7 +136,8 @@ class YashaAPI:
 
 
     @app.post("/v1/audio/transcriptions")
-    async def create_transcriptions(self, request: Annotated[TranscriptionRequest, Form], raw_request: Request):
+    async def create_transcriptions(self, request: Annotated[TranscriptionRequest,
+                                                   Form()], raw_request: Request):
         model_name = request.model
         if model_name is not None:
             infer = self.infers[model_name]

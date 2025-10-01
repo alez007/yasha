@@ -2,11 +2,11 @@ import asyncio
 import logging
 from typing import cast, Annotated
 
-from vllm.config import ModelDType
+from vllm.config import ModelDType, TaskOption
 from vllm.config.parallel import DistributedExecutorBackend
 from vllm.entrypoints.openai.protocol import ChatCompletionRequest
 
-from yasha.config.infer_config import ModelUsecase, VllmEngineConfig, YashaModelConfig
+from yasha.infer.infer_config import ModelUsecase, VllmEngineConfig, YashaModelConfig
 
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.v1.engine.async_llm import AsyncLLM
@@ -41,8 +41,8 @@ logger = logging.getLogger("ray.serve")
 class VllmInfer():
     @staticmethod
     def check_vllm_support(model_config: YashaModelConfig) -> Exception|None:
-        if model_config.use_vllm is True and model_config.usecase not in [ModelUsecase.generate, ModelUsecase.embed]:
-            raise Exception("vllm is only supported for embed and generate models")
+        if model_config.use_vllm is True and model_config.usecase not in [ModelUsecase.generate, ModelUsecase.embed, ModelUsecase.transcription]:
+            raise Exception("vllm is only supported for embed, generate and transcription models")
 
     def __init__(self, model_config: YashaModelConfig):
         self.check_vllm_support(model_config)
@@ -50,6 +50,7 @@ class VllmInfer():
 
         config_engine_kwargs = model_config.vllm_engine_kwargs.model_dump() if model_config.vllm_engine_kwargs is not None else {}
         config_engine_kwargs['model'] = model_config.model
+        config_engine_kwargs['task'] = model_config.usecase
         vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
         logger.info("initialising vllm engine with args: %s", vllm_engine_kwargs.model_dump())
 
@@ -83,6 +84,7 @@ class VllmInfer():
 
         self.serving_chat = await self.init_serving_chat()
         self.serving_embedding = await self.init_serving_embeding()
+        self.serving_transcription = await self.init_serving_transcription()
 
     async def init_serving_chat(self) -> OpenAIServingChat|None:
         return OpenAIServingChat(
@@ -117,6 +119,20 @@ class VllmInfer():
             chat_template_content_format='auto',
         ) if "embed" in self.supported_tasks else None
 
+
+    async def init_serving_transcription(self) -> OpenAIServingTranscription|None:
+        return OpenAIServingTranscription(
+            engine_client=self.engine,
+            model_config=self.vllm_config.model_config,
+            models=OpenAIServingModels(
+                engine_client=self.engine,
+                model_config=self.vllm_config.model_config,
+                base_model_paths=[
+                    BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
+                ]
+            ),
+            request_logger=None,
+        ) if "transcription" in self.supported_tasks else None
 
     async def create_chat_completion(self, request: ChatCompletionRequest, raw_request: Request):
         try:
@@ -159,6 +175,23 @@ class VllmInfer():
 
         return StreamingResponse(content=generator, media_type="text/event-stream")
 
-    async def create_transcription(self, request: Annotated[TranscriptionRequest, Form], raw_request: Request):
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-            detail="model does not support this action")
+    async def create_transcription(self, request: Annotated[TranscriptionRequest, Form()], raw_request: Request):
+        try:
+            if self.serving_transcription is None:
+                raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
+                        detail="model does not support this action")
+            logger.info("start processing audio")
+            audio_data = await request.file.read()
+            logger.info("audio data %s", audio_data)
+            generator = await self.serving_transcription.create_transcription(audio_data, request, raw_request)
+        except Exception as e:
+            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
+                                detail=str(e)) from e
+        if isinstance(generator, ErrorResponse):
+            return JSONResponse(content=generator.model_dump(),
+                                status_code=generator.error.code)
+
+        elif isinstance(generator, TranscriptionResponse):
+            return JSONResponse(content=generator.model_dump())
+
+        return StreamingResponse(content=generator, media_type="text/event-stream")

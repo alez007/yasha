@@ -5,7 +5,7 @@ import ray
 from ray import serve
 from pydantic_yaml import parse_yaml_raw_as
 
-from yasha.config.infer_config import YashaConfig
+from yasha.infer.infer_config import YashaConfig
 from yasha.openai.api import YashaAPI, app
 
 logger = logging.getLogger("ray.serve")
@@ -18,7 +18,7 @@ ray.init(
 )
 
 def yasha_app() -> serve.Application:
-    _config_file = os.path.dirname(os.path.abspath(__file__)) + "/yasha/config/models.yaml"
+    _config_file = os.path.dirname(os.path.abspath(__file__)) + "/config/models.yaml"
     _instruct_model_config = {}
     _yml_conf: YashaConfig | None = None
     with open(_config_file, "r") as f:

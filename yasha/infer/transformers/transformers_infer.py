@@ -3,7 +3,7 @@ import sys
 from transformers import pipeline, AutomaticSpeechRecognitionPipeline
 import torch
 
-from yasha.config.infer_config import ModelUsecase, YashaModelConfig
+from yasha.infer.infer_config import ModelUsecase, YashaModelConfig
 from fastapi import FastAPI, Form, HTTPException, Request
 from http import HTTPStatus
 from vllm.entrypoints.openai.protocol import ChatCompletionRequest, EmbeddingRequest, TranscriptionRequest, TranscriptionResponse
@@ -52,20 +52,9 @@ class TransformersInfer():
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
             detail="model does not support this action")
 
-    async def create_transcription(self, request: Annotated[TranscriptionRequest, Form], raw_request: Request):
-        if not isinstance(self.pipeline, AutomaticSpeechRecognitionPipeline):
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-                detail="model does not support this action")
-
-        audio_data = await request.file.read()
-        
-        for item in self.pipeline(audio_data):
-            sys.stdout.write("\033[K")
-            print(item["text"], end="\r")
-            if not item["partial"][0]:
-                break
-        
-        return TranscriptionResponse(text="bla bla blablabla")
+    async def create_transcription(self, request: Annotated[TranscriptionRequest, Form()], raw_request: Request):
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
+            detail="model does not support this action")
 
 
         

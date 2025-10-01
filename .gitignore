@@ -4,3 +4,5 @@ __pycache__
 *.idea
 .vscode
 *.DS_Store
+.cache
+local_models

@@ -1,15 +1,15 @@
 ARG PYTHON_VERSION
 
-FROM vllm/vllm-openai:v0.10.1.1
+FROM vllm/vllm-openai:v0.10.2
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV UV_LINK_MODE=copy
 
-RUN uv pip install --system vllm[audio]==0.10.1.1
+RUN uv pip install --system vllm[audio]==0.10.2
 
 # Change the working directory to the `app` directory
-WORKDIR /yasha
+WORKDIR /
 
 # Install dependencies
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -18,12 +18,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project
 
 # Copy the project into the image
-ADD . /yasha
+ADD ./yasha /yasha
+ADD ./pyproject.toml /pyproject.toml
+ADD ./README.md /README.md
+ADD ./uv.lock /uv.lock
 
 # Sync the project
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked
 
-ENV PATH="/yasha/.venv/bin:$PATH"
+ENV PATH="/.venv/bin:$PATH"
 
 ENTRYPOINT ["/usr/bin/env"]
