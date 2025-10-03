@@ -1,12 +1,15 @@
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 from enum import Enum
+
+from vllm.entrypoints.openai.protocol import OpenAIBaseModel
 
 class ModelUsecase(str, Enum):
     generate = 'generate'
     embed = 'embed'
     transcription = 'transcription'
     translation = 'translation'
+    tts = 'tts'
 
 class VllmEngineConfig(BaseModel):
     model: str = ""
@@ -32,3 +35,37 @@ class YashaModelConfig(BaseModel):
 
 class YashaConfig(BaseModel):
     models: list[YashaModelConfig]
+
+class SpeechRequest(OpenAIBaseModel):
+    input: str = Field(..., description="The text to generate audio for")
+    model: str = Field(
+        ...,
+        description="The model to use for generation.",
+    )
+    voice: str = Field(
+        ...,
+        description="The voice to use for generation.",
+    )
+    response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] = Field(
+        default="mp3",
+        description="The format to return audio in.",
+    )
+    speed: float = Field(
+        default=1.0,
+        ge=0.25,
+        le=4.0,
+        description="The speed of the generated audio. Select a value from 0.25 to 4.0.",
+    )
+    stream_format: Literal["sse", "audio"] = Field(
+        default="sse",
+        description="The stream format to return the audio in.",
+    )
+
+
+class SpeechResponse(OpenAIBaseModel):
+    audio: str = Field(..., description="The generated audio data encoded in base 64")
+    type: Literal["speech.audio.delta", "speech.audio.done"] = Field(
+        ...,
+        description="Type of audio chunk",
+    )
+    

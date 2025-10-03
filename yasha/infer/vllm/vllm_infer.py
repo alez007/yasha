@@ -4,9 +4,9 @@ from typing import cast, Annotated
 
 from vllm.config import ModelDType, TaskOption
 from vllm.config.parallel import DistributedExecutorBackend
-from vllm.entrypoints.openai.protocol import ChatCompletionRequest
+from vllm.entrypoints.openai.protocol import ChatCompletionRequest, TranslationRequest, TranslationResponse
 
-from yasha.infer.infer_config import ModelUsecase, VllmEngineConfig, YashaModelConfig
+from yasha.infer.infer_config import ModelUsecase, SpeechRequest, SpeechResponse, VllmEngineConfig, YashaModelConfig
 
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.v1.engine.async_llm import AsyncLLM
@@ -34,15 +34,31 @@ from vllm.entrypoints.openai.protocol import (
     TranscriptionResponse,
 )
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from yasha.infer.vllm.openai.serving_speech import OpenAIServingSpeech
 
 
 logger = logging.getLogger("ray.serve")
 
 class VllmInfer():
+    _vllm_usecases = [ModelUsecase.generate, ModelUsecase.embed, ModelUsecase.transcription, ModelUsecase.translation, ModelUsecase.tts]
+
     @staticmethod
     def check_vllm_support(model_config: YashaModelConfig) -> Exception|None:
-        if model_config.use_vllm is True and model_config.usecase not in [ModelUsecase.generate, ModelUsecase.embed, ModelUsecase.transcription]:
-            raise Exception("vllm is only supported for embed, generate and transcription models")
+        if model_config.use_vllm is True and model_config.usecase not in VllmInfer._vllm_usecases:
+            raise Exception("vllm is only supported for %s models", ", ".join(VllmInfer._vllm_usecases))
+    
+    @staticmethod
+    def supports_openai_intended_usecases(detected_supported_tasks: list[str], intended_usecase: ModelUsecase) -> bool:
+        if intended_usecase is ModelUsecase.generate and "generate" in detected_supported_tasks:
+            return True
+        elif intended_usecase is ModelUsecase.embed and any(task in detected_supported_tasks for task in ['embed', 'embedding']):
+            return True
+        elif intended_usecase in [ModelUsecase.transcription, ModelUsecase.translation] and "transcription" in detected_supported_tasks:
+            return True
+        elif intended_usecase is ModelUsecase.tts:
+            return True
+        else:
+            return False
 
     def __init__(self, model_config: YashaModelConfig):
         self.check_vllm_support(model_config)
@@ -50,7 +66,6 @@ class VllmInfer():
 
         config_engine_kwargs = model_config.vllm_engine_kwargs.model_dump() if model_config.vllm_engine_kwargs is not None else {}
         config_engine_kwargs['model'] = model_config.model
-        config_engine_kwargs['task'] = model_config.usecase
         vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
         logger.info("initialising vllm engine with args: %s", vllm_engine_kwargs.model_dump())
 
@@ -85,6 +100,8 @@ class VllmInfer():
         self.serving_chat = await self.init_serving_chat()
         self.serving_embedding = await self.init_serving_embeding()
         self.serving_transcription = await self.init_serving_transcription()
+        self.serving_translation = await self.init_serving_translation()
+        self.serving_speech = await self.init_serving_speech()
 
     async def init_serving_chat(self) -> OpenAIServingChat|None:
         return OpenAIServingChat(
@@ -101,7 +118,7 @@ class VllmInfer():
             request_logger=RequestLogger(max_log_len=None),
             chat_template=None,
             chat_template_content_format='auto',
-        ) if "generate" in self.supported_tasks else None
+        ) if self.supports_openai_intended_usecases(cast(list[str], self.supported_tasks), self.model_config.usecase) is True else None
 
     async def init_serving_embeding(self) -> OpenAIServingEmbedding|None:
         return OpenAIServingEmbedding(
@@ -117,7 +134,7 @@ class VllmInfer():
             request_logger=None,
             chat_template=None,
             chat_template_content_format='auto',
-        ) if "embed" in self.supported_tasks else None
+        ) if self.supports_openai_intended_usecases(cast(list[str], self.supported_tasks), self.model_config.usecase) is True else None
 
 
     async def init_serving_transcription(self) -> OpenAIServingTranscription|None:
@@ -132,7 +149,35 @@ class VllmInfer():
                 ]
             ),
             request_logger=None,
-        ) if "transcription" in self.supported_tasks else None
+        ) if self.supports_openai_intended_usecases(cast(list[str], self.supported_tasks), self.model_config.usecase) is True else None
+
+    async def init_serving_translation(self) -> OpenAIServingTranslation|None:
+        return OpenAIServingTranslation(
+            engine_client=self.engine,
+            model_config=self.vllm_config.model_config,
+            models=OpenAIServingModels(
+                engine_client=self.engine,
+                model_config=self.vllm_config.model_config,
+                base_model_paths=[
+                    BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
+                ]
+            ),
+            request_logger=None,
+        ) if self.supports_openai_intended_usecases(cast(list[str], self.supported_tasks), self.model_config.usecase) is True else None
+    
+    async def init_serving_speech(self) -> OpenAIServingSpeech|None:
+        return OpenAIServingSpeech(
+            engine_client=self.engine,
+            model_config=self.vllm_config.model_config,
+            models=OpenAIServingModels(
+                engine_client=self.engine,
+                model_config=self.vllm_config.model_config,
+                base_model_paths=[
+                    BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
+                ]
+            ),
+            request_logger=None,
+        ) if self.supports_openai_intended_usecases(cast(list[str], self.supported_tasks), self.model_config.usecase) is True else None
 
     async def create_chat_completion(self, request: ChatCompletionRequest, raw_request: Request):
         try:
@@ -180,9 +225,9 @@ class VllmInfer():
             if self.serving_transcription is None:
                 raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
                         detail="model does not support this action")
-            logger.info("start processing audio")
+            
             audio_data = await request.file.read()
-            logger.info("audio data %s", audio_data)
+            
             generator = await self.serving_transcription.create_transcription(audio_data, request, raw_request)
         except Exception as e:
             raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
@@ -192,6 +237,46 @@ class VllmInfer():
                                 status_code=generator.error.code)
 
         elif isinstance(generator, TranscriptionResponse):
+            return JSONResponse(content=generator.model_dump())
+
+        return StreamingResponse(content=generator, media_type="text/event-stream")
+
+    async def create_translation(self, request: Annotated[TranslationRequest, Form()], raw_request: Request):
+        try:
+            if self.serving_translation is None:
+                raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
+                        detail="model does not support this action")
+            
+            audio_data = await request.file.read()
+            
+            generator = await self.serving_translation.create_translation(audio_data, request, raw_request)
+        except Exception as e:
+            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
+                                detail=str(e)) from e
+        if isinstance(generator, ErrorResponse):
+            return JSONResponse(content=generator.model_dump(),
+                                status_code=generator.error.code)
+
+        elif isinstance(generator, TranslationResponse):
+            return JSONResponse(content=generator.model_dump())
+
+        return StreamingResponse(content=generator, media_type="text/event-stream")
+
+    async def create_speech(self, request: SpeechRequest, raw_request: Request):
+        try:
+            if self.serving_speech is None:
+                raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
+                        detail="model does not support this action")
+            
+            generator = await self.serving_speech.create_speech(request, raw_request)
+        except Exception as e:
+            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
+                                detail=str(e)) from e
+        if isinstance(generator, ErrorResponse):
+            return JSONResponse(content=generator.model_dump(),
+                                status_code=generator.error.code)
+
+        elif isinstance(generator, SpeechResponse):
             return JSONResponse(content=generator.model_dump())
 
         return StreamingResponse(content=generator, media_type="text/event-stream")

@@ -2,28 +2,38 @@
 
 models:
   - 
-    name: "whisper"
-    model: "openai/whisper-medium"
+    name: "orpheus"
+    model: "unsloth/orpheus-3b-0.1-ft-bnb-4bit"
     # use_vllm: false
-    usecase: "transcription"
+    usecase: "tts"
     vllm_engine_kwargs:
       tensor_parallel_size: 1
-      gpu_memory_utilization: 0.15
+      gpu_memory_utilization: 0.25
       trust_remote_code: 1
-  - 
-    name: "nomic-embed-text-v1.5"
-    model: "nomic-ai/nomic-embed-text-v1.5"
-    usecase: "embed"
-    vllm_engine_kwargs:
-      tensor_parallel_size: 1
-      gpu_memory_utilization: 0.05
-      trust_remote_code: 1
-  -
-    name: "gemma-3n-E4B-it"
-    model: "google/gemma-3-4b-it"
-    usecase: "generate"
-    vllm_engine_kwargs:
-      tensor_parallel_size: 1
-      max_model_len: 60000
-      gpu_memory_utilization: 0.72
-      enable_log_requests: 1
+      max_model_len: 8000
+  # - 
+  #   name: "whisper"
+  #   model: "openai/whisper-medium"
+  #   # use_vllm: false
+  #   usecase: "transcription"
+  #   vllm_engine_kwargs:
+  #     tensor_parallel_size: 1
+  #     gpu_memory_utilization: 0.15
+  #     trust_remote_code: 1
+  # - 
+  #   name: "nomic-embed-text-v1.5"
+  #   model: "nomic-ai/nomic-embed-text-v1.5"
+  #   usecase: "embed"
+  #   vllm_engine_kwargs:
+  #     tensor_parallel_size: 1
+  #     gpu_memory_utilization: 0.05
+  #     trust_remote_code: 1
+  # -
+  #   name: "gemma-3n-E4B-it"
+  #   model: "google/gemma-3-4b-it"
+  #   usecase: "generate"
+  #   vllm_engine_kwargs:
+  #     tensor_parallel_size: 1
+  #     max_model_len: 60000
+  #     gpu_memory_utilization: 0.72
+  #     enable_log_requests: 1

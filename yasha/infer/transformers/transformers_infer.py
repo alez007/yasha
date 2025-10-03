@@ -3,17 +3,19 @@ import sys
 from transformers import pipeline, AutomaticSpeechRecognitionPipeline
 import torch
 
-from yasha.infer.infer_config import ModelUsecase, YashaModelConfig
+from yasha.infer.infer_config import ModelUsecase, YashaModelConfig, SpeechRequest
 from fastapi import FastAPI, Form, HTTPException, Request
 from http import HTTPStatus
-from vllm.entrypoints.openai.protocol import ChatCompletionRequest, EmbeddingRequest, TranscriptionRequest, TranscriptionResponse
+from vllm.entrypoints.openai.protocol import ChatCompletionRequest, EmbeddingRequest, TranscriptionRequest, TranscriptionResponse, TranslationRequest
 
 
 class TransformersInfer():
+    _transformers_usecases = []
+
     @staticmethod
     def check_transformers_support(model_config: YashaModelConfig) -> Exception|None:
-        if model_config.use_vllm is False and model_config.usecase in [ModelUsecase.generate, ModelUsecase.embed]:
-            raise Exception("transformers support is not implemented for embed and generate models")
+        if model_config.use_vllm is False and model_config.usecase in TransformersInfer._transformers_usecases:
+            raise Exception("transformers is only supported for (%s) models", ", ".join(TransformersInfer._transformers_usecases))
     
     def create_pipeline(self) -> Exception|AutomaticSpeechRecognitionPipeline:
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -53,6 +55,14 @@ class TransformersInfer():
             detail="model does not support this action")
 
     async def create_transcription(self, request: Annotated[TranscriptionRequest, Form()], raw_request: Request):
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
+            detail="model does not support this action")
+    
+    async def create_translation(self, request: Annotated[TranslationRequest, Form()], raw_request: Request):
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
+            detail="model does not support this action")
+    
+    async def create_speech(self, request: SpeechRequest, raw_request: Request):
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
             detail="model does not support this action")
 
