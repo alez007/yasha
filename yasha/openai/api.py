@@ -3,7 +3,7 @@ import asyncio
 from typing import Annotated
 from pydantic import BaseModel, Field
 import time
-from yasha.infer.infer_config import YashaModelConfig
+from yasha.infer.infer_config import YashaModelConfig, SpeechRequest
 from yasha.infer.vllm.vllm_infer import VllmInfer
 from yasha.infer.transformers.transformers_infer import TransformersInfer
 from vllm.entrypoints.openai.protocol import (
@@ -16,6 +16,7 @@ from vllm.entrypoints.openai.protocol import (
     EmbeddingResponse,
     TranscriptionRequest,
     TranscriptionResponse,
+    TranslationRequest
 )
 from vllm.entrypoints.openai.serving_models import (
     BaseModelPath,
@@ -146,3 +147,26 @@ class YashaAPI:
                 detail="model not found")
         
         return await infer.create_transcription(request, raw_request)
+
+    @app.post("/v1/audio/translations")
+    async def create_translations(self, request: Annotated[TranslationRequest,
+                                                   Form()], raw_request: Request):
+        model_name = request.model
+        if model_name is not None:
+            infer = self.infers[model_name]
+        else:
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
+                detail="model not found")
+        
+        return await infer.create_translation(request, raw_request)
+
+    @app.post("/v1/audio/speech")
+    async def create_speech(self, request: SpeechRequest, raw_request: Request):
+        model_name = request.model
+        if model_name is not None:
+            infer = self.infers[model_name]
+        else:
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
+                detail="model not found")
+        
+        return await infer.create_speech(request, raw_request)
