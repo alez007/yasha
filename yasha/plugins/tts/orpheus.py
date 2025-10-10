@@ -49,7 +49,7 @@ class OrpheusTTSPlugin:
     async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> Union[RawSpeechResponse, AsyncGenerator[str, None],
         ErrorResponse]:
         logger.info("started generation: %s with voice: %s", input, voice)
-        if stream_format is "sse":
+        if stream_format=="sse":
             return self.generate_sse(input, voice, request_id)
         else:
             buf = io.BytesIO()
@@ -92,18 +92,14 @@ class OrpheusTTSPlugin:
             repetition_penalty=1.3,
         )
 
-        prev = ""
         async for result in self.engine_client.generate(
             prompt=prompt_string,
             sampling_params=sampling_params,
             request_id=request_id,
         ):
-            full = result.outputs[0].text  # cumulative
-            delta = full[len(prev):]
-            if delta:
-                yield delta
-                prev = full
-                logger.info("delta: %s", delta)
+            chunk = result.outputs[0].text  # cumulative
+            if chunk:
+                yield chunk
 
     
     
