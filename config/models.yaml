@@ -3,22 +3,31 @@
 models:
   - 
     name: "orpheus"
-    model: "unsloth/orpheus-3b-0.1-ft-bnb-4bit"
+    model: "unsloth/orpheus-3b-0.1-ft-unsloth-bnb-4bit"
     # use_vllm: false
     usecase: "tts"
     vllm_engine_kwargs:
       tensor_parallel_size: 1
-      gpu_memory_utilization: 0.25
+      gpu_memory_utilization: 0.3
       trust_remote_code: 1
-      max_model_len: 8000
+      max_model_len: 2048
+  # -
+  #   name: "gemma-3n-E4B-it"
+  #   model: "google/gemma-3-1b-it"
+  #   usecase: "generate"
+  #   vllm_engine_kwargs:
+  #     tensor_parallel_size: 1
+  #     max_model_len: 32000
+  #     gpu_memory_utilization: 0.20
+  #     enable_log_requests: 1
   # - 
   #   name: "whisper"
-  #   model: "openai/whisper-medium"
+  #   model: "openai/whisper-small"
   #   # use_vllm: false
   #   usecase: "transcription"
   #   vllm_engine_kwargs:
   #     tensor_parallel_size: 1
-  #     gpu_memory_utilization: 0.15
+  #     gpu_memory_utilization: 0.20
   #     trust_remote_code: 1
   # - 
   #   name: "nomic-embed-text-v1.5"
@@ -28,12 +37,4 @@ models:
   #     tensor_parallel_size: 1
   #     gpu_memory_utilization: 0.05
   #     trust_remote_code: 1
-  # -
-  #   name: "gemma-3n-E4B-it"
-  #   model: "google/gemma-3-4b-it"
-  #   usecase: "generate"
-  #   vllm_engine_kwargs:
-  #     tensor_parallel_size: 1
-  #     max_model_len: 60000
-  #     gpu_memory_utilization: 0.72
-  #     enable_log_requests: 1
+  

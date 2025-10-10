@@ -1481,6 +1481,19 @@ wheels = [
 ]
 
 [[package]]
+name = "orpheus-speech"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "snac" },
+    { name = "vllm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3e/9e/aa356a4d1ca47616bc5ca80da7587d7e3754da578176450233b9fe615315/orpheus_speech-0.1.0.tar.gz", hash = "sha256:6f50fd660681311943130b020a4943f682193aab62222fdc204f67a359691cde", size = 4234, upload-time = "2025-03-17T20:34:26.199Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/26/f8fac23add6a71a39050396320df62db43bae8a220b36942c26ca9c4ef72/orpheus_speech-0.1.0-py3-none-any.whl", hash = "sha256:86d5a9838463525daf7e26c486a4c851e2d2daf557b953bebef8aac417617588", size = 4745, upload-time = "2025-03-17T20:34:24.855Z" },
+]
+
+[[package]]
 name = "outlines-core"
 version = "0.2.11"
 source = { registry = "https://pypi.org/simple" }
@@ -2351,6 +2364,21 @@ wheels = [
 ]
 
 [[package]]
+name = "snac"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "einops" },
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/38/5b64fb15c1cf02233252975c43c4b85ccacd9f77c55f7fee72b16b3bd2f6/snac-1.2.1.tar.gz", hash = "sha256:697f27fc5b98308eee8946739e5fd9c1b4ec629ef51b4f01c08dace1290685ee", size = 8737, upload-time = "2024-09-11T15:00:46.175Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/4f/6401dc74af3d9e9602209763eccbb7eac739c2501e499b51b560f71443c0/snac-1.2.1-py3-none-any.whl", hash = "sha256:96f90e221121ad03d6e3b060a787268b1efdbe424560a58f6f732df6d4914dc7", size = 8444, upload-time = "2024-09-11T15:00:44.906Z" },
+]
+
+[[package]]
 name = "sniffio"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2926,6 +2954,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "flashinfer-python" },
     { name = "httpx" },
+    { name = "orpheus-speech" },
     { name = "pydantic" },
     { name = "pydantic-yaml" },
     { name = "python-multipart" },
@@ -2944,6 +2973,7 @@ requires-dist = [
     { name = "fastapi", specifier = "==0.116.1" },
     { name = "flashinfer-python", specifier = "==0.3.1" },
     { name = "httpx", specifier = "==0.28.1" },
+    { name = "orpheus-speech", specifier = "==0.1.0" },
     { name = "pydantic", specifier = "==2.11.7" },
     { name = "pydantic-yaml", specifier = "==1.6.0" },
     { name = "python-multipart", specifier = "==0.0.20" },

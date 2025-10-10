@@ -1,3 +1,4 @@
+import os
 from typing import AsyncGenerator, Union
 from fastapi import Request
 from vllm.config import ModelConfig
@@ -7,7 +8,9 @@ from vllm.entrypoints.openai.serving_engine import OpenAIServing
 from vllm.entrypoints.openai.serving_models import OpenAIServingModels
 from vllm.entrypoints.logger import RequestLogger
 
-from yasha.infer.infer_config import SpeechRequest, SpeechResponse
+from yasha.infer.infer_config import SpeechRequest, SpeechResponse, RawSpeechResponse
+from yasha.plugins.tts.orpheus import OrpheusTTSPlugin
+
 
 class OpenAIServingSpeech(OpenAIServing):
     request_id_prefix = "tts"
@@ -29,13 +32,15 @@ class OpenAIServingSpeech(OpenAIServing):
                          request_logger=request_logger,
                          return_tokens_as_token_ids=return_tokens_as_token_ids,
                          log_error_stack=log_error_stack)
+        
+        self.speech_model = OrpheusTTSPlugin(engine_client=engine_client, model_config=model_config)
+    
+    
 
-
-    async def create_speech(self, request: SpeechRequest, raw_request: Request) -> Union[SpeechResponse, AsyncGenerator[str, None],
+    async def create_speech(self, request: SpeechRequest, raw_request: Request) -> Union[RawSpeechResponse, AsyncGenerator[str, None],
                ErrorResponse]:
         
         request_id = f"{self.request_id_prefix}-{self._base_request_id(raw_request)}"
 
-
-        return self.create_error_response("not implemented")
+        return await self.speech_model.generate(request.input, request.voice, request_id, request.stream_format)
         
