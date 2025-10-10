@@ -19,7 +19,7 @@ class VllmEngineConfig(BaseModel):
     tokenizer: str|None = None
     trust_remote_code: bool = False
     gpu_memory_utilization: float = 0.9
-    distributed_executor_backend: str = "mp"
+    distributed_executor_backend: str|None = None
     task: str = "auto"
     model_impl: str|None = None
     enable_log_requests: bool|None = False
@@ -57,15 +57,20 @@ class SpeechRequest(OpenAIBaseModel):
         description="The speed of the generated audio. Select a value from 0.25 to 4.0.",
     )
     stream_format: Literal["sse", "audio"] = Field(
-        default="sse",
+        default="audio",
         description="The stream format to return the audio in.",
     )
 
 
 class SpeechResponse(OpenAIBaseModel):
-    audio: str = Field(..., description="The generated audio data encoded in base 64")
+    audio: str|None = Field(default=None, description="The generated audio data encoded in base 64")
     type: Literal["speech.audio.delta", "speech.audio.done"] = Field(
         ...,
         description="Type of audio chunk",
     )
+
+class RawSpeechResponse(BaseModel):
+    audio: bytes = Field(..., description="full audio file bytes")
+    media_type: Literal["audio/wav"] = Field(default="audio/wav", description="audio bytes media type")
+    
     

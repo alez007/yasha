@@ -8,7 +8,7 @@ from pydantic_yaml import parse_yaml_raw_as
 from yasha.infer.infer_config import YashaConfig
 from yasha.openai.api import YashaAPI, app
 
-logger = logging.getLogger("ray.serve")
+logger = logging.getLogger("ray")
 
 if ray.is_initialized():
     ray.shutdown()

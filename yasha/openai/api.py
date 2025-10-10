@@ -32,7 +32,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from transformers import pipeline
 import torch
 
-logger = logging.getLogger("ray.serve")
+
+logger = logging.getLogger()
 
 def build_app():
     app = FastAPI()
