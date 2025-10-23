@@ -19,7 +19,6 @@ ray.init(
 
 def yasha_app() -> serve.Application:
     _config_file = os.path.dirname(os.path.abspath(__file__)) + "/config/models.yaml"
-    _instruct_model_config = {}
     _yml_conf: YashaConfig | None = None
     with open(_config_file, "r") as f:
         _yml_conf = parse_yaml_raw_as(YashaConfig, f)

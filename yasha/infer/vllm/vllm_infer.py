@@ -170,6 +170,7 @@ class VllmInfer():
                 ]
             ),
             request_logger=None,
+            plugin=self.model_config.plugin,
         ) if self.model_config.usecase is ModelUsecase.tts and "generate" in self.supported_tasks else None
 
     async def create_chat_completion(self, request: ChatCompletionRequest, raw_request: Request):
