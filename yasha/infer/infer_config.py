@@ -30,6 +30,7 @@ class YashaModelConfig(BaseModel):
     name: str
     model: str
     usecase: ModelUsecase
+    plugin: str|None = None
     use_vllm: bool = True
     vllm_engine_kwargs: VllmEngineConfig|None = None
 

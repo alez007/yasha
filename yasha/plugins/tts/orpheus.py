@@ -12,10 +12,12 @@ from yasha.infer.infer_config import SpeechResponse, SpeechRequest, RawSpeechRes
 from vllm.entrypoints.openai.protocol import ErrorInfo, ErrorResponse
 import wave
 import io
+import numpy as np
+from yasha.plugins.base_plugin import BasePlugin
 
 logger = logging.getLogger("ray")
 
-class OrpheusTTSPlugin:
+class ModelPlugin(BasePlugin):
     def __init__(self, engine_client: EngineClient, model_config: ModelConfig):
         from orpheus_tts.decoder import tokens_decoder
 

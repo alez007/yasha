@@ -1,12 +1,12 @@
 ARG PYTHON_VERSION
 
-FROM vllm/vllm-openai:v0.10.2
+FROM vllm/vllm-openai:v0.11.0
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV UV_LINK_MODE=copy
 
-RUN uv pip install --system vllm[audio]==0.10.2
+RUN uv pip install --system vllm[audio]==0.11.0
 
 # Change the working directory to the `app` directory
 WORKDIR /
