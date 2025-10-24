@@ -1,27 +1,27 @@
 # vllm engine args reference: https://docs.vllm.ai/en/latest/configuration/engine_args.html
 
 models:
-  - 
-    name: "orpheus"
-    model: "unsloth/orpheus-3b-0.1-ft-unsloth-bnb-4bit"
-    # use_vllm: false
-    usecase: "tts"
-    plugin: "orpheus"
-    vllm_engine_kwargs:
-      tensor_parallel_size: 1
-      gpu_memory_utilization: 0.3
-      trust_remote_code: 1
-      max_model_len: 2048
-      dtype: float16
-  # -
-  #   name: "gemma-3n-E4B-it"
-  #   model: "google/gemma-3-1b-it"
-  #   usecase: "generate"
+  # - 
+  #   name: "orpheus"
+  #   model: "unsloth/orpheus-3b-0.1-ft-unsloth-bnb-4bit"
+  #   # use_vllm: false
+  #   usecase: "tts"
+  #   plugin: "orpheus"
   #   vllm_engine_kwargs:
   #     tensor_parallel_size: 1
-  #     max_model_len: 32000
-  #     gpu_memory_utilization: 0.20
-  #     enable_log_requests: 1
+  #     gpu_memory_utilization: 0.3
+  #     trust_remote_code: 1
+  #     max_model_len: 2048
+  #     dtype: float16
+  -
+    name: "gemma-3n-E4B-it"
+    model: "google/gemma-3-1b-it"
+    usecase: "generate"
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      max_model_len: 32000
+      gpu_memory_utilization: 0.20
+      enable_log_requests: 1
   # - 
   #   name: "whisper"
   #   model: "openai/whisper-small"
