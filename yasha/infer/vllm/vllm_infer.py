@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import cast, Annotated
 
-from vllm.config import ModelDType, TaskOption
+from vllm.config.model import ModelDType
 from vllm.config.parallel import DistributedExecutorBackend
 from vllm.entrypoints.openai.protocol import ChatCompletionRequest, TranslationRequest, TranslationResponse
 
@@ -82,7 +82,7 @@ class VllmInfer():
     async def start(self):
         logger.info("Start vllm infer for model: %s", self.model_config)
         self.vllm_config = await self.engine.get_vllm_config()
-        self.supported_tasks = self.vllm_config.model_config.supported_tasks
+        self.supported_tasks = await self.engine.get_supported_tasks()
         logger.info("Supported_tasks: %s", self.supported_tasks)
 
         self.serving_chat = await self.init_serving_chat()
