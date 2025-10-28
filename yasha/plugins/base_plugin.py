@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from typing import Literal, Union, Protocol
 from vllm.engine.protocol import EngineClient
-from vllm.config import ModelConfig
+from vllm.config.model import ModelConfig
 from yasha.infer.infer_config import SpeechResponse, SpeechRequest, RawSpeechResponse
 from vllm.entrypoints.openai.protocol import ErrorInfo, ErrorResponse
 

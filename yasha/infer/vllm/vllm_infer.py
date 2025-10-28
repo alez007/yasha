@@ -35,12 +35,13 @@ from vllm.entrypoints.openai.protocol import (
 )
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from yasha.infer.vllm.openai.serving_speech import OpenAIServingSpeech
+from vllm.tasks import SupportedTask
 
 
 logger = logging.getLogger("ray")
 
 class VllmInfer():
-    _vllm_usecases = [ModelUsecase.generate, ModelUsecase.embed, ModelUsecase.transcription, ModelUsecase.translation, ModelUsecase.tts]
+    _vllm_usecases = [ModelUsecase.generate, ModelUsecase.embed, ModelUsecase.transcription, ModelUsecase.translation]
 
     @staticmethod
     def check_vllm_support(model_config: YashaModelConfig) -> Exception|None:
@@ -121,10 +122,10 @@ class VllmInfer():
                     BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
                 ]
             ),
-            request_logger=None,
+            request_logger=RequestLogger(max_log_len=None),
             chat_template=None,
             chat_template_content_format='auto',
-        ) if self.model_config is ModelUsecase.embed and any(task in self.supported_tasks for task in ['embed', 'embedding']) else None
+        ) if self.model_config.usecase is ModelUsecase.embed and any(task in self.supported_tasks for task in ['embed', 'embedding']) else None
 
 
     async def init_serving_transcription(self) -> OpenAIServingTranscription|None:
