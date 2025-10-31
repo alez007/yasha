@@ -2962,6 +2962,8 @@ dependencies = [
     { name = "ray", extra = ["data", "default", "serve-grpc"] },
     { name = "timm" },
     { name = "torch" },
+    { name = "torchaudio" },
+    { name = "torchvision" },
     { name = "transformers" },
     { name = "vllm", extra = ["audio"] },
 ]
@@ -2982,6 +2984,8 @@ requires-dist = [
     { name = "ray", extras = ["data", "default", "serve-grpc"], specifier = ">=2.48.0" },
     { name = "timm", specifier = "==1.0.19" },
     { name = "torch", specifier = "==2.8.0" },
+    { name = "torchaudio", specifier = "==2.8.0" },
+    { name = "torchvision", specifier = "==0.23.0" },
     { name = "transformers", specifier = "==4.56.1" },
     { name = "vllm", extras = ["audio"], specifier = "==0.11.0" },
 ]

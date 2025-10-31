@@ -6,6 +6,7 @@ models:
     model: "suno/bark-small"
     use_vllm: false
     usecase: "tts"
+    plugin: "bark"
   # - 
   #   name: "orpheus"
   #   model: "unsloth/orpheus-3b-0.1-ft-unsloth-bnb-4bit"

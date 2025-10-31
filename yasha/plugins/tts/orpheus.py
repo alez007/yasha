@@ -1,7 +1,7 @@
 from typing import Literal, Union
 import os
 from vllm.engine.protocol import EngineClient
-from vllm.config import ModelConfig
+from vllm.config.model import ModelConfig
 from transformers import AutoTokenizer
 import torch
 from vllm import SamplingParams
@@ -13,11 +13,11 @@ from vllm.entrypoints.openai.protocol import ErrorInfo, ErrorResponse
 import wave
 import io
 import numpy as np
-from yasha.plugins.base_plugin import BasePlugin
+from yasha.plugins.base_plugin import BasePluginVllm
 
 logger = logging.getLogger("ray")
 
-class ModelPlugin(BasePlugin):
+class ModelPlugin(BasePluginVllm):
     def __init__(self, engine_client: EngineClient, model_config: ModelConfig):
         from orpheus_tts.decoder import tokens_decoder
 

@@ -12,7 +12,7 @@ from yasha.infer.infer_config import SpeechRequest, SpeechResponse, RawSpeechRes
 from yasha.plugins import tts
 import pkgutil
 import importlib
-from yasha.plugins.base_plugin import BasePlugin, PluginProto
+from yasha.plugins.base_plugin import PluginProtoTransformers
 import torch
 from transformers import pipeline, AutomaticSpeechRecognitionPipeline, TextToAudioPipeline, PretrainedConfig
 from yasha.infer.infer_config import ModelUsecase, SpeechRequest, SpeechResponse, VllmEngineConfig, YashaModelConfig, RawSpeechResponse
@@ -39,23 +39,14 @@ class OpenAIServingSpeech():
             for _, modname, ispkg in pkgutil.iter_modules(tts.__path__):
                 logger.info("Found submodule %s (is a package: %s)", modname, ispkg)
                 if ispkg is False:
-                    module = cast(PluginProto, importlib.import_module(".".join([tts.__name__, modname]), package=None))
-                    # not yet supported
-        else:
-            self.pipeline = pipeline(
-                task="text-to-audio",
-                model=self.model_config.model,
-                config=PretrainedConfig(
-                    device=self.device
-                ),
-                dtype=torch.float16
-            ) if self.model_config.usecase is ModelUsecase.tts else None
+                    module = cast(PluginProtoTransformers, importlib.import_module(".".join([tts.__name__, modname]), package=None))
+                    self.speech_model = module.ModelPlugin(model_name=self.model_config.model, device=self.device)
     
     
     async def create_speech(self, request: SpeechRequest, raw_request: Request) -> Union[RawSpeechResponse, AsyncGenerator[str, None],
                ErrorResponse]:
 
-        if self.pipeline is None:
+        if self.speech_model is None:
             return create_error_response("tts model is not yet accessible")
         
         request_id = f"{self.request_id_prefix}-{base_request_id(raw_request)}"
