@@ -13,7 +13,7 @@ from yasha.infer.infer_config import SpeechRequest, SpeechResponse, RawSpeechRes
 from yasha.plugins import tts
 import pkgutil
 import importlib
-from yasha.plugins.base_plugin import BasePlugin, PluginProto
+from yasha.plugins.base_plugin import PluginProtoVllm
 
 
 class OpenAIServingSpeech(OpenAIServing):
@@ -44,7 +44,7 @@ class OpenAIServingSpeech(OpenAIServing):
             for _, modname, ispkg in pkgutil.iter_modules(tts.__path__):
                 logger.info("Found submodule %s (is a package: %s)", modname, ispkg)
                 if ispkg is False:
-                    module = cast(PluginProto, importlib.import_module(".".join([tts.__name__, modname]), package=None))
+                    module = cast(PluginProtoVllm, importlib.import_module(".".join([tts.__name__, modname]), package=None))
                     self.speech_model = module.ModelPlugin(engine_client=engine_client, model_config=model_config)
     
     
