@@ -23,16 +23,16 @@ logger = logging.getLogger("ray")
 class ModelPlugin(BasePluginTransformers):
     def __init__(self, model_name: str, device: str):
         self.device = device
-        self.model = BarkModel.from_pretrained(pretrained_model_name_or_path=model_name)
+        self.model = BarkModel.from_pretrained(pretrained_model_name_or_path=model_name).to(device)
         self.processor = BarkProcessor.from_pretrained(model_name)
     
-    async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> Union[RawSpeechResponse, AsyncGenerator[str, None],
-        ErrorResponse]:
+    async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         logger.info("started generation: %s with voice: %s", input, voice)
 
-        inputs = self.processor(input, voice_preset=voice)
-        self.model.generate()
+        inputs = self.processor(input, voice_preset=voice).to(device=self.device)
+        speech_output = self.model.generate(input_ids=inputs.input_ids).cpu().numpy()
 
+        return RawSpeechResponse(audio=b"", media_type="audio/wav")
         # if stream_format=="sse":
         #     return self.generate_sse(input, voice, request_id)
         # else:

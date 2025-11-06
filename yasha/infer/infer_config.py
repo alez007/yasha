@@ -24,7 +24,8 @@ class VllmEngineConfig(BaseModel):
     model_impl: str|None = None
     enable_log_requests: bool|None = False
 
-    
+class TransformersConfig(BaseModel):
+    device: str = "cpu"
     
 class YashaModelConfig(BaseModel):
     name: str
@@ -33,6 +34,7 @@ class YashaModelConfig(BaseModel):
     plugin: str|None = None
     use_vllm: bool = True
     vllm_engine_kwargs: VllmEngineConfig|None = None
+    transformers_config: TransformersConfig|None = None
 
 class YashaConfig(BaseModel):
     models: list[YashaModelConfig]

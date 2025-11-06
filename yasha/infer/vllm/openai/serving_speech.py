@@ -42,8 +42,8 @@ class OpenAIServingSpeech(OpenAIServing):
 
         if plugin is not None:
             for _, modname, ispkg in pkgutil.iter_modules(tts.__path__):
-                logger.info("Found submodule %s (is a package: %s)", modname, ispkg)
-                if ispkg is False:
+                if ispkg is False and modname==plugin:
+                    logger.info("Found submodule %s (is a package: %s)", modname, ispkg)
                     module = cast(PluginProtoVllm, importlib.import_module(".".join([tts.__name__, modname]), package=None))
                     self.speech_model = module.ModelPlugin(engine_client=engine_client, model_config=model_config)
     
