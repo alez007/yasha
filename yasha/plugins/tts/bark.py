@@ -27,10 +27,12 @@ class ModelPlugin(BasePluginTransformers):
         self.processor = BarkProcessor.from_pretrained(model_name)
     
     async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
-        logger.info("started generation: %s with voice: %s", input, voice)
+        logger.info("started generation: %s with voice: %s to device %s", input, voice, self.device)
 
         inputs = self.processor(input, voice_preset=voice).to(device=self.device)
-        speech_output = self.model.generate(input_ids=inputs.input_ids).cpu().numpy()
+        speech_output = self.model.generate(**inputs).to(device=self.device).numpy()
+
+        logger.info("speech output %s", speech_output)
 
         return RawSpeechResponse(audio=b"", media_type="audio/wav")
         # if stream_format=="sse":
