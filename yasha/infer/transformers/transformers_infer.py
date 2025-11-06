@@ -4,16 +4,17 @@ import sys
 from transformers import pipeline, AutomaticSpeechRecognitionPipeline, TextToAudioPipeline, PretrainedConfig
 import torch
 
-from yasha.infer.infer_config import ModelUsecase, YashaModelConfig, SpeechRequest
+from yasha.infer.infer_config import ModelUsecase, YashaModelConfig, SpeechRequest, RawSpeechResponse
 from fastapi import FastAPI, Form, HTTPException, Request
 from http import HTTPStatus
-from vllm.entrypoints.openai.protocol import ChatCompletionRequest, EmbeddingRequest, TranscriptionRequest, TranscriptionResponse, TranslationRequest
+from vllm.entrypoints.openai.protocol import ChatCompletionRequest, EmbeddingRequest, ErrorResponse, TranscriptionRequest, TranscriptionResponse, TranslationRequest
 from yasha.infer.transformers.openai.serving_speech import OpenAIServingSpeech
 import pkgutil
 import importlib
 
 from yasha.plugins.base_plugin import PluginProtoTransformers, BasePluginTransformers
 from yasha.plugins import tts
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 logger = logging.getLogger("ray")
 
@@ -72,8 +73,25 @@ class TransformersInfer():
             detail="model does not support this action")
     
     async def create_speech(self, request: SpeechRequest, raw_request: Request):
-        raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-            detail="model does not support this action")
+        try:
+            if self.serving_speech is None:
+                raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
+                        detail="model does not support this action")
+            
+            generator = await self.serving_speech.create_speech(request, raw_request)
+        except Exception as e:
+            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
+                                detail=str(e)) from e
+        if isinstance(generator, ErrorResponse):
+            return JSONResponse(content=generator.model_dump(),
+                                status_code=generator.error.code)
+
+        elif isinstance(generator, RawSpeechResponse):
+            logger.info("returning full audio buffer response")
+            return Response(content=generator.audio, media_type=generator.media_type)
+
+        logger.info("returning streaming response")
+        return StreamingResponse(content=generator, media_type="text/event-stream")
 
 
         

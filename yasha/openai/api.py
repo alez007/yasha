@@ -164,10 +164,12 @@ class YashaAPI:
     @app.post("/v1/audio/speech")
     async def create_speech(self, request: SpeechRequest, raw_request: Request):
         model_name = request.model
-        if model_name is not None:
+
+        try:
             infer = self.infers[model_name]
-        else:
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-                detail="model not found")
+
+            return await infer.create_speech(request, raw_request)
+        except Exception as e:
+            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
+                detail=str(e)) from e
         
-        return await infer.create_speech(request, raw_request)
