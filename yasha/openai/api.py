@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 import time
 from yasha.infer.infer_config import YashaModelConfig, SpeechRequest
 from yasha.infer.vllm.vllm_infer import VllmInfer
+from yasha.infer.custom.custom_infer import CustomInfer
 from yasha.infer.transformers.transformers_infer import TransformersInfer
 from vllm.entrypoints.openai.protocol import (
     ChatCompletionRequest,
@@ -62,9 +63,11 @@ class YashaAPI:
     def __init__(self, yml_api_config: list[YashaModelConfig]):
         self.yml_api_config = yml_api_config
 
-        self.infers: dict[str, VllmInfer|TransformersInfer] = {}
+        self.infers: dict[str, VllmInfer|TransformersInfer|CustomInfer] = {}
         for yml_model_config in yml_api_config:
-            if yml_model_config.use_vllm is not False:
+            if yml_model_config.plugin is not None:
+                self.infers[yml_model_config.name] = CustomInfer(model_config=yml_model_config)
+            elif yml_model_config.use_vllm is not False:
                 self.infers[yml_model_config.name] = VllmInfer(yml_model_config)
             else:
                 self.infers[yml_model_config.name] = TransformersInfer(yml_model_config)
