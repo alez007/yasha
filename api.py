@@ -32,7 +32,7 @@ def yasha_app() -> serve.Application:
     return deployment.options(
         num_replicas=1,
         ray_actor_options=dict(
-            num_cpus=3,
+            num_cpus=8,
             num_gpus=1,
         ),
     ).bind(_yml_conf.models)

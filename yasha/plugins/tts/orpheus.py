@@ -1,29 +1,65 @@
-from typing import Literal, Union
+from typing import Literal, Union, cast
 import os
+from vllm.config.parallel import DistributedExecutorBackend
 from vllm.engine.protocol import EngineClient
-from vllm.config.model import ModelConfig
+from vllm.config.model import ModelConfig, ModelDType
 from transformers import AutoTokenizer
 import torch
-from vllm import SamplingParams
+from vllm import AsyncEngineArgs, SamplingParams
 import logging
 from collections.abc import AsyncGenerator
 import base64
-from yasha.infer.infer_config import SpeechResponse, SpeechRequest, RawSpeechResponse
+
+from vllm.usage.usage_lib import UsageContext
+from vllm.v1.engine.async_llm import AsyncLLM
+from yasha.infer.infer_config import SpeechResponse, SpeechRequest, RawSpeechResponse, VllmEngineConfig, YashaModelConfig
 from vllm.entrypoints.openai.protocol import ErrorInfo, ErrorResponse
 import wave
 import io
 import numpy as np
-from yasha.plugins.base_plugin import BasePluginVllm
+from yasha.plugins.base_plugin import BasePlugin
 
 logger = logging.getLogger("ray")
 
-class ModelPlugin(BasePluginVllm):
-    def __init__(self, engine_client: EngineClient, model_config: ModelConfig):
+class ModelPlugin(BasePlugin):
+    def __init__(self, model_config: YashaModelConfig):
+        self.model_config = model_config
+
+        config_engine_kwargs = model_config.vllm_engine_kwargs.model_dump() if model_config.vllm_engine_kwargs is not None else {}
+        config_engine_kwargs['model'] = model_config.model
+        vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
+        logger.info("initialising vllm engine with args: %s", vllm_engine_kwargs.model_dump())
+
+        engine_args = AsyncEngineArgs(
+            model=vllm_engine_kwargs.model,
+            tensor_parallel_size=vllm_engine_kwargs.tensor_parallel_size,
+            max_model_len=vllm_engine_kwargs.max_model_len,
+            dtype=cast(ModelDType, vllm_engine_kwargs.dtype),
+            tokenizer=vllm_engine_kwargs.tokenizer,
+            trust_remote_code=vllm_engine_kwargs.trust_remote_code,
+            gpu_memory_utilization=vllm_engine_kwargs.gpu_memory_utilization,
+            distributed_executor_backend=cast(DistributedExecutorBackend, vllm_engine_kwargs.distributed_executor_backend),
+            enable_log_requests=vllm_engine_kwargs.enable_log_requests if vllm_engine_kwargs.enable_log_requests is not None else False,
+        )
+        # engine_args.engine_use_ray = True
+
+        usage_context = UsageContext.OPENAI_API_SERVER
+        engine_config = engine_args.create_engine_config(usage_context=usage_context)
+
+        self.engine = AsyncLLM.from_vllm_config(
+            vllm_config=engine_config,
+            usage_context=usage_context,
+            enable_log_requests=engine_args.enable_log_requests,
+            disable_log_stats=engine_args.disable_log_stats,
+        )
+    
+    async def start(self):
+        vllm_config = await self.engine.get_vllm_config()
+
         from orpheus_tts.decoder import tokens_decoder
 
         self.tokens_decoder = tokens_decoder
-        self.engine_client = engine_client
-        tokenizer_path = model_config.tokenizer
+        tokenizer_path = vllm_config.model_config.tokenizer
         self.tokenizer = self._load_tokenizer(tokenizer_path)
 
     def _load_tokenizer(self, tokenizer_path):
@@ -94,7 +130,7 @@ class ModelPlugin(BasePluginVllm):
             repetition_penalty=1.3,
         )
 
-        async for result in self.engine_client.generate(
+        async for result in self.engine.generate(
             prompt=prompt_string,
             sampling_params=sampling_params,
             request_id=request_id,
