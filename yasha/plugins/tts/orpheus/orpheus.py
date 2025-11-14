@@ -76,13 +76,21 @@ class ModelPlugin(BasePlugin):
             return AutoTokenizer.from_pretrained("gpt2")
 
     def _format_prompt(self, prompt: str, voice: str):
-        adapted_prompt = f"{voice}: {prompt}"
-        prompt_tokens = self.tokenizer(adapted_prompt, return_tensors="pt")
-        start_token = torch.tensor([[ 128259]], dtype=torch.int64)
-        end_tokens = torch.tensor([[128009, 128260, 128261, 128257]], dtype=torch.int64)
-        all_input_ids = torch.cat([start_token, prompt_tokens.input_ids, end_tokens], dim=1)
-        prompt_string = self.tokenizer.decode(all_input_ids[0])
-        return prompt_string
+        # adapted_prompt = f"{voice}: {prompt}"
+        # prompt_tokens = self.tokenizer(adapted_prompt, return_tensors="pt")
+        # start_token = torch.tensor([[ 128259]], dtype=torch.int64)
+        # end_tokens = torch.tensor([[128009, 128260, 128261, 128257]], dtype=torch.int64)
+        # all_input_ids = torch.cat([start_token, prompt_tokens.input_ids, end_tokens], dim=1)
+        # prompt_string = self.tokenizer.decode(all_input_ids[0])
+        # return prompt_string
+
+        formatted_prompt = f"{voice}: {prompt}"
+    
+        # Add special token markers for the Orpheus-FASTAPI
+        special_start = "<|audio|>"  # Using the additional_special_token from config
+        special_end = "<|eot_id|>"   # Using the eos_token from config
+        
+        return f"{special_start}{formatted_prompt}{special_end}"
 
     async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> Union[RawSpeechResponse, AsyncGenerator[str, None],
         ErrorResponse]:
@@ -95,9 +103,15 @@ class ModelPlugin(BasePlugin):
                 wf.setnchannels(1)
                 wf.setsampwidth(2)
                 wf.setframerate(24000)
+                total_frames = 0
                 async for audio_bytes in self.generate_audio_bytes_async(input, voice, request_id):
                     logger.info("got some audio bytes for wav: %s", audio_bytes)   # PCM16 bytes from SNAC
+                    frame_count = len(audio_bytes) // (wf.getsampwidth() * wf.getnchannels())
+                    total_frames += frame_count
                     wf.writeframes(audio_bytes)
+                
+                duration = total_frames / wf.getframerate()
+                logger.info("audio has total duration of %s seconds", duration)
             
             return RawSpeechResponse(audio=buf.getvalue(), media_type="audio/wav")
 

@@ -42,10 +42,11 @@ class CustomInfer():
     async def start(self):
         plugin = self.model_config.plugin
         if plugin is not None:
+            # for _, modname, ispkg in pkgutil.walk_packages(path=tts.__path__, prefix=tts.__name__ + '.'):
             for _, modname, ispkg in pkgutil.iter_modules(tts.__path__):
-                if ispkg is False and modname==plugin:
+                if modname==plugin:
                     logger.info("Found submodule %s (is a package: %s)", modname, ispkg)
-                    module = cast(PluginProto, importlib.import_module(".".join([tts.__name__, modname]), package=None))
+                    module = cast(PluginProto, importlib.import_module(".".join([tts.__name__, modname, modname]) if ispkg is True else ".".join([tts.__name__, modname]), package=None))
                     self.custom_engine = module.ModelPlugin(model_config=self.model_config)
                     await self.custom_engine.start()
 

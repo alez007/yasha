@@ -1,24 +1,37 @@
 # vllm engine args reference: https://docs.vllm.ai/en/latest/configuration/engine_args.html
 
 models:
-  - 
-    name: "bark-small"
-    model: "suno/bark-small"
-    usecase: "tts"
-    plugin: "bark"
-    transformers_config:
-      device: "cuda:0"
   # - 
-  #   name: "orpheus"
-  #   model: "unsloth/orpheus-3b-0.1-ft-unsloth-bnb-4bit"
+  #   name: "piper"
   #   usecase: "tts"
-  #   plugin: "orpheus"
-  #   vllm_engine_kwargs:
-  #     tensor_parallel_size: 1
-  #     gpu_memory_utilization: 0.3
-  #     trust_remote_code: 1
-  #     max_model_len: 2048
-  #     dtype: float16
+  #   plugin: "piper"
+
+  # - 
+  #   name: "kokoro"
+  #   model: "hexgrad/Kokoro-82M"
+  #   usecase: "tts"
+  #   plugin: "kokoro"
+  # - 
+  #   name: "bark-small"
+  #   model: "suno/bark-small"
+  #   usecase: "tts"
+  #   plugin: "bark"
+  #   transformers_config:
+  #     device: "cuda:0"
+  - 
+    name: "orpheus"
+    # model: "unsloth/orpheus-3b-0.1-ft-unsloth-bnb-4bit"
+    model: "canopylabs/orpheus-3b-0.1-ft"
+    usecase: "tts"
+    plugin: "orpheus"
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      gpu_memory_utilization: 0.5
+      trust_remote_code: 1
+      max_model_len: 2048
+      dtype: float16
+      kv_cache_dtype: "fp8_e4m3"
+      quantization: "fp8"
   # -
   #   name: "Qwen2.5-VL-7B"
   #   model: "unsloth/Qwen2.5-VL-7B-Instruct-bnb-4bit"
