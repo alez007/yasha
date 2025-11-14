@@ -23,18 +23,30 @@ class VllmEngineConfig(BaseModel):
     task: str = "auto"
     model_impl: str|None = None
     enable_log_requests: bool|None = False
+    kv_cache_dtype: str|None = None
+    quantization: str|None = None
 
 class TransformersConfig(BaseModel):
     device: str = "cpu"
+
+class PluginConfig(BaseModel):
+    pass
     
 class YashaModelConfig(BaseModel):
     name: str
-    model: str
+    model: str|None = None
     usecase: ModelUsecase
     plugin: str|None = None
     use_vllm: bool = True
     vllm_engine_kwargs: VllmEngineConfig|None = None
     transformers_config: TransformersConfig|None = None
+    plugin_config: PluginConfig|None = None
+
+    @model_validator(mode='after')
+    def check_model_or_plugin(self):
+        if self.model is None and self.plugin is None:
+            raise ValueError('model and plugin fields cannot be both empty')
+        return self
 
 class YashaConfig(BaseModel):
     models: list[YashaModelConfig]
