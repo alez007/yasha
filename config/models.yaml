@@ -2,11 +2,6 @@
 
 models:
   # - 
-  #   name: "piper"
-  #   usecase: "tts"
-  #   plugin: "piper"
-
-  # - 
   #   name: "kokoro"
   #   model: "hexgrad/Kokoro-82M"
   #   usecase: "tts"
@@ -18,28 +13,36 @@ models:
   #   plugin: "bark"
   #   transformers_config:
   #     device: "cuda:0"
-  - 
-    name: "orpheus"
-    # model: "unsloth/orpheus-3b-0.1-ft-unsloth-bnb-4bit"
-    model: "canopylabs/orpheus-3b-0.1-ft"
-    usecase: "tts"
-    plugin: "orpheus"
-    vllm_engine_kwargs:
-      tensor_parallel_size: 1
-      gpu_memory_utilization: 0.5
-      trust_remote_code: 1
-      max_model_len: 2048
-      dtype: float16
-      kv_cache_dtype: "fp8_e4m3"
-      quantization: "fp8"
+  # - 
+  #   name: "orpheus"
+  #   model: "unsloth/orpheus-3b-0.1-ft-unsloth-bnb-4bit"
+  #   usecase: "tts"
+  #   plugin: "orpheus"
+  #   vllm_engine_kwargs:
+  #     tensor_parallel_size: 1
+  #     gpu_memory_utilization: 0.5
+  #     trust_remote_code: 1
+  #     max_model_len: 2048
+  #     dtype: float16
+  #     kv_cache_dtype: "fp8_e4m3"
+  #     quantization: "fp8"
   # -
-  #   name: "Qwen2.5-VL-7B"
-  #   model: "unsloth/Qwen2.5-VL-7B-Instruct-bnb-4bit"
+  #   name: "gemma-3n-E4B"
+  #   model: "unsloth/gemma-3-12b-it-unsloth-bnb-4bit"
   #   usecase: "generate"
   #   vllm_engine_kwargs:
   #     tensor_parallel_size: 1
   #     max_model_len: 32000
-  #     gpu_memory_utilization: 0.8
+  #     gpu_memory_utilization: 0.7
+  #     enable_log_requests: 1
+  # -
+  #   name: "Qwen3-8B"
+  #   model: "unsloth/Qwen3-8B-unsloth-bnb-4bit"
+  #   usecase: "generate"
+  #   vllm_engine_kwargs:
+  #     tensor_parallel_size: 1
+  #     max_model_len: 32000
+  #     gpu_memory_utilization: 0.7
   #     enable_log_requests: 1
   # - 
   #   name: "whisper"

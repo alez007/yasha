@@ -54,7 +54,7 @@ class ModelPlugin(BasePlugin):
         )
     
     async def start(self):
-        vllm_config = await self.engine.get_vllm_config()
+        vllm_config = self.engine.vllm_config
 
         from orpheus_tts.decoder import tokens_decoder
 

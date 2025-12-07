@@ -27,7 +27,7 @@ logger = logging.getLogger("ray")
 class ModelPlugin(BasePlugin):
     def __init__(self, model_config: YashaModelConfig):
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self.pipeline = KPipeline(lang_code='a', repo_id=model_config.model, device=self.device, trf=True)
+        self.pipeline = KPipeline(lang_code='a', repo_id=model_config.model, device=self.device)
         
     
     async def start(self):
