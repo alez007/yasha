@@ -32,7 +32,6 @@ class OpenAIServingSpeech(OpenAIServing):
         plugin: str|None = None,
     ):
         super().__init__(engine_client=engine_client,
-                         model_config=model_config,
                          models=models,
                          request_logger=request_logger,
                          return_tokens_as_token_ids=return_tokens_as_token_ids,

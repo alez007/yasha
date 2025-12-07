@@ -82,7 +82,7 @@ class VllmInfer():
 
     async def start(self):
         logger.info("Start vllm infer for model: %s", self.model_config)
-        self.vllm_config = await self.engine.get_vllm_config()
+        self.vllm_config = self.engine.vllm_config
         self.supported_tasks = await self.engine.get_supported_tasks()
         logger.info("Supported_tasks: %s", self.supported_tasks)
 
@@ -96,10 +96,8 @@ class VllmInfer():
         logger.info("init_serving_chat: %s, %s", self.supported_tasks, self.model_config.usecase)
         return OpenAIServingChat(
             engine_client=self.engine,
-            model_config=self.vllm_config.model_config,
             models=OpenAIServingModels(
                 engine_client=self.engine,
-                model_config=self.vllm_config.model_config,
                 base_model_paths=[
                     BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
                 ]
@@ -114,10 +112,8 @@ class VllmInfer():
         logger.info("init_serving_embeding: %s, %s", self.supported_tasks, self.model_config.usecase)
         return OpenAIServingEmbedding(
             engine_client=self.engine,
-            model_config=self.vllm_config.model_config,
             models=OpenAIServingModels(
                 engine_client=self.engine,
-                model_config=self.vllm_config.model_config,
                 base_model_paths=[
                     BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
                 ]
@@ -132,10 +128,8 @@ class VllmInfer():
         logger.info("init_serving_transcription: %s, %s", self.supported_tasks, self.model_config.usecase)
         return OpenAIServingTranscription(
             engine_client=self.engine,
-            model_config=self.vllm_config.model_config,
             models=OpenAIServingModels(
                 engine_client=self.engine,
-                model_config=self.vllm_config.model_config,
                 base_model_paths=[
                     BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
                 ]
@@ -147,10 +141,8 @@ class VllmInfer():
         logger.info("init_serving_translation: %s, %s", self.supported_tasks, self.model_config.usecase)
         return OpenAIServingTranslation(
             engine_client=self.engine,
-            model_config=self.vllm_config.model_config,
             models=OpenAIServingModels(
                 engine_client=self.engine,
-                model_config=self.vllm_config.model_config,
                 base_model_paths=[
                     BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
                 ]
@@ -165,7 +157,6 @@ class VllmInfer():
             model_config=self.vllm_config.model_config,
             models=OpenAIServingModels(
                 engine_client=self.engine,
-                model_config=self.vllm_config.model_config,
                 base_model_paths=[
                     BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
                 ]
