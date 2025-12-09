@@ -134,7 +134,7 @@ class VllmInfer():
                     BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
                 ]
             ),
-            request_logger=None,
+            request_logger=RequestLogger(max_log_len=None),
         ) if (self.model_config.usecase in [ModelUsecase.transcription, ModelUsecase.translation]) and "transcription" in self.supported_tasks else None
 
     async def init_serving_translation(self) -> OpenAIServingTranslation|None:
@@ -147,7 +147,7 @@ class VllmInfer():
                     BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
                 ]
             ),
-            request_logger=None,
+            request_logger=RequestLogger(max_log_len=None),
         ) if (self.model_config.usecase in [ModelUsecase.transcription, ModelUsecase.translation]) and "transcription" in self.supported_tasks else None
     
     async def init_serving_speech(self) -> OpenAIServingSpeech|None:
@@ -161,7 +161,7 @@ class VllmInfer():
                     BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
                 ]
             ),
-            request_logger=None,
+            request_logger=RequestLogger(max_log_len=None),
             plugin=self.model_config.plugin,
         ) if self.model_config.usecase is ModelUsecase.tts and "generate" in self.supported_tasks else None
 
@@ -206,13 +206,14 @@ class VllmInfer():
 
         return StreamingResponse(content=generator, media_type="text/event-stream")
 
-    async def create_transcription(self, request: Annotated[TranscriptionRequest, Form()], raw_request: Request):
+    async def create_transcription(self, request: TranscriptionRequest, raw_request: Request):
         try:
             if self.serving_transcription is None:
                 raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
                         detail="model does not support this action")
             
             audio_data = await request.file.read()
+            request.timestamp_granularities = []
             
             generator = await self.serving_transcription.create_transcription(audio_data, request, raw_request)
         except Exception as e:
@@ -227,7 +228,7 @@ class VllmInfer():
 
         return StreamingResponse(content=generator, media_type="text/event-stream")
 
-    async def create_translation(self, request: Annotated[TranslationRequest, Form()], raw_request: Request):
+    async def create_translation(self, request: TranslationRequest, raw_request: Request):
         try:
             if self.serving_translation is None:
                 raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
@@ -237,6 +238,7 @@ class VllmInfer():
             
             generator = await self.serving_translation.create_translation(audio_data, request, raw_request)
         except Exception as e:
+            logger.exception(e)
             raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
                                 detail=str(e)) from e
         if isinstance(generator, ErrorResponse):

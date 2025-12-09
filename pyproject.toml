@@ -6,23 +6,17 @@ authors = [
     { name = "Alex Margarit" }
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = "==3.13.0"
+requires-python = "==3.12.10"
 dependencies = [
     "argparse>=1.4.0",
     "asyncio>=4.0.0",
     "bitsandbytes>=0.47.0",
-    "espeakng>=1.0.3",
-    "espeakng-loader>=0.2.4",
     "fastapi>=0.116.1",
     "flashinfer-python>=0.5.2",
     "httpx>=0.28.1",
-    "kokoro>=0.9.4",
-    "misaki[en]>=0.9.4",
+    "kokoro-onnx[gpu]>=0.4.9",
     "numpy>=2.2.6",
     "orpheus-speech>=0.1.0",
-    "phonemizer>=3.3.0",
-    "phonemizer-fork>=3.3.2",
-    "piper-tts>=1.3.0",
     "pydantic>=2.12.0",
     "pydantic-yaml>=1.6.0",
     "python-multipart>=0.0.20",

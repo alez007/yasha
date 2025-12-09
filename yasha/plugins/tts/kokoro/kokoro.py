@@ -20,28 +20,32 @@ from transformers import BarkModel, BarkProcessor
 from yasha.infer.infer_config import SpeechResponse, SpeechRequest, RawSpeechResponse
 from collections.abc import AsyncGenerator
 from scipy.io.wavfile import write as write_wav
-from kokoro import KPipeline, KModel
+from kokoro_onnx import Kokoro
+import onnxruntime as ort
+import os
 
 logger = logging.getLogger("ray")
 
 class ModelPlugin(BasePlugin):
     def __init__(self, model_config: YashaModelConfig):
-        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self.pipeline = KPipeline(lang_code='a', repo_id=model_config.model, device=self.device)
+        providers = ort.get_available_providers()
+        logger.info("available providers: %s", providers)
+        files = [f for f in os.listdir('.') if os.path.isfile(f)]
+        for f in files:
+            logger.info("cwd: %s", f)
+        self.kokoro = Kokoro("/yasha/plugins/tts/kokoro/kokoro-v1.0.onnx", "/yasha/plugins/tts/kokoro/voices-v1.0.bin")
         
     
     async def start(self):
         pass
     
     async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
-        logger.info("started generation: %s with voice: %s to device %s", input, voice, self.device)
-
-        generator = self.pipeline(input, voice=voice)
+        logger.info("started generation: %s with voice: %s", input, voice)
 
         buf = io.BytesIO()
-        for i, (gs, ps, audio_bytes) in enumerate(generator):
+        async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
             logger.info("got some audio bytes for wav: %s", audio_bytes)
-            write_wav(buf, rate=24000, data=audio_bytes)
+            write_wav(buf, rate=sample_rate, data=audio_bytes)
             
 
         return RawSpeechResponse(audio=buf.getvalue(), media_type="audio/wav")
