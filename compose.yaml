@@ -12,6 +12,7 @@ services:
       VLLM_USE_V1: ${VLLM_USE_V1}
       VLLM_USE_RAY_SPMD_WORKER: ${VLLM_USE_RAY_SPMD_WORKER}
       RAY_SERVE_MAX_DEPLOYMENT_CONSTRUCTOR_RETRY_COUNT: 1
+      ONNX_PROVIDER: "CUDAExecutionProvider"
     volumes:
       - ./config:/config
     ports:
