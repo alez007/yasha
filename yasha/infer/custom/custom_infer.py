@@ -7,7 +7,8 @@ import torch
 from yasha.infer.infer_config import ModelUsecase, YashaModelConfig, SpeechRequest, RawSpeechResponse
 from fastapi import FastAPI, Form, HTTPException, Request
 from http import HTTPStatus
-from vllm.entrypoints.openai.protocol import ChatCompletionRequest, EmbeddingRequest, ErrorResponse, TranscriptionRequest, TranscriptionResponse, TranslationRequest
+from vllm.entrypoints.openai.protocol import ChatCompletionRequest, ErrorResponse, TranscriptionRequest, TranscriptionResponse, TranslationRequest
+from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest
 from yasha.infer.custom.openai.serving_speech import OpenAIServingSpeech
 import pkgutil
 import importlib

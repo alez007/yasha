@@ -28,6 +28,7 @@ dependencies = [
     "torchaudio>=2.9.0",
     "torchvision>=0.24.0",
     "transformers>=4.56.1",
+    "vllm[audio]==0.12.0",
 ]
 
 [build-system]

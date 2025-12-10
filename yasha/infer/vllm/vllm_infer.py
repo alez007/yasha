@@ -12,7 +12,7 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.usage.usage_lib import UsageContext
 from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
-from vllm.entrypoints.openai.serving_embedding import OpenAIServingEmbedding
+from vllm.entrypoints.pooling.embed.serving import OpenAIServingEmbedding
 from vllm.entrypoints.openai.serving_transcription import OpenAIServingTranscription, OpenAIServingTranslation
 from vllm.entrypoints.openai.serving_models import (
     BaseModelPath,
@@ -25,14 +25,11 @@ from http import HTTPStatus
 from vllm.entrypoints.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
-    CompletionRequest,
-    CompletionResponse,
     ErrorResponse,
-    EmbeddingRequest,
-    EmbeddingResponse,
     TranscriptionRequest,
     TranscriptionResponse,
 )
+from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest, EmbeddingResponse
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from yasha.infer.vllm.openai.serving_speech import OpenAIServingSpeech
 from vllm.tasks import SupportedTask
