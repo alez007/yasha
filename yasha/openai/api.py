@@ -13,12 +13,11 @@ from vllm.entrypoints.openai.protocol import (
     CompletionRequest,
     CompletionResponse,
     ErrorResponse,
-    EmbeddingRequest,
-    EmbeddingResponse,
     TranscriptionRequest,
     TranscriptionResponse,
     TranslationRequest
 )
+from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest, EmbeddingResponse
 from vllm.entrypoints.openai.serving_models import (
     BaseModelPath,
     LoRAModulePath,
