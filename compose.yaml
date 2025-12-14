@@ -1,6 +1,8 @@
 services:
   ray-head:
     image: yasha.base
+    profiles: 
+      - server
     depends_on:
       - yasha-base
     shm_size: ${RAY_OBJECT_STORE_SHM_SIZE}
@@ -37,6 +39,8 @@ services:
   
   ray-serve:
     image: yasha.base
+    profiles: 
+      - server
     depends_on: 
       ray-head:
         condition: service_healthy
@@ -49,6 +53,20 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - yasha
+  
+  ray-api:
+    image: yasha.base
+    profiles: 
+      - client
+    # depends_on: 
+    #   ray-serve:
+    #     condition: service_healthy
+    working_dir: /
+    command: ["uv", "run", "--env-file", ".env", "--", "api.py"]
+    volumes:
+      - ./config:/config
     networks:
       - yasha
 
