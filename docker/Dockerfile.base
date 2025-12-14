@@ -22,6 +22,8 @@ ADD ./yasha /yasha
 ADD ./pyproject.toml /pyproject.toml
 ADD ./README.md /README.md
 ADD ./uv.lock /uv.lock
+ADD ./.env /.env
+ADD ./api.py /api.py
 
 # Sync the project
 RUN --mount=type=cache,target=/root/.cache/uv \

@@ -2,11 +2,5 @@ FROM yasha.base
 
 WORKDIR /yasha
 
-# ENTRYPOINT uv run --env-file .env --directory ./ -- serve start --http-host 0.0.0.0 --http-port 8000 --address=ray://ray-head:${RAY_HEAD_PORT}
-# ENTRYPOINT uv run --env-file .env --directory ./ -- serve run --route-prefix=/api --name=api --address=ray://ray-head:${RAY_HEAD_PORT} --runtime-env-json='{"working_dir": "./"}' api:app
-# ENTRYPOINT ./.venv/bin/serve run --route-prefix=/api --name=api --address=http://ray-head:${RAY_DASHBOARD_PORT} --runtime-env-json='{"working_dir": "./"}' api:app
-# ENTRYPOINT uv run --env-file .env --directory ./ -- serve run --route-prefix=/api --name=api --address=http://ray-head:${RAY_DASHBOARD_PORT} --runtime-env-json='{"working_dir": "./"}' api:app
-# ENTRYPOINT uv run --env-file .env --directory ./ -- serve deploy --name=api --address=http://ray-head:${RAY_DASHBOARD_PORT} api:app
-# ENTRYPOINT ./.venv/bin/serve deploy --name=api --address=http://ray-head:${RAY_DASHBOARD_PORT} api:app
 ENTRYPOINT uv run --env-file .env -- api.py
 
