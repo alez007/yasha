@@ -43,15 +43,17 @@ models:
   #     dtype: float16
   #     kv_cache_dtype: "fp8_e4m3"
   #     quantization: "fp8"
-  -
-    name: "gemma-3-4b"
-    model: "unsloth/gemma-3-4b-it-unsloth-bnb-4bit"
-    usecase: "generate"
-    vllm_engine_kwargs:
-      tensor_parallel_size: 1
-      max_model_len: 32000
-      gpu_memory_utilization: 0.6
-      enable_log_requests: 1
+  # -
+  #   name: "gemma-3-4b"
+  #   model: "unsloth/gemma-3-4b-it-unsloth-bnb-4bit"
+  #   usecase: "generate"
+  #   vllm_engine_kwargs:
+  #     tensor_parallel_size: 1
+  #     max_model_len: 32000
+  #     gpu_memory_utilization: 0.6
+  #     enable_log_requests: 1
+  #     enable_auto_tool_choice: 1
+  #     tool_call_parser: "hermes"
   # -
   #   name: "Qwen3-4B"
   #   model: "unsloth/Qwen3-4B-unsloth-bnb-4bit"
@@ -61,5 +63,18 @@ models:
   #     max_model_len: 32000
   #     gpu_memory_utilization: 0.60
   #     enable_log_requests: 1
+  #     enable_auto_tool_choice: 1
+  #     tool_call_parser: "hermes"
+  -
+    name: "qwen2.5-3b"
+    model: "Qwen/Qwen2.5-3B-Instruct-GPTQ-Int4"
+    usecase: "generate"
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      max_model_len: 32000
+      gpu_memory_utilization: 0.5
+      enable_log_requests: 1
+      enable_auto_tool_choice: 1
+      tool_call_parser: "hermes"
   
   
