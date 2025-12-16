@@ -25,6 +25,9 @@ class VllmEngineConfig(BaseModel):
     enable_log_requests: bool|None = False
     kv_cache_dtype: str|None = None
     quantization: str|None = None
+    enable_auto_tool_choice: bool|None = None
+    tool_call_parser: str|None = None
+    chat_template_content_format: str = "auto"
 
 class TransformersConfig(BaseModel):
     device: str = "cpu"

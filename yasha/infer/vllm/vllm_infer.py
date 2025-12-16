@@ -102,7 +102,9 @@ class VllmInfer():
             response_role="assistant",
             request_logger=RequestLogger(max_log_len=None),
             chat_template=None,
-            chat_template_content_format='auto',
+            chat_template_content_format=self.model_config.vllm_engine_kwargs.chat_template_content_format,
+            enable_auto_tools=True if self.model_config.vllm_engine_kwargs.enable_auto_tool_choice is not None else False,
+            tool_parser=self.model_config.vllm_engine_kwargs.tool_call_parser if self.model_config.vllm_engine_kwargs.tool_call_parser is not None else None,
         ) if self.model_config.usecase is ModelUsecase.generate and "generate" in self.supported_tasks else None
 
     async def init_serving_embeding(self) -> OpenAIServingEmbedding|None:
