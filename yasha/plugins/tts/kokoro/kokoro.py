@@ -28,13 +28,16 @@ logger = logging.getLogger("ray")
 
 class ModelPlugin(BasePlugin):
     def __init__(self, model_config: YashaModelConfig):
-        providers = ort.get_available_providers()
-        logger.info("available providers: %s", providers)
-        
-        download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx", "/yasha/plugins/tts/kokoro/kokoro-v1.0.onnx")
-        download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin", "/yasha/plugins/tts/kokoro/voices-v1.0.bin")
+        logger.info(f"onnxruntime device: {ort.get_device()}")
+        logger.info(f"available providers: {ort.get_available_providers()}")
 
-        self.kokoro = Kokoro("/yasha/plugins/tts/kokoro/kokoro-v1.0.onnx", "/yasha/plugins/tts/kokoro/voices-v1.0.bin")
+        
+        model_path = os.path.dirname(os.path.abspath(__file__)) + "/kokoro-v1.0.onnx"
+        voices_path = os.path.dirname(os.path.abspath(__file__)) + "/voices-v1.0.bin"
+        download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx", model_path)
+        download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin", voices_path)
+
+        self.kokoro = Kokoro(model_path, voices_path)
         
     
     async def start(self):
