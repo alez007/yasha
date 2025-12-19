@@ -14,7 +14,7 @@ if ray.is_initialized():
     ray.shutdown()
 
 ray.init(
-    address=f'ray://{os.getenv("YASHA_RAY_HEAD_IP")}:{os.getenv("RAY_HEAD_PORT")}',
+    address=f'ray://0.0.0.0:{os.getenv("RAY_HEAD_PORT")}',
 )
 
 def yasha_app() -> serve.Application:
