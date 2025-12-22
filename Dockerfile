@@ -24,7 +24,7 @@ WORKDIR /yasha
 
 ADD ./pyproject.toml pyproject.toml
 ADD ./README.md README.md
-ADD ./uv.lock uv.lock
+# ADD ./uv.lock uv.lock
 
 
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -43,22 +43,12 @@ COPY <<EOF start.sh
 uv sync --locked
 
 ray start --head --dashboard-port=\${RAY_DASHBOARD_PORT} --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=8 --num-gpus=1 --disable-usage-stats
-sleep 10
 if ray status --address=0.0.0.0:\${RAY_REDIS_PORT}; then
-    if serve start --http-host 0.0.0.0 --http-port 8000 --address=ray://0.0.0.0:\${RAY_HEAD_PORT}; then
-        if timeout -k 30 20 serve status --address=http://0.0.0.0:\${RAY_DASHBOARD_PORT} | grep "HEALTHY"; then
-            echo "ray serve started"
-        else
-            echo "ray serve failed to start"
-        fi
-    fi
+    uv run --active start.py
 else
     echo "ray cluster failed to start"
 fi
 
-uv run start.py
-
-# tail -f /dev/null
 EOF
 RUN chmod +x start.sh
 
