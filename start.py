@@ -3,6 +3,7 @@ import logging
 import ray
 
 from ray import serve
+from ray.serve.config import HTTPOptions
 from pydantic_yaml import parse_yaml_raw_as
 
 from yasha.infer.infer_config import YashaConfig
@@ -14,7 +15,8 @@ if ray.is_initialized():
     ray.shutdown()
 
 ray.init(
-    address=f'ray://0.0.0.0:{os.getenv("RAY_HEAD_PORT")}',
+    address=f'auto',
+    runtime_env={"working_dir": "."}
 )
 
 def yasha_app() -> serve.Application:
@@ -38,5 +40,7 @@ def yasha_app() -> serve.Application:
     ).bind(_yml_conf.models)
 
 
-
-serve.run(yasha_app(), route_prefix='/', name='yasha api')
+serve.start(
+    http_options=HTTPOptions(host="0.0.0.0")
+)
+serve.run(yasha_app(), route_prefix='/', name='yasha api', blocking=True)
