@@ -24,7 +24,7 @@ WORKDIR /yasha
 
 ADD ./pyproject.toml pyproject.toml
 ADD ./README.md README.md
-# ADD ./uv.lock uv.lock
+ADD ./uv.lock uv.lock
 
 
 RUN --mount=type=cache,target=/root/.cache/uv \
