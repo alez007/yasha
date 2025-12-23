@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.9.1-devel-ubuntu22.04 AS base
+FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu22.04 AS base
 
 RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && CUDA_MAJOR_VERSION=$(echo $CUDA_VERSION | cut -d. -f1) && \
     apt update -y && \
@@ -9,9 +9,7 @@ RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && CUDA
         cuda-nvrtc-${CUDA_VERSION_DASH} \
         cuda-cuobjdump-${CUDA_VERSION_DASH} \
         libcurand-dev-${CUDA_VERSION_DASH} \
-        libcublas-${CUDA_VERSION_DASH} \ 
-        cudnn9-cuda-${CUDA_MAJOR_VERSION} \
-        libcudnn9-cuda-${CUDA_MAJOR_VERSION}
+        libcublas-${CUDA_VERSION_DASH}
 
 # Verify GCC version
 RUN echo $(gcc --version)
