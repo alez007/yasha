@@ -6,23 +6,23 @@ models:
     model: "hexgrad/Kokoro-82M"
     usecase: "tts"
     plugin: "kokoro"
-  - 
-    name: "whisper"
-    model: "openai/whisper-small"
-    # use_vllm: false
-    usecase: "transcription"
-    vllm_engine_kwargs:
-      tensor_parallel_size: 1
-      gpu_memory_utilization: 0.15
-      trust_remote_code: 1
-  - 
-    name: "nomic-embed-text-v1.5"
-    model: "nomic-ai/nomic-embed-text-v1.5"
-    usecase: "embed"
-    vllm_engine_kwargs:
-      tensor_parallel_size: 1
-      gpu_memory_utilization: 0.05
-      trust_remote_code: 1
+  # - 
+  #   name: "whisper"
+  #   model: "openai/whisper-small"
+  #   # use_vllm: false
+  #   usecase: "transcription"
+  #   vllm_engine_kwargs:
+  #     tensor_parallel_size: 1
+  #     gpu_memory_utilization: 0.15
+  #     trust_remote_code: 1
+  # - 
+  #   name: "nomic-embed-text-v1.5"
+  #   model: "nomic-ai/nomic-embed-text-v1.5"
+  #   usecase: "embed"
+  #   vllm_engine_kwargs:
+  #     tensor_parallel_size: 1
+  #     gpu_memory_utilization: 0.05
+  #     trust_remote_code: 1
   # - 
   #   name: "bark-small"
   #   model: "suno/bark-small"
@@ -65,16 +65,16 @@ models:
   #     enable_log_requests: 1
   #     enable_auto_tool_choice: 1
   #     tool_call_parser: "hermes"
-  -
-    name: "qwen2.5-3b"
-    model: "Qwen/Qwen2.5-3B-Instruct-GPTQ-Int4"
-    usecase: "generate"
-    vllm_engine_kwargs:
-      tensor_parallel_size: 1
-      max_model_len: 32000
-      gpu_memory_utilization: 0.5
-      enable_log_requests: 1
-      enable_auto_tool_choice: 1
-      tool_call_parser: "hermes"
+  # -
+  #   name: "qwen2.5-3b"
+  #   model: "Qwen/Qwen2.5-3B-Instruct-GPTQ-Int4"
+  #   usecase: "generate"
+  #   vllm_engine_kwargs:
+  #     tensor_parallel_size: 1
+  #     max_model_len: 32000
+  #     gpu_memory_utilization: 0.5
+  #     enable_log_requests: 1
+  #     enable_auto_tool_choice: 1
+  #     tool_call_parser: "hermes"
   
   
