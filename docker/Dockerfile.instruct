@@ -1,5 +1,0 @@
-FROM yasha.base
-
-WORKDIR /yasha
-
-ENTRYPOINT uv run --env-file .env --directory ./ -- serve run --reload --route-prefix=/instruct --name=instruct --address=ray://ray-head:${RAY_HEAD_PORT} --runtime-env-json='{"working_dir": "./"}' instruct:app
