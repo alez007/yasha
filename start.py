@@ -16,7 +16,8 @@ if ray.is_initialized():
 
 ray.init(
     address=f'auto',
-    runtime_env={"working_dir": "."}
+    runtime_env={"working_dir": "."},
+    namespace="yasha"
 )
 
 def yasha_app() -> serve.Application:
@@ -34,13 +35,9 @@ def yasha_app() -> serve.Application:
     return deployment.options(
         num_replicas=1,
         ray_actor_options=dict(
-            num_cpus=8,
+            num_cpus=2,
             num_gpus=1,
         ),
     ).bind(_yml_conf.models)
 
-
-serve.start(
-    http_options=HTTPOptions(host="0.0.0.0")
-)
-serve.run(yasha_app(), route_prefix='/', name='yasha api', blocking=True)
+app = yasha_app()
