@@ -1,8 +1,8 @@
-ARG CUDA_VERSION=12.9.1
+ARG CUDA_VERSION=13.0.2
 ARG CODE_SERVER_VERSION=4.107.0
 ARG PYTHON_VERSION=3.12.10
 
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS base
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS base
 
 RUN apt update -y && \
     apt install -y --no-install-recommends \
@@ -54,6 +54,8 @@ ARG PYTHON_VERSION
 RUN uv python install ${PYTHON_VERSION}
 RUN uv pip install onnxruntime-gpu==1.19.2
 
+ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project
 
@@ -61,18 +63,27 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # # RUN --mount=type=cache,target=/root/.cache/uv \
 # #     uv sync --locked
 
-ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+
 
 WORKDIR /yasha
 COPY <<EOF start.sh
 #!/bin/bash
-code-server &
+# code-server &
 
-uv sync --locked
+# echo "Available ONNX Providers: $(python -c 'import onnxruntime as ort; print(ort.get_available_providers())')"
+
+uv sync --project /yasha --locked
 
 ray start --head --dashboard-port=\${RAY_DASHBOARD_PORT} --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=8 --num-gpus=1 --disable-usage-stats
 if ray status --address=0.0.0.0:\${RAY_REDIS_PORT}; then
-    uv run --active start.py
+    if serve start --http-host 0.0.0.0 --http-port 8000; then
+        if timeout -k 30 20 serve status --address=http://0.0.0.0:\${RAY_DASHBOARD_PORT}; then
+            echo "ray serve started"
+            serve run --route-prefix=/ --name='yasha api' --working-dir=/yasha --address=0.0.0.0:\${RAY_REDIS_PORT} --blocking start:app
+        else
+            echo "ray serve failed to start"
+        fi
+    fi
 else
     echo "ray cluster failed to start"
 fi
@@ -81,7 +92,7 @@ EOF
 RUN chmod +x start.sh
 
 WORKDIR /yasha
-CMD ["uv", "run", "bash", "start.sh"]
+CMD ["uv", "run", "--active", "bash", "start.sh"]
 
 
 
