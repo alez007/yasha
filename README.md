@@ -10,7 +10,7 @@ This is a proof of concept of how to deploy 2 or more models on the same GPU usi
  - build the docker image: `DOCKER_BUILDKIT=1 docker build -t yasha_dev -f Dockerfile.dev .`
 
 # start project for development
- - run the docker image: `docker run -it --rm --shm-size=8g --env-file .env --gpus all --mount type=bind,src=./yasha,dst=/yasha/yasha --mount type=bind,src=./start.py,dst=/yasha/start.py --mount type=bind,src=./config,dst=/yasha/config  -p 8265:8265 -p 8000:8000 -p 8081:8080 yasha_dev`
+ - run the docker image: `docker run -it --rm --shm-size=8g --env-file .env --gpus all --mount type=bind,src=./,dst=/yasha --mount type=volume,dst=/yasha/.venv  -p 8265:8265 -p 8000:8000 -p 8081:8080 yasha_dev`
  - open a browser window to `http://localhost:8081` where code-server runs
  - to check the ray dashboard, open a browser window to `http://localhost:8265`
  - the OpenAI API is exposed on `http://localhost:8000`

@@ -12,18 +12,18 @@ RUN apt update -y && \
 
 ARG CODE_SERVER_VERSION
 # install code server
-WORKDIR /root
-RUN curl -fOL https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server_${CODE_SERVER_VERSION}_amd64.deb
-RUN dpkg -i code-server_${CODE_SERVER_VERSION}_amd64.deb
-RUN mkdir -p .config/code-server 
-COPY <<EOF .config/code-server/config.yaml
-bind-addr: 0.0.0.0:8080
-auth: none
-password: f33b6f3a39732a93379c37b8
-cert: false
-EOF
-RUN code-server --install-extension ms-python.python
-RUN code-server --install-extension ms-pyright.pyright
+# WORKDIR /root
+# RUN curl -fOL https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server_${CODE_SERVER_VERSION}_amd64.deb
+# RUN dpkg -i code-server_${CODE_SERVER_VERSION}_amd64.deb
+# RUN mkdir -p .config/code-server 
+# COPY <<EOF .config/code-server/config.yaml
+# bind-addr: 0.0.0.0:8080
+# auth: none
+# password: f33b6f3a39732a93379c37b8
+# cert: false
+# EOF
+# RUN code-server --install-extension ms-python.python
+# RUN code-server --install-extension ms-pyright.pyright
 
 RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && CUDA_MAJOR_VERSION=$(echo $CUDA_VERSION | cut -d. -f1) && \
     apt update -y && \
@@ -48,6 +48,7 @@ ADD ./README.md README.md
 ADD ./uv.lock uv.lock
 
 ENV UV_PROJECT_ENVIRONMENT=/yasha/.venv
+ENV VIRTUAL_ENV=/yasha/.venv
 RUN uv venv
 
 ARG PYTHON_VERSION
@@ -65,16 +66,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 
 
-WORKDIR /yasha
+WORKDIR /
 COPY <<EOF start.sh
 #!/bin/bash
-# code-server &
-
 # echo "Available ONNX Providers: $(python -c 'import onnxruntime as ort; print(ort.get_available_providers())')"
 
 uv sync --project /yasha --locked
 
-ray start --head --dashboard-port=\${RAY_DASHBOARD_PORT} --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=8 --num-gpus=1 --disable-usage-stats
+cd /yasha && ray start --head --dashboard-port=\${RAY_DASHBOARD_PORT} --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=8 --num-gpus=1 --disable-usage-stats
 if ray status --address=0.0.0.0:\${RAY_REDIS_PORT}; then
     if serve start --http-host 0.0.0.0 --http-port 8000; then
         if timeout -k 30 20 serve status --address=http://0.0.0.0:\${RAY_DASHBOARD_PORT}; then
@@ -91,7 +90,7 @@ fi
 EOF
 RUN chmod +x start.sh
 
-WORKDIR /yasha
+WORKDIR /
 CMD ["uv", "run", "--active", "bash", "start.sh"]
 
 
