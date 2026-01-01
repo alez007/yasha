@@ -11,13 +11,12 @@ from yasha.openai.api import YashaAPI, app
 
 logger = logging.getLogger("ray")
 
-if ray.is_initialized():
-    ray.shutdown()
 
-ray.init(
-    address=f'auto',
-    runtime_env={"working_dir": "."},
-    namespace="yasha"
+serve.shutdown()
+serve.start(
+    http_options=HTTPOptions(
+        host="0.0.0.0"
+    )
 )
 
 def yasha_app() -> serve.Application:
