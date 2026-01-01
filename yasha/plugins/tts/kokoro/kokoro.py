@@ -51,13 +51,29 @@ class ModelPlugin(BasePlugin):
     async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         logger.info("started generation: %s with voice: %s", input, voice)
 
-        buf = io.BytesIO()
-        async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
-            logger.info("got some audio bytes for wav: %s", audio_bytes)
-            write_wav(buf, rate=sample_rate, data=audio_bytes)
-            
+        if stream_format=="sse":
+            return self.generate_sse(input, voice, request_id)
+        else:
+            buf = io.BytesIO()
+            async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
+                logger.info("got some audio bytes (sample rate %s) for input: %s", sample_rate, input)
+                write_wav(buf, rate=sample_rate, data=audio_bytes)
 
-        return RawSpeechResponse(audio=buf.getvalue(), media_type="audio/wav")
+            return RawSpeechResponse(audio=buf.getvalue(), media_type="audio/wav")
+       
+        
+    async def generate_sse(self, input: str, voice: str, request_id: str) -> AsyncGenerator[str, None]:
+        async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
+            logger.info("got some audio bytes (sample rate %s) for input: %s", sample_rate, input)
+            encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')
+            event_data = SpeechResponse(
+                audio=encoded_audio,
+                type="speech.audio.delta"
+            )
+            yield f"data: {event_data.model_dump_json()}\n\n"
+            
+        completion_event=SpeechResponse(audio=None, type="speech.audio.done")
+        yield f"data: {completion_event.model_dump_json()}\n\n"
 
         
     
