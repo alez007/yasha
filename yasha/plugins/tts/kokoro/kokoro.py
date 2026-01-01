@@ -22,18 +22,23 @@ from collections.abc import AsyncGenerator
 from scipy.io.wavfile import write as write_wav
 from kokoro_onnx import Kokoro
 import onnxruntime as ort
-from yasha.utils import download
+from yasha.utils import download, tmp_dir
 
 logger = logging.getLogger("ray")
+
 
 class ModelPlugin(BasePlugin):
     def __init__(self, model_config: YashaModelConfig):
         logger.info(f"onnxruntime device: {ort.get_device()}")
         logger.info(f"available providers: {ort.get_available_providers()}")
 
+        plugin_dir = f"{tmp_dir()}/kokoro"
+
+        if not os.path.exists(plugin_dir):
+            os.mkdir(plugin_dir)
         
-        model_path = os.path.dirname(os.path.abspath(__file__)) + "/kokoro-v1.0.onnx"
-        voices_path = os.path.dirname(os.path.abspath(__file__)) + "/voices-v1.0.bin"
+        model_path = f"{plugin_dir}/kokoro-v1.0.onnx"
+        voices_path = f"{plugin_dir}/voices-v1.0.bin"
         download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx", model_path)
         download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin", voices_path)
 
