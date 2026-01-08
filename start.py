@@ -28,15 +28,16 @@ def yasha_app() -> serve.Application:
     assert _yml_conf is not None
 
     logger.info("Init yasha app with config: %s", _yml_conf)
-    
-    deployment = serve.deployment(serve.ingress(app)(YashaAPI), name="yasha api")
-    
-    return deployment.options(
+
+    return YashaAPI.options(
+        name="yasha api",
         num_replicas=1,
         ray_actor_options=dict(
-            num_cpus=2,
+            num_cpus=5,
             num_gpus=1,
-        ),
+        )
     ).bind(_yml_conf.models)
+    
+    
 
 app = yasha_app()
