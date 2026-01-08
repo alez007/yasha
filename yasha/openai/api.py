@@ -31,6 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from transformers import pipeline
 import torch
+from ray import serve
 
 
 logger = logging.getLogger()
@@ -58,6 +59,8 @@ class OpenaiModelList(BaseModel):
     object: str = "list"
     data: list[OpenAiModelCard] = []
 
+@serve.deployment
+@serve.ingress(app)
 class YashaAPI:
     def __init__(self, yml_api_config: list[YashaModelConfig]):
         self.yml_api_config = yml_api_config
