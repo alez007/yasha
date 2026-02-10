@@ -4,7 +4,7 @@ from typing import Literal, Union, Protocol
 from vllm.engine.protocol import EngineClient
 from vllm.config.model import ModelConfig
 from yasha.infer.infer_config import SpeechResponse, SpeechRequest, RawSpeechResponse, YashaModelConfig
-from vllm.entrypoints.openai.protocol import ErrorInfo, ErrorResponse
+from vllm.entrypoints.openai.engine.protocol import ErrorInfo, ErrorResponse
 
 class BasePluginVllm(ABC):
     @abstractmethod

@@ -7,20 +7,14 @@ from yasha.infer.infer_config import YashaModelConfig, SpeechRequest
 from yasha.infer.vllm.vllm_infer import VllmInfer
 from yasha.infer.custom.custom_infer import CustomInfer
 from yasha.infer.transformers.transformers_infer import TransformersInfer
-from vllm.entrypoints.openai.protocol import (
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-    CompletionRequest,
-    CompletionResponse,
-    ErrorResponse,
-    TranscriptionRequest,
-    TranscriptionResponse,
-    TranslationRequest
-)
+from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
+from vllm.entrypoints.openai.translations.protocol import TranscriptionRequest, TranslationRequest
 from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest, EmbeddingResponse
-from vllm.entrypoints.openai.serving_models import (
+from vllm.entrypoints.openai.models.protocol import (
     BaseModelPath,
     LoRAModulePath,
+)
+from vllm.entrypoints.openai.models.serving import (
     OpenAIServingModels
 )
 from fastapi import FastAPI, Form, HTTPException, Request

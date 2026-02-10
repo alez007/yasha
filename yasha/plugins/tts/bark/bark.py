@@ -9,9 +9,9 @@ import logging
 from collections.abc import AsyncGenerator
 import base64
 
-from vllm.entrypoints.openai.serving_models import create_error_response
+from vllm.entrypoints.openai.models.serving import create_error_response
 from yasha.infer.infer_config import SpeechResponse, SpeechRequest, RawSpeechResponse, YashaModelConfig
-from vllm.entrypoints.openai.protocol import ErrorInfo, ErrorResponse
+from vllm.entrypoints.openai.engine.protocol import ErrorInfo, ErrorResponse
 import wave
 import io
 import numpy as np

@@ -33,8 +33,8 @@ def yasha_app() -> serve.Application:
         name="yasha api",
         num_replicas=1,
         ray_actor_options=dict(
-            num_cpus=5,
-            num_gpus=1,
+            num_cpus=1,
+            num_gpus=2,
         )
     ).bind(_yml_conf.models)
     

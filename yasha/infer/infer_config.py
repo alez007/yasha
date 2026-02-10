@@ -2,7 +2,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 from enum import Enum
 
-from vllm.entrypoints.openai.protocol import OpenAIBaseModel
+from vllm.entrypoints.openai.engine.protocol import OpenAIBaseModel
 
 class ModelUsecase(str, Enum):
     generate = 'generate'

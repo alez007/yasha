@@ -4,8 +4,8 @@ from typing import AsyncGenerator, Union, cast
 from fastapi import Request
 from vllm.config.model import ModelConfig
 from vllm.engine.protocol import EngineClient
-from vllm.entrypoints.openai.protocol import ErrorInfo, ErrorResponse
-from vllm.entrypoints.openai.serving_models import OpenAIServingModels, create_error_response
+from vllm.entrypoints.openai.engine.protocol import ErrorInfo, ErrorResponse
+from vllm.entrypoints.openai.models.serving import OpenAIServingModels, create_error_response
 from vllm.entrypoints.logger import RequestLogger
 
 from yasha.infer.infer_config import SpeechRequest, SpeechResponse, RawSpeechResponse
