@@ -41,6 +41,7 @@ class YashaModelConfig(BaseModel):
     usecase: ModelUsecase
     plugin: str|None = None
     use_vllm: bool = True
+    use_gpu: int = 0
     vllm_engine_kwargs: VllmEngineConfig|None = None
     transformers_config: TransformersConfig|None = None
     plugin_config: PluginConfig|None = None

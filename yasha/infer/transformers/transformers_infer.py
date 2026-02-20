@@ -34,7 +34,7 @@ class TransformersInfer():
     def __init__(self, model_config: YashaModelConfig):
         self.check_transformers_support(model_config)
 
-        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        self.device = f"cuda:{model_config.use_gpu}" if torch.cuda.is_available() else "cpu"
 
         self.model_config = model_config
     

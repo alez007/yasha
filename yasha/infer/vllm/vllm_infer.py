@@ -40,6 +40,7 @@ from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest, EmbeddingR
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from yasha.infer.vllm.openai.serving_speech import OpenAIServingSpeech
 from vllm.tasks import SupportedTask
+import torch
 
 
 logger = logging.getLogger("ray")
@@ -76,6 +77,7 @@ class VllmInfer():
 
         usage_context = UsageContext.OPENAI_API_SERVER
         vllm_config = engine_args.create_engine_config(usage_context=usage_context)
+        vllm_config.device_config.device = torch.device(f"cuda:{model_config.use_gpu}")
 
         self.engine = AsyncLLM.from_vllm_config(
             vllm_config=vllm_config,
