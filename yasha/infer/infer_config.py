@@ -15,7 +15,7 @@ class VllmEngineConfig(BaseModel):
     model: str = ""
     tensor_parallel_size: int = 1
     max_model_len: int|None = None
-    dtype: str = "bfloat16"
+    dtype: str = "auto"
     tokenizer: str|None = None
     trust_remote_code: bool = False
     gpu_memory_utilization: float = 0.9
