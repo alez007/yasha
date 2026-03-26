@@ -37,7 +37,6 @@ RUN uv venv
 
 ARG PYTHON_VERSION
 RUN uv python install ${PYTHON_VERSION}
-RUN uv pip install onnxruntime-gpu==1.19.2
 
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
 

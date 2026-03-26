@@ -42,7 +42,11 @@ class ModelPlugin(BasePlugin):
         download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx", model_path)
         download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin", voices_path)
 
+        if not os.environ.get("ONNX_PROVIDER"):
+            os.environ["ONNX_PROVIDER"] = "CUDAExecutionProvider"
+        logger.info(f"ONNX_PROVIDER={os.environ['ONNX_PROVIDER']}")
         self.kokoro = Kokoro(model_path, voices_path)
+        logger.info(f"kokoro session providers: {self.kokoro.sess.get_providers()}")
         
     
     async def start(self):
