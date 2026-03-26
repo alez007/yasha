@@ -28,7 +28,7 @@ import torch
 from ray import serve
 
 
-logger = logging.getLogger()
+logger = logging.getLogger("ray.serve")
 
 def build_app():
     app = FastAPI()
@@ -39,6 +39,17 @@ def build_app():
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(HTTPException)
+    async def log_http_exception(request: Request, exc: HTTPException):
+        logger.warning("%s %s -> %s: %s", request.method, request.url.path, exc.status_code, exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    @app.exception_handler(Exception)
+    async def log_unhandled_exception(request: Request, exc: Exception):
+        logger.exception("%s %s -> 500: %s", request.method, request.url.path, exc)
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
+
     return app
 
 app = build_app()
