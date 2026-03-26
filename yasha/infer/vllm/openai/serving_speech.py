@@ -6,7 +6,8 @@ from vllm.config.model import ModelConfig
 from vllm.engine.protocol import EngineClient
 from vllm.entrypoints.openai.engine.protocol import ErrorInfo, ErrorResponse
 from vllm.entrypoints.openai.engine.serving import OpenAIServing
-from vllm.entrypoints.openai.models.serving import OpenAIServingModels, create_error_response
+from vllm.entrypoints.openai.models.serving import OpenAIServingModels
+from vllm.entrypoints.utils import create_error_response
 from vllm.entrypoints.logger import RequestLogger
 
 from yasha.infer.infer_config import SpeechRequest, SpeechResponse, RawSpeechResponse
@@ -28,14 +29,12 @@ class OpenAIServingSpeech(OpenAIServing):
         *,
         request_logger: RequestLogger|None = None,
         return_tokens_as_token_ids: bool = False,
-        log_error_stack: bool = False,
         plugin: str|None = None,
     ):
         super().__init__(engine_client=engine_client,
                          models=models,
                          request_logger=request_logger,
-                         return_tokens_as_token_ids=return_tokens_as_token_ids,
-                         log_error_stack=log_error_stack)
+                         return_tokens_as_token_ids=return_tokens_as_token_ids)
 
         logger = logging.getLogger("ray")
 

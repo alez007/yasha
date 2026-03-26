@@ -3,6 +3,7 @@ __pycache__
 .env
 *.idea
 .vscode
+.claude
 *.DS_Store
 .cache
 local_models

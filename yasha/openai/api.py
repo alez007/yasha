@@ -8,7 +8,7 @@ from yasha.infer.vllm.vllm_infer import VllmInfer
 from yasha.infer.custom.custom_infer import CustomInfer
 from yasha.infer.transformers.transformers_infer import TransformersInfer
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
-from vllm.entrypoints.openai.translations.protocol import TranscriptionRequest, TranslationRequest
+from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranslationRequest
 from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest, EmbeddingResponse
 from vllm.entrypoints.openai.models.protocol import (
     BaseModelPath,
