@@ -1,6 +1,8 @@
 import asyncio
 import torch
-from vllm import AsyncLLMEngine, AsyncEngineArgs, SamplingParams
+from vllm import AsyncEngineArgs, SamplingParams
+from vllm.v1.engine.async_llm import AsyncLLM
+from vllm.usage.usage_lib import UsageContext
 from transformers import AutoTokenizer
 import threading
 import queue
@@ -17,15 +19,15 @@ class OrpheusModel:
         self.available_voices = ["zoe", "zac","jess", "leo", "mia", "julia", "leah"]
         self.tokeniser = AutoTokenizer.from_pretrained(model_name)
 
-    
+
     def _map_model_params(self, model_name):
         model_map = {
             # "nano-150m":{
             #     "repo_id": "canopylabs/orpheus-tts-0.1-finetune-prod",
-            # }, 
+            # },
             # "micro-400m":{
             #     "repo_id": "canopylabs/orpheus-tts-0.1-finetune-prod",
-            # }, 
+            # },
             # "small-1b":{
             #     "repo_id": "canopylabs/orpheus-tts-0.1-finetune-prod",
             # },
@@ -40,7 +42,7 @@ class OrpheusModel:
             return model_name[model_name]["repo_id"]
         else:
             return model_name
-        
+
     def _setup_engine(self):
         engine_args = AsyncEngineArgs(
             model=self.model_name,
@@ -49,13 +51,22 @@ class OrpheusModel:
             kv_cache_dtype="fp8_e4m3",
             quantization="fp8"
         )
-        return AsyncLLMEngine.from_engine_args(engine_args)
-    
+
+        usage_context = UsageContext.OPENAI_API_SERVER
+        vllm_config = engine_args.create_engine_config(usage_context=usage_context)
+
+        return AsyncLLM.from_vllm_config(
+            vllm_config=vllm_config,
+            usage_context=usage_context,
+            enable_log_requests=engine_args.enable_log_requests,
+            disable_log_stats=engine_args.disable_log_stats,
+        )
+
     def validate_voice(self, voice):
         if voice:
             if voice not in self.engine.available_voices:
                 raise ValueError(f"Voice {voice} is not available for model {self.model_name}")
-    
+
     def _format_prompt(self, prompt, voice="tara", model_type="larger"):
         if model_type == "smaller":
             if voice:
@@ -79,7 +90,7 @@ class OrpheusModel:
                 prompt_string = self.tokeniser.decode(all_input_ids[0])
                 return prompt_string
 
- 
+
 
 
     def generate_tokens_sync(self, prompt, voice=None, request_id="req-001", temperature=0.6, top_p=0.8, max_tokens=1200, stop_token_ids = [49158], repetition_penalty=1.3):
@@ -90,8 +101,8 @@ class OrpheusModel:
         temperature=temperature,
         top_p=top_p,
         max_tokens=max_tokens,  # Adjust max_tokens as needed.
-        stop_token_ids = stop_token_ids, 
-        repetition_penalty=repetition_penalty, 
+        stop_token_ids = stop_token_ids,
+        repetition_penalty=repetition_penalty,
         )
 
         token_queue = queue.Queue()
@@ -115,9 +126,7 @@ class OrpheusModel:
             yield token
 
         thread.join()
-    
+
     def generate_speech(self, **kwargs):
         logger.info("============generate_speech============")
         return tokens_decoder_sync(self.generate_tokens_sync(**kwargs))
-
-

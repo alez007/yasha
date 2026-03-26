@@ -13,7 +13,7 @@ import base64
 from vllm.usage.usage_lib import UsageContext
 from vllm.v1.engine.async_llm import AsyncLLM
 from yasha.infer.infer_config import SpeechResponse, SpeechRequest, RawSpeechResponse, VllmEngineConfig, YashaModelConfig
-from vllm.entrypoints.openai.protocol import ErrorInfo, ErrorResponse
+from vllm.entrypoints.openai.engine.protocol import ErrorInfo, ErrorResponse
 import wave
 import io
 import numpy as np

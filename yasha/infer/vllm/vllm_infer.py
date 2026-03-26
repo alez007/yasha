@@ -5,7 +5,7 @@ from typing import cast, Annotated
 from vllm.config.model import ModelDType
 from vllm.config.parallel import DistributedExecutorBackend
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
-from vllm.entrypoints.openai.translations.protocol import TranslationRequest, TranslationResponse
+from vllm.entrypoints.openai.speech_to_text.protocol import TranslationRequest, TranslationResponse
 
 from yasha.infer.infer_config import ModelUsecase, SpeechRequest, SpeechResponse, VllmEngineConfig, YashaModelConfig, RawSpeechResponse
 
@@ -13,8 +13,9 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.usage.usage_lib import UsageContext
 from vllm.entrypoints.openai.chat_completion.serving import OpenAIServingChat
-from vllm.entrypoints.pooling.embed.serving import OpenAIServingEmbedding
-from vllm.entrypoints.openai.translations.serving import OpenAIServingTranscription, OpenAIServingTranslation
+from vllm.entrypoints.serve.render.serving import OpenAIServingRender
+from vllm.entrypoints.pooling.embed.serving import ServingEmbedding
+from vllm.entrypoints.openai.speech_to_text.serving import OpenAIServingTranscription, OpenAIServingTranslation
 from vllm.entrypoints.openai.models.protocol import (
     BaseModelPath,
     LoRAModulePath,
@@ -32,7 +33,7 @@ from vllm.entrypoints.openai.chat_completion.protocol import (
 from vllm.entrypoints.openai.engine.protocol import (
     ErrorResponse,
 )
-from vllm.entrypoints.openai.translations.protocol import (
+from vllm.entrypoints.openai.speech_to_text.protocol import (
     TranscriptionRequest,
     TranscriptionResponse,
 )
@@ -100,25 +101,43 @@ class VllmInfer():
 
     async def init_serving_chat(self) -> OpenAIServingChat|None:
         logger.info("init_serving_chat: %s, %s", self.supported_tasks, self.model_config.usecase)
+        if not (self.model_config.usecase is ModelUsecase.generate and "generate" in self.supported_tasks):
+            return None
+
+        models = OpenAIServingModels(
+            engine_client=self.engine,
+            base_model_paths=[
+                BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
+            ]
+        )
+
+        openai_serving_render = OpenAIServingRender(
+            model_config=self.engine.model_config,
+            renderer=self.engine.renderer,
+            io_processor=self.engine.io_processor,
+            model_registry=models.registry,
+            request_logger=RequestLogger(max_log_len=None),
+            chat_template=None,
+            chat_template_content_format=self.model_config.vllm_engine_kwargs.chat_template_content_format,
+            enable_auto_tools=True if self.model_config.vllm_engine_kwargs.enable_auto_tool_choice is not None else False,
+            tool_parser=self.model_config.vllm_engine_kwargs.tool_call_parser if self.model_config.vllm_engine_kwargs.tool_call_parser is not None else None,
+        )
+
         return OpenAIServingChat(
             engine_client=self.engine,
-            models=OpenAIServingModels(
-                engine_client=self.engine,
-                base_model_paths=[
-                    BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
-                ]
-            ),
+            models=models,
+            openai_serving_render=openai_serving_render,
             response_role="assistant",
             request_logger=RequestLogger(max_log_len=None),
             chat_template=None,
             chat_template_content_format=self.model_config.vllm_engine_kwargs.chat_template_content_format,
             enable_auto_tools=True if self.model_config.vllm_engine_kwargs.enable_auto_tool_choice is not None else False,
             tool_parser=self.model_config.vllm_engine_kwargs.tool_call_parser if self.model_config.vllm_engine_kwargs.tool_call_parser is not None else None,
-        ) if self.model_config.usecase is ModelUsecase.generate and "generate" in self.supported_tasks else None
+        )
 
-    async def init_serving_embeding(self) -> OpenAIServingEmbedding|None:
+    async def init_serving_embeding(self) -> ServingEmbedding|None:
         logger.info("init_serving_embeding: %s, %s", self.supported_tasks, self.model_config.usecase)
-        return OpenAIServingEmbedding(
+        return ServingEmbedding(
             engine_client=self.engine,
             models=OpenAIServingModels(
                 engine_client=self.engine,

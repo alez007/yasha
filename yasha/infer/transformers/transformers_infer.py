@@ -8,7 +8,7 @@ from yasha.infer.infer_config import ModelUsecase, YashaModelConfig, SpeechReque
 from fastapi import FastAPI, Form, HTTPException, Request
 from http import HTTPStatus
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
-from vllm.entrypoints.openai.translations.protocol import TranscriptionRequest, TranslationRequest
+from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranslationRequest
 from vllm.entrypoints.openai.engine.protocol import (
     ErrorResponse,
 )

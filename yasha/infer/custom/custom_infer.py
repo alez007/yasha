@@ -11,7 +11,7 @@ from vllm.entrypoints.openai.engine.protocol import (
     ErrorResponse,
 )
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
-from vllm.entrypoints.openai.translations.protocol import TranslationRequest,TranscriptionRequest,TranscriptionResponse
+from vllm.entrypoints.openai.speech_to_text.protocol import TranslationRequest, TranscriptionRequest, TranscriptionResponse
 from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest
 from yasha.infer.custom.openai.serving_speech import OpenAIServingSpeech
 import pkgutil

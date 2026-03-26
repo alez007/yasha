@@ -1,27 +1,27 @@
 # vllm engine args reference: https://docs.vllm.ai/en/latest/configuration/engine_args.html
 
 models:
-  - 
-    name: "kokoro"
-    model: "hexgrad/Kokoro-82M"
-    usecase: "tts"
-    plugin: "kokoro"
-  - 
-    name: "whisper"
-    model: "openai/whisper-small"
-    usecase: "transcription"
-    vllm_engine_kwargs:
-      tensor_parallel_size: 1
-      gpu_memory_utilization: 0.15
-      trust_remote_code: 1
-  - 
-    name: "nomic-embed-text-v1.5"
-    model: "nomic-ai/nomic-embed-text-v1.5"
-    usecase: "embed"
-    vllm_engine_kwargs:
-      tensor_parallel_size: 1
-      gpu_memory_utilization: 0.05
-      trust_remote_code: 1
+  # - 
+  #   name: "kokoro"
+  #   model: "hexgrad/Kokoro-82M"
+  #   usecase: "tts"
+  #   plugin: "kokoro"
+  # - 
+  #   name: "whisper"
+  #   model: "openai/whisper-small"
+  #   usecase: "transcription"
+  #   vllm_engine_kwargs:
+  #     tensor_parallel_size: 1
+  #     gpu_memory_utilization: 0.15
+  #     trust_remote_code: 1
+  # - 
+  #   name: "nomic-embed-text-v1.5"
+  #   model: "nomic-ai/nomic-embed-text-v1.5"
+  #   usecase: "embed"
+  #   vllm_engine_kwargs:
+  #     tensor_parallel_size: 1
+  #     gpu_memory_utilization: 0.05
+  #     trust_remote_code: 1
   # - 
   #   name: "bark-small"
   #   model: "suno/bark-small"
