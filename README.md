@@ -77,13 +77,16 @@ Or use `latest` for the most recent release:
 docker pull ghcr.io/alez007/yasha:latest
 ```
 
-The image ships with `models.example.yaml` as a reference. Mount your own `models.yaml` to configure which models to load:
+The image ships with `models.example.yaml` as a reference. Mount your own `models.yaml` and a cache directory so models are only downloaded once:
 
 ```bash
 docker run --rm --shm-size=8g --env-file .env --gpus all \
   -v ./models.yaml:/yasha/config/models.yaml \
+  -v ./models-cache:/yasha/.cache/models \
   -p 8265:8265 -p 8000:8000 ghcr.io/alez007/yasha:0.1.0
 ```
+
+The first startup downloads models from HuggingFace into the cache volume. Subsequent restarts reuse the cached models with no re-download.
 
 See `config/models.example.yaml` inside the image for all supported options (`docker run --rm ghcr.io/alez007/yasha:0.1.0 cat /yasha/config/models.example.yaml`).
 
@@ -93,6 +96,7 @@ To build locally instead:
 docker build -t yasha -f Dockerfile.prod .
 docker run --rm --shm-size=8g --env-file .env --gpus all \
   -v ./models.yaml:/yasha/config/models.yaml \
+  -v ./models-cache:/yasha/.cache/models \
   -p 8265:8265 -p 8000:8000 yasha
 ```
 
@@ -101,6 +105,7 @@ docker run --rm --shm-size=8g --env-file .env --gpus all \
 | Variable | Description | Default |
 |---|---|---|
 | `HF_TOKEN` | HuggingFace access token | — |
+| `YASHA_CACHE_DIR` | Model cache directory (HuggingFace + plugins) | `/yasha/.cache/models` |
 | `RAY_REDIS_PORT` | Ray GCS server port | `6379` |
 | `RAY_DASHBOARD_PORT` | Ray dashboard port | `8265` |
 | `RAY_HEAD_CPU_NUM` | CPUs allocated to Ray head | `2` |

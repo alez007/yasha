@@ -21,11 +21,8 @@ def download(url: str, file_path: str, overwrite: bool = False):
                 if chunk:
                     f.write(chunk)
 
-def tmp_dir() -> str:
-    tmp_dir = "/tmp/yasha"
-
-    if not os.path.exists(tmp_dir):
-        os.mkdir(tmp_dir)
-    
-    return tmp_dir
+def cache_dir() -> str:
+    path = os.environ.get("YASHA_CACHE_DIR", "/yasha/.cache/models")
+    os.makedirs(path, exist_ok=True)
+    return path
 

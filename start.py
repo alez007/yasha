@@ -2,6 +2,9 @@ import os
 import logging
 import ray
 
+_cache_dir = os.environ.get("YASHA_CACHE_DIR", "/yasha/.cache/models")
+os.environ.setdefault("HF_HOME", f"{_cache_dir}/huggingface")
+
 from ray import serve
 from ray.serve.config import HTTPOptions
 from pydantic_yaml import parse_yaml_raw_as
