@@ -1,4 +1,4 @@
-VERSION := $(shell grep '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+VERSION := $(shell grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
 MAJOR   := $(shell echo $(VERSION) | cut -d. -f1)
 MINOR   := $(shell echo $(VERSION) | cut -d. -f2)
 PATCH   := $(shell echo $(VERSION) | cut -d. -f3)
@@ -19,7 +19,7 @@ release-major:
 
 _release:
 	@echo "Bumping version: $(VERSION) -> $(NEW_VERSION)"
-	@sed -i 's/^version = ".*"/version = "$(NEW_VERSION)"/' pyproject.toml
+	@sed -i '0,/^version = ".*"/{s/^version = ".*"/version = "$(NEW_VERSION)"/}' pyproject.toml
 	@git add pyproject.toml
 	@git commit -m "release: v$(NEW_VERSION)"
 	@git tag -a "v$(NEW_VERSION)" -m "Release v$(NEW_VERSION)"
