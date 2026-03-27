@@ -1,6 +1,6 @@
 [project]
 name = "yasha"
-version = "0.1.1"
+version = "0.1.2"
 description = "Yet another self-hosted agent"
 authors = [
     { name = "Alex Margarit" }
