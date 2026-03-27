@@ -36,6 +36,7 @@ ADD ./config/models.example.yaml config/models.example.yaml
 
 ENV UV_PROJECT_ENVIRONMENT=/.venv
 ENV VIRTUAL_ENV=/.venv
+ENV YASHA_CACHE_DIR=/yasha/.cache/models
 RUN uv venv
 
 ARG PYTHON_VERSION
