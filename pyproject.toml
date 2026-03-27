@@ -1,6 +1,6 @@
 [project]
 name = "yasha"
-version = "0.1.0"
+version = "0.1."
 description = "Yet another self-hosted agent"
 authors = [
     { name = "Alex Margarit" }
@@ -44,7 +44,7 @@ build-backend = "uv_build"
 # on onnxruntime-gpu instead.
 [[tool.uv.dependency-metadata]]
 name = "kokoro-onnx"
-version = "0.4.9"
+version = "0.1."
 requires-dist = [
     "colorlog>=6.9.0",
     "espeakng-loader>=0.2.4",
