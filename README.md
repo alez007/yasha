@@ -65,9 +65,34 @@ Use VS Code Dev Containers (or similar) to attach to the running container for d
 
 ### Production
 
+Pull a specific version from GHCR:
+
+```bash
+docker pull ghcr.io/alez007/yasha:0.1.0
+```
+
+Or use `latest` for the most recent release:
+
+```bash
+docker pull ghcr.io/alez007/yasha:latest
+```
+
+The image ships with `models.example.yaml` as a reference. Mount your own `models.yaml` to configure which models to load:
+
+```bash
+docker run --rm --shm-size=8g --env-file .env --gpus all \
+  -v ./models.yaml:/yasha/config/models.yaml \
+  -p 8265:8265 -p 8000:8000 ghcr.io/alez007/yasha:0.1.0
+```
+
+See `config/models.example.yaml` inside the image for all supported options (`docker run --rm ghcr.io/alez007/yasha:0.1.0 cat /yasha/config/models.example.yaml`).
+
+To build locally instead:
+
 ```bash
 docker build -t yasha -f Dockerfile.prod .
 docker run --rm --shm-size=8g --env-file .env --gpus all \
+  -v ./models.yaml:/yasha/config/models.yaml \
   -p 8265:8265 -p 8000:8000 yasha
 ```
 
