@@ -20,7 +20,13 @@ serve.start(
 )
 
 def yasha_app() -> serve.Application:
-    _config_file = os.path.dirname(os.path.abspath(__file__)) + "/config/models.yaml"
+    _config_dir = os.path.dirname(os.path.abspath(__file__)) + "/config"
+    _config_file = _config_dir + "/models.yaml"
+    if not os.path.exists(_config_file):
+        raise FileNotFoundError(
+            f"{_config_file} not found. "
+            f"Copy config/models.example.yaml to config/models.yaml and configure your models."
+        )
     _yml_conf: YashaConfig | None = None
     with open(_config_file, "r") as f:
         _yml_conf = parse_yaml_raw_as(YashaConfig, f)
