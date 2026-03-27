@@ -30,6 +30,9 @@ WORKDIR /yasha
 ADD ./pyproject.toml pyproject.toml
 ADD ./README.md README.md
 ADD ./uv.lock uv.lock
+ADD ./start.py start.py
+ADD ./yasha yasha
+ADD ./config/models.example.yaml config/models.example.yaml
 
 ENV UV_PROJECT_ENVIRONMENT=/.venv
 ENV VIRTUAL_ENV=/.venv
