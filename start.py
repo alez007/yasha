@@ -1,26 +1,44 @@
 import os
 import logging
-import ray
 
 _cache_dir = os.environ.get("YASHA_CACHE_DIR", "/yasha/.cache/models")
 os.environ.setdefault("HF_HOME", f"{_cache_dir}/huggingface")
 
+import ray
 from ray import serve
 from ray.serve.config import HTTPOptions
 from pydantic_yaml import parse_yaml_raw_as
 
-from yasha.infer.infer_config import YashaConfig
+from yasha.infer.infer_config import YashaConfig, YashaModelConfig
+from yasha.infer.model_deployment import ModelDeployment
 from yasha.openai.api import YashaAPI, app
 
 logger = logging.getLogger("ray")
 
 
+def build_actor_options(config: YashaModelConfig) -> dict:
+    tp = config.vllm_engine_kwargs.tensor_parallel_size if config.vllm_engine_kwargs else 1
+
+    # For tp=1: use num_gpus (fractional GPU sharing, e.g. 0.15 for whisper).
+    # For tp>1: use tensor_parallel_size — vllm initialises CUDA in the coordinator
+    # process too, so the outer actor must claim all GPUs up front.
+    num_gpus = config.num_gpus if tp == 1 else float(tp)
+
+    options: dict = {"num_gpus": num_gpus, "num_cpus": config.num_cpus}
+
+    if isinstance(config.use_gpu, int):
+        options["runtime_env"] = {"env_vars": {"CUDA_VISIBLE_DEVICES": str(config.use_gpu)}}
+    elif isinstance(config.use_gpu, str):
+        options["resources"] = {config.use_gpu: 1}
+
+    return options
+
+
 serve.shutdown()
 serve.start(
-    http_options=HTTPOptions(
-        host="0.0.0.0"
-    )
+    http_options=HTTPOptions(host="0.0.0.0")
 )
+
 
 def yasha_app() -> serve.Application:
     _config_dir = os.path.dirname(os.path.abspath(__file__)) + "/config"
@@ -30,23 +48,27 @@ def yasha_app() -> serve.Application:
             f"{_config_file} not found. "
             f"Copy config/models.example.yaml to config/models.yaml and configure your models."
         )
-    _yml_conf: YashaConfig | None = None
+
     with open(_config_file, "r") as f:
-        _yml_conf = parse_yaml_raw_as(YashaConfig, f)
+        yml_conf: YashaConfig = parse_yaml_raw_as(YashaConfig, f)
 
-    assert _yml_conf is not None
+    logger.info("Init yasha app with config: %s", yml_conf)
 
-    logger.info("Init yasha app with config: %s", _yml_conf)
+    model_handles = {}
+    for config in yml_conf.models:
+        handle = ModelDeployment.options(
+            name=config.name,
+            ray_actor_options=build_actor_options(config),
+            max_constructor_retry_count=1
+        ).bind(config)
+        model_handles[config.name] = handle
 
     return YashaAPI.options(
         name="yasha api",
         num_replicas=1,
-        ray_actor_options=dict(
-            num_cpus=1,
-            num_gpus=2,
-        )
-    ).bind(_yml_conf.models)
-    
-    
+        ray_actor_options={"num_cpus": 1},
+        max_constructor_retry_count=1
+    ).bind(model_handles)
+
 
 app = yasha_app()

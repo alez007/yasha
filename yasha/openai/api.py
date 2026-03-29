@@ -1,34 +1,24 @@
 import logging
-import asyncio
-from typing import Annotated
-from pydantic import BaseModel, Field
 import time
-from yasha.infer.infer_config import YashaModelConfig, SpeechRequest
-from yasha.infer.vllm.vllm_infer import VllmInfer
-from yasha.infer.custom.custom_infer import CustomInfer
-from yasha.infer.transformers.transformers_infer import TransformersInfer
-from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
-from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranslationRequest
+from typing import Annotated
+
+from pydantic import BaseModel, Field
+from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest, ChatCompletionResponse
+from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranslationRequest, TranscriptionResponse, TranslationResponse
 from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest, EmbeddingResponse
-from vllm.entrypoints.openai.models.protocol import (
-    BaseModelPath,
-    LoRAModulePath,
-)
-from vllm.entrypoints.openai.models.serving import (
-    OpenAIServingModels
-)
+from vllm.entrypoints.openai.engine.protocol import ErrorResponse
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from http import HTTPStatus
-from vllm.entrypoints.logger import RequestLogger
 from fastapi.middleware.cors import CORSMiddleware
-
-from transformers import pipeline
-import torch
+from http import HTTPStatus
 from ray import serve
+from ray.serve.handle import DeploymentHandle
+
+from yasha.infer.infer_config import RawSpeechResponse, RequestWatcher, SpeechRequest
 
 
 logger = logging.getLogger("ray.serve")
+
 
 def build_app():
     app = FastAPI()
@@ -52,7 +42,9 @@ def build_app():
 
     return app
 
+
 app = build_app()
+
 
 class OpenAiModelCard(BaseModel):
     id: str
@@ -60,126 +52,107 @@ class OpenAiModelCard(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()))
     owned_by: str = "yasha"
 
+
 class OpenaiModelList(BaseModel):
     object: str = "list"
     data: list[OpenAiModelCard] = []
 
+
+def _error_response(result: ErrorResponse) -> JSONResponse:
+    return JSONResponse(content=result.model_dump(), status_code=result.error.code if result.error else 500)
+
+
 @serve.deployment
 @serve.ingress(app)
 class YashaAPI:
-    def __init__(self, yml_api_config: list[YashaModelConfig]):
-        self.yml_api_config = yml_api_config
+    def __init__(self, model_handles: dict[str, DeploymentHandle]):
+        self.models = model_handles
+        self.model_list = [OpenAiModelCard(id=name) for name in model_handles]
 
-        self.infers: dict[str, VllmInfer|TransformersInfer|CustomInfer] = {}
-        for yml_model_config in yml_api_config:
-            if yml_model_config.plugin is not None:
-                self.infers[yml_model_config.name] = CustomInfer(model_config=yml_model_config)
-            elif yml_model_config.use_vllm is not False:
-                self.infers[yml_model_config.name] = VllmInfer(yml_model_config)
-            else:
-                self.infers[yml_model_config.name] = TransformersInfer(yml_model_config)
+    def _get_handle(self, model_name: str | None) -> DeploymentHandle:
+        if model_name is None or model_name not in self.models:
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
+        return self.models[model_name]
 
-        self.models: list[OpenAiModelCard] = []
+    async def _handle_response(self, response_gen, stream_media_type: str = "text/event-stream"):
+        first = await response_gen.__anext__()
 
-        asyncio.ensure_future(self.start())
+        if isinstance(first, ErrorResponse):
+            return _error_response(first)
 
-    async def start(self):
-        for model_name, infer in self.infers.items():
-            await infer.start()
-            
-            if infer.serving_chat is not None:
-                self.models.append(OpenAiModelCard(
-                    id = model_name
-                ))
+        if isinstance(first, RawSpeechResponse):
+            return Response(content=first.audio, media_type=first.media_type)
 
-    def find_model(self, model_name: str) -> OpenAiModelCard|None:
-        """
-            Checks if a specific model has been found
-        """
-        found_model: OpenAiModelCard|None = None
-        for model_info in self.models:
-            if model_info.id == model_name:
-                found_model = model_info
-        return found_model
+        if isinstance(first, (ChatCompletionResponse, EmbeddingResponse, TranscriptionResponse, TranslationResponse)):
+            return JSONResponse(content=first.model_dump())
+
+        # streaming — first chunk already consumed, chain it back
+        async def _stream():
+            yield first
+            async for chunk in response_gen:
+                yield chunk
+
+        return StreamingResponse(content=_stream(), media_type=stream_media_type)
 
     @app.get("/v1/models", response_model=OpenaiModelList)
     async def list_models(self):
-        return OpenaiModelList(data=self.models)
-    
+        return OpenaiModelList(data=self.model_list)
+
     @app.get("/v1/models/{model}", response_model=OpenAiModelCard)
     async def model_info(self, model: str) -> OpenAiModelCard:
-        logger.info("found models: %s", self.models)
-        found_model = self.find_model(model)
-        
-        if found_model is None:
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-                        detail="model not found")
-
-        return found_model
-
+        for card in self.model_list:
+            if card.id == model:
+                return card
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
 
     @app.post("/v1/chat/completions")
-    async def create_chat_completion(
-        self, request: ChatCompletionRequest, raw_request: Request
-    ):
-        model_name = request.model
-        if model_name is not None:
-            infer = self.infers[model_name]
-        else:
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-                detail="model not found")
-
-        return await infer.create_chat_completion(request, raw_request)
-
-            
+    async def create_chat_completion(self, request: ChatCompletionRequest, raw_request: Request):
+        handle = self._get_handle(request.model)
+        watcher = RequestWatcher(raw_request)
+        headers = dict(raw_request.headers)
+        response_gen = handle.generate.options(stream=True).remote(request, headers, watcher.event)
+        return await self._handle_response(response_gen)
 
     @app.post("/v1/embeddings")
-    async def create_embeddings(
-        self, request: EmbeddingRequest, raw_request: Request
-    ):
-        model_name = request.model
-        if model_name is not None:
-            infer = self.infers[model_name]
-        else:
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-                detail="model not found")
-        
-        return await infer.create_embedding(request, raw_request)
-
+    async def create_embeddings(self, request: EmbeddingRequest, raw_request: Request):
+        handle = self._get_handle(request.model)
+        watcher = RequestWatcher(raw_request)
+        headers = dict(raw_request.headers)
+        response_gen = handle.embed.options(stream=True).remote(request, headers, watcher.event)
+        return await self._handle_response(response_gen)
 
     @app.post("/v1/audio/transcriptions")
-    async def create_transcriptions(self, request: Annotated[TranscriptionRequest,
-                                                   Form()], raw_request: Request):
-        model_name = request.model
-        if model_name is not None:
-            infer = self.infers[model_name]
-        else:
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-                detail="model not found")
-        
-        return await infer.create_transcription(request, raw_request)
+    async def create_transcriptions(
+        self, request: Annotated[TranscriptionRequest, Form()], raw_request: Request
+    ):
+        handle = self._get_handle(request.model)
+        watcher = RequestWatcher(raw_request)
+        headers = dict(raw_request.headers)
+        # Read audio bytes before crossing process boundary — UploadFile is not serializable.
+        # The bytes are passed separately; the request is reconstructed without the file field.
+        audio_data = await request.file.read()
+        request_no_file = TranscriptionRequest.model_validate(request.model_dump(exclude={"file"}))
+        response_gen = handle.transcribe.options(stream=True).remote(audio_data, request_no_file, headers, watcher.event)
+        return await self._handle_response(response_gen)
 
     @app.post("/v1/audio/translations")
-    async def create_translations(self, request: Annotated[TranslationRequest,
-                                                   Form()], raw_request: Request):
-        model_name = request.model
-        if model_name is not None:
-            infer = self.infers[model_name]
-        else:
-            raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-                detail="model not found")
-        
-        return await infer.create_translation(request, raw_request)
+    async def create_translations(
+        self, request: Annotated[TranslationRequest, Form()], raw_request: Request
+    ):
+        handle = self._get_handle(request.model)
+        watcher = RequestWatcher(raw_request)
+        headers = dict(raw_request.headers)
+        # Read audio bytes before crossing process boundary — UploadFile is not serializable.
+        # The bytes are passed separately; the request is reconstructed without the file field.
+        audio_data = await request.file.read()
+        request_no_file = TranslationRequest.model_validate(request.model_dump(exclude={"file"}))
+        response_gen = handle.translate.options(stream=True).remote(audio_data, request_no_file, headers, watcher.event)
+        return await self._handle_response(response_gen)
 
     @app.post("/v1/audio/speech")
     async def create_speech(self, request: SpeechRequest, raw_request: Request):
-        model_name = request.model
-
-        try:
-            infer = self.infers[model_name]
-
-            return await infer.create_speech(request, raw_request)
-        except Exception as e:
-            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
-                detail=str(e)) from e
-        
+        handle = self._get_handle(request.model)
+        watcher = RequestWatcher(raw_request)
+        headers = dict(raw_request.headers)
+        response_gen = handle.speak.options(stream=True).remote(request, headers, watcher.event)
+        return await self._handle_response(response_gen)
