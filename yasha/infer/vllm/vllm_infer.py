@@ -1,13 +1,13 @@
-import asyncio
 import logging
-from typing import cast, Annotated
+from collections.abc import AsyncGenerator
+from typing import cast
 
 from vllm.config.model import ModelDType
 from vllm.config.parallel import DistributedExecutorBackend
-from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
+from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest, ChatCompletionResponse
 from vllm.entrypoints.openai.speech_to_text.protocol import TranslationRequest, TranslationResponse
 
-from yasha.infer.infer_config import ModelUsecase, SpeechRequest, SpeechResponse, VllmEngineConfig, YashaModelConfig, RawSpeechResponse
+from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, SpeechRequest, VllmEngineConfig, YashaModelConfig, RawSpeechResponse
 
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.v1.engine.async_llm import AsyncLLM
@@ -16,50 +16,32 @@ from vllm.entrypoints.openai.chat_completion.serving import OpenAIServingChat
 from vllm.entrypoints.serve.render.serving import OpenAIServingRender
 from vllm.entrypoints.pooling.embed.serving import ServingEmbedding
 from vllm.entrypoints.openai.speech_to_text.serving import OpenAIServingTranscription, OpenAIServingTranslation
-from vllm.entrypoints.openai.models.protocol import (
-    BaseModelPath,
-    LoRAModulePath,
-)
-from vllm.entrypoints.openai.models.serving import (
-    OpenAIServingModels
-)
+from vllm.entrypoints.openai.models.protocol import BaseModelPath
+from vllm.entrypoints.openai.models.serving import OpenAIServingModels
 from vllm.entrypoints.logger import RequestLogger
-from fastapi import FastAPI, Form, HTTPException, Request
-from http import HTTPStatus
-from vllm.entrypoints.openai.chat_completion.protocol import (
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-)
-from vllm.entrypoints.openai.engine.protocol import (
-    ErrorResponse,
-)
-from vllm.entrypoints.openai.speech_to_text.protocol import (
-    TranscriptionRequest,
-    TranscriptionResponse,
-)
+from vllm.entrypoints.openai.engine.protocol import ErrorResponse
+from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranscriptionResponse
 from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest, EmbeddingResponse
-from fastapi.responses import JSONResponse, Response, StreamingResponse
 from yasha.infer.vllm.openai.serving_speech import OpenAIServingSpeech
-from vllm.tasks import SupportedTask
-import torch
 
 
 logger = logging.getLogger("ray")
 
+
 class VllmInfer():
     _vllm_usecases = [ModelUsecase.generate, ModelUsecase.embed, ModelUsecase.transcription, ModelUsecase.translation]
 
-    @staticmethod
-    def check_vllm_support(model_config: YashaModelConfig) -> Exception|None:
-        if model_config.use_vllm is True and model_config.usecase not in VllmInfer._vllm_usecases:
-            raise Exception("vllm is only supported for %s models", ", ".join(VllmInfer._vllm_usecases))
-    
     def __init__(self, model_config: YashaModelConfig):
-        self.check_vllm_support(model_config)
         self.model_config = model_config
 
         config_engine_kwargs = model_config.vllm_engine_kwargs.model_dump() if model_config.vllm_engine_kwargs is not None else {}
         config_engine_kwargs['model'] = model_config.model
+
+        # gpu_memory_utilization: use explicit value if set, otherwise fall back to num_gpus.
+        # Only valid as gpu_memory_utilization when < 1.0; multi-GPU models default to 0.9.
+        if config_engine_kwargs.get('gpu_memory_utilization') is None:
+            config_engine_kwargs['gpu_memory_utilization'] = model_config.num_gpus if model_config.num_gpus < 1.0 else 0.9
+
         vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
         logger.info("initialising vllm engine with args: %s", vllm_engine_kwargs.model_dump())
 
@@ -74,11 +56,11 @@ class VllmInfer():
             distributed_executor_backend=cast(DistributedExecutorBackend, vllm_engine_kwargs.distributed_executor_backend),
             enable_log_requests=vllm_engine_kwargs.enable_log_requests if vllm_engine_kwargs.enable_log_requests is not None else False,
         )
-        # engine_args.engine_use_ray = True
 
         usage_context = UsageContext.OPENAI_API_SERVER
         vllm_config = engine_args.create_engine_config(usage_context=usage_context)
-        vllm_config.device_config.device = torch.device(f"cuda:{model_config.use_gpu}")
+        # GPU pinning is handled by CUDA_VISIBLE_DEVICES set in ray_actor_options runtime_env.
+        # The GPU is always visible as cuda:0 inside the actor — no device_config override needed.
 
         self.engine = AsyncLLM.from_vllm_config(
             vllm_config=vllm_config,
@@ -150,7 +132,6 @@ class VllmInfer():
             chat_template_content_format='auto',
         ) if self.model_config.usecase is ModelUsecase.embed and any(task in self.supported_tasks for task in ['embed', 'embedding']) else None
 
-
     async def init_serving_transcription(self) -> OpenAIServingTranscription|None:
         logger.info("init_serving_transcription: %s, %s", self.supported_tasks, self.model_config.usecase)
         return OpenAIServingTranscription(
@@ -176,7 +157,7 @@ class VllmInfer():
             ),
             request_logger=RequestLogger(max_log_len=None),
         ) if (self.model_config.usecase in [ModelUsecase.transcription, ModelUsecase.translation]) and "transcription" in self.supported_tasks else None
-    
+
     async def init_serving_speech(self) -> OpenAIServingSpeech|None:
         logger.info("init_serving_speech: %s, %s", self.supported_tasks, self.model_config.usecase)
         return OpenAIServingSpeech(
@@ -192,108 +173,38 @@ class VllmInfer():
             plugin=self.model_config.plugin,
         ) if self.model_config.usecase is ModelUsecase.tts and "generate" in self.supported_tasks else None
 
-    async def create_chat_completion(self, request: ChatCompletionRequest, raw_request: Request):
-        try:
-            if self.serving_chat is None:
-                raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-                    detail="model does not support this action")
-
-            generator = await self.serving_chat.create_chat_completion(request, raw_request)
-        except Exception as e:
-            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
-                                detail=str(e)) from e
-        if isinstance(generator, ErrorResponse):
-            return JSONResponse(content=generator.model_dump(),
-                                status_code=generator.error.code)
-
-        elif isinstance(generator, ChatCompletionResponse):
-            return JSONResponse(content=generator.model_dump())
-
-        return StreamingResponse(content=generator, media_type="text/event-stream")
-
+    async def create_chat_completion(
+        self, request: ChatCompletionRequest, raw_request: DisconnectProxy
+    ) -> ErrorResponse | ChatCompletionResponse | AsyncGenerator[str, None]:
+        if self.serving_chat is None:
+            return ErrorResponse(message="model does not support this action", type="invalid_request_error", code=404)
+        return await self.serving_chat.create_chat_completion(request, raw_request)
 
     async def create_embedding(
-        self, request: EmbeddingRequest, raw_request: Request
-    ):
-        try:
-            if self.serving_embedding is None:
-                raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-                        detail="model does not support this action")
+        self, request: EmbeddingRequest, raw_request: DisconnectProxy
+    ) -> ErrorResponse | EmbeddingResponse | AsyncGenerator:
+        if self.serving_embedding is None:
+            return ErrorResponse(message="model does not support this action", type="invalid_request_error", code=404)
+        return await self.serving_embedding.create_embedding(request, raw_request)
 
-            generator = await self.serving_embedding.create_embedding(request, raw_request)
-        except Exception as e:
-            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
-                                detail=str(e)) from e
-        if isinstance(generator, ErrorResponse):
-            return JSONResponse(content=generator.model_dump(),
-                                status_code=generator.error.code)
+    async def create_transcription(
+        self, audio_data: bytes, request: TranscriptionRequest, raw_request: DisconnectProxy
+    ) -> ErrorResponse | TranscriptionResponse | AsyncGenerator:
+        if self.serving_transcription is None:
+            return ErrorResponse(message="model does not support this action", type="invalid_request_error", code=404)
+        request.timestamp_granularities = []
+        return await self.serving_transcription.create_transcription(audio_data, request, raw_request)
 
-        elif isinstance(generator, EmbeddingResponse):
-            return JSONResponse(content=generator.model_dump())
+    async def create_translation(
+        self, audio_data: bytes, request: TranslationRequest, raw_request: DisconnectProxy
+    ) -> ErrorResponse | TranslationResponse | AsyncGenerator:
+        if self.serving_translation is None:
+            return ErrorResponse(message="model does not support this action", type="invalid_request_error", code=404)
+        return await self.serving_translation.create_translation(audio_data, request, raw_request)
 
-        return StreamingResponse(content=generator, media_type="text/event-stream")
-
-    async def create_transcription(self, request: TranscriptionRequest, raw_request: Request):
-        try:
-            if self.serving_transcription is None:
-                raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-                        detail="model does not support this action")
-            
-            audio_data = await request.file.read()
-            request.timestamp_granularities = []
-            
-            generator = await self.serving_transcription.create_transcription(audio_data, request, raw_request)
-        except Exception as e:
-            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
-                                detail=str(e)) from e
-        if isinstance(generator, ErrorResponse):
-            return JSONResponse(content=generator.model_dump(),
-                                status_code=generator.error.code)
-
-        elif isinstance(generator, TranscriptionResponse):
-            return JSONResponse(content=generator.model_dump())
-
-        return StreamingResponse(content=generator, media_type="text/event-stream")
-
-    async def create_translation(self, request: TranslationRequest, raw_request: Request):
-        try:
-            if self.serving_translation is None:
-                raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-                        detail="model does not support this action")
-            
-            audio_data = await request.file.read()
-            
-            generator = await self.serving_translation.create_translation(audio_data, request, raw_request)
-        except Exception as e:
-            logger.exception(e)
-            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
-                                detail=str(e)) from e
-        if isinstance(generator, ErrorResponse):
-            return JSONResponse(content=generator.model_dump(),
-                                status_code=generator.error.code)
-
-        elif isinstance(generator, TranslationResponse):
-            return JSONResponse(content=generator.model_dump())
-
-        return StreamingResponse(content=generator, media_type="text/event-stream")
-
-    async def create_speech(self, request: SpeechRequest, raw_request: Request):
-        try:
-            if self.serving_speech is None:
-                raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value,
-                        detail="model does not support this action")
-            
-            generator = await self.serving_speech.create_speech(request, raw_request)
-        except Exception as e:
-            raise HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
-                                detail=str(e)) from e
-        if isinstance(generator, ErrorResponse):
-            return JSONResponse(content=generator.model_dump(),
-                                status_code=generator.error.code)
-
-        elif isinstance(generator, RawSpeechResponse):
-            logger.info("returning full audio buffer response")
-            return Response(content=generator.audio, media_type=generator.media_type)
-
-        logger.info("returning streaming response")
-        return StreamingResponse(content=generator, media_type="text/event-stream")
+    async def create_speech(
+        self, request: SpeechRequest, raw_request: DisconnectProxy
+    ) -> ErrorResponse | RawSpeechResponse | AsyncGenerator[str, None]:
+        if self.serving_speech is None:
+            return ErrorResponse(message="model does not support this action", type="invalid_request_error", code=404)
+        return await self.serving_speech.create_speech(request, raw_request)

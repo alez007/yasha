@@ -29,22 +29,22 @@ logger = logging.getLogger("ray")
 
 class ModelPlugin(BasePlugin):
     def __init__(self, model_config: YashaModelConfig):
-        logger.info(f"onnxruntime device: {ort.get_device()}")
-        logger.info(f"available providers: {ort.get_available_providers()}")
+        logger.info("onnxruntime device: %s", ort.get_device())
+        logger.info("available providers: %s", ort.get_available_providers())
 
         plugin_dir = f"{cache_dir()}/kokoro"
         os.makedirs(plugin_dir, exist_ok=True)
-        
+
         model_path = f"{plugin_dir}/kokoro-v1.0.onnx"
         voices_path = f"{plugin_dir}/voices-v1.0.bin"
         download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx", model_path)
         download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin", voices_path)
 
-        if not os.environ.get("ONNX_PROVIDER"):
-            os.environ["ONNX_PROVIDER"] = "CUDAExecutionProvider"
-        logger.info(f"ONNX_PROVIDER={os.environ['ONNX_PROVIDER']}")
+        onnx_provider = (model_config.plugin_config or {}).get("onnx_provider", "CUDAExecutionProvider")
+        os.environ["ONNX_PROVIDER"] = onnx_provider
+        logger.info("ONNX_PROVIDER=%s", onnx_provider)
         self.kokoro = Kokoro(model_path, voices_path)
-        logger.info(f"kokoro session providers: {self.kokoro.sess.get_providers()}")
+        logger.info("kokoro session providers: %s", self.kokoro.sess.get_providers())
         
     
     async def start(self):
