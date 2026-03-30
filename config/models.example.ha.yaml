@@ -1,0 +1,43 @@
+# Home Assistant stack — voice assistant via Wyoming protocol proxy
+# LLM: Qwen2.5-0.5B (fp16, tool-calling for HA service calls) · STT: Whisper Tiny · TTS: Kokoro
+# No embedder — not needed for HA extended_openai_conversation.
+# GPU budget: 0.09 + 0.20 + 0.15 = 0.44  (fits comfortably on 4 GB+)
+#
+# Intended usage:
+#   - A Wyoming protocol Docker sidecar proxies HA voice pipeline requests
+#     to yasha's OpenAI-compatible /audio/speech, /audio/transcriptions, and
+#     /v1/chat/completions endpoints.
+#   - The HACS extended_openai_conversation integration handles LLM-based
+#     intent recognition and service calls.
+
+models:
+  - name: "kokoro"
+    model: "hexgrad/Kokoro-82M"
+    usecase: "tts"
+    loader: "custom"
+    plugin: "kokoro"
+    num_gpus: 0
+    num+cpus: 1
+    plugin_config:
+      onnx_provider: "CPUExecutionProvider"
+
+  - name: "whisper"
+    model: "openai/whisper-tiny"
+    usecase: "transcription"
+    loader: "vllm"
+    num_gpus: 0.20
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      trust_remote_code: true
+      max_model_len: 448
+
+  - name: "llm"
+    model: "Qwen/Qwen2.5-0.5B-Instruct"
+    usecase: "generate"
+    loader: "vllm"
+    num_gpus: 0.15
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      max_model_len: 8192
+      enable_auto_tool_choice: true
+      tool_call_parser: "hermes"

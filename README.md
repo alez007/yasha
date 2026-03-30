@@ -64,7 +64,7 @@ docker run -it --rm --shm-size=8g --env-file .env --gpus all \
   -p 8265:8265 -p 8000:8000 yasha_dev
 
 # Inside the container, start the server
-serve run --route-prefix=/ --name='yasha api' --working-dir=/yasha --address=0.0.0.0:${RAY_REDIS_PORT} start:app
+uv run start.py
 ```
 
 - Ray dashboard: `http://localhost:8265`
