@@ -5,7 +5,7 @@ from typing import cast
 from vllm.config.model import ModelDType
 from vllm.config.parallel import DistributedExecutorBackend
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest, ChatCompletionResponse
-from vllm.entrypoints.openai.speech_to_text.protocol import TranslationRequest, TranslationResponse
+from vllm.entrypoints.openai.speech_to_text.protocol import TranslationRequest, TranslationResponse, TranslationResponseVerbose
 
 from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, SpeechRequest, VllmEngineConfig, YashaModelConfig, RawSpeechResponse
 
@@ -19,9 +19,11 @@ from vllm.entrypoints.openai.speech_to_text.serving import OpenAIServingTranscri
 from vllm.entrypoints.openai.models.protocol import BaseModelPath
 from vllm.entrypoints.openai.models.serving import OpenAIServingModels
 from vllm.entrypoints.logger import RequestLogger
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse
-from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranscriptionResponse
-from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest, EmbeddingResponse
+from vllm.entrypoints.openai.engine.protocol import ErrorResponse, ErrorInfo
+from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranscriptionResponse, TranscriptionResponseVerbose
+from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest
+from starlette.requests import Request
+from starlette.responses import Response
 from yasha.infer.vllm.openai.serving_speech import OpenAIServingSpeech
 
 
@@ -34,7 +36,7 @@ class VllmInfer():
     def __init__(self, model_config: YashaModelConfig):
         self.model_config = model_config
 
-        config_engine_kwargs = model_config.vllm_engine_kwargs.model_dump() if model_config.vllm_engine_kwargs is not None else {}
+        config_engine_kwargs = model_config.vllm_engine_kwargs.model_dump(exclude_unset=True)
         config_engine_kwargs['model'] = model_config.model
 
         # gpu_memory_utilization: use explicit value if set, otherwise fall back to num_gpus.
@@ -42,19 +44,19 @@ class VllmInfer():
         if config_engine_kwargs.get('gpu_memory_utilization') is None:
             config_engine_kwargs['gpu_memory_utilization'] = model_config.num_gpus if model_config.num_gpus < 1.0 else 0.9
 
-        vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
-        logger.info("initialising vllm engine with args: %s", vllm_engine_kwargs.model_dump())
+        self.vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
+        logger.info("initialising vllm engine with args: %s", self.vllm_engine_kwargs.model_dump())
 
         engine_args = AsyncEngineArgs(
-            model=vllm_engine_kwargs.model,
-            tensor_parallel_size=vllm_engine_kwargs.tensor_parallel_size,
-            max_model_len=vllm_engine_kwargs.max_model_len,
-            dtype=cast(ModelDType, vllm_engine_kwargs.dtype),
-            tokenizer=vllm_engine_kwargs.tokenizer,
-            trust_remote_code=vllm_engine_kwargs.trust_remote_code,
-            gpu_memory_utilization=vllm_engine_kwargs.gpu_memory_utilization,
-            distributed_executor_backend=cast(DistributedExecutorBackend, vllm_engine_kwargs.distributed_executor_backend),
-            enable_log_requests=vllm_engine_kwargs.enable_log_requests if vllm_engine_kwargs.enable_log_requests is not None else False,
+            model=self.vllm_engine_kwargs.model,
+            tensor_parallel_size=self.vllm_engine_kwargs.tensor_parallel_size,
+            max_model_len=cast(int, self.vllm_engine_kwargs.max_model_len),
+            dtype=cast(ModelDType, self.vllm_engine_kwargs.dtype),
+            tokenizer=self.vllm_engine_kwargs.tokenizer,
+            trust_remote_code=self.vllm_engine_kwargs.trust_remote_code,
+            gpu_memory_utilization=self.vllm_engine_kwargs.gpu_memory_utilization,
+            distributed_executor_backend=cast(DistributedExecutorBackend, self.vllm_engine_kwargs.distributed_executor_backend),
+            enable_log_requests=self.vllm_engine_kwargs.enable_log_requests if self.vllm_engine_kwargs.enable_log_requests is not None else False,
         )
 
         usage_context = UsageContext.OPENAI_API_SERVER
@@ -68,6 +70,13 @@ class VllmInfer():
             enable_log_requests=engine_args.enable_log_requests,
             disable_log_stats=engine_args.disable_log_stats,
         )
+
+    def __del__(self):
+        try:
+            if engine := getattr(self, "engine", None):
+                engine.shutdown()
+        except Exception:
+            pass
 
     async def start(self):
         logger.info("Start vllm infer for model: %s", self.model_config)
@@ -89,7 +98,7 @@ class VllmInfer():
         models = OpenAIServingModels(
             engine_client=self.engine,
             base_model_paths=[
-                BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
+                BaseModelPath(name=self.model_config.name, model_path=self.vllm_engine_kwargs.model)
             ]
         )
 
@@ -100,9 +109,9 @@ class VllmInfer():
             model_registry=models.registry,
             request_logger=RequestLogger(max_log_len=None),
             chat_template=None,
-            chat_template_content_format=self.model_config.vllm_engine_kwargs.chat_template_content_format,
-            enable_auto_tools=True if self.model_config.vllm_engine_kwargs.enable_auto_tool_choice is not None else False,
-            tool_parser=self.model_config.vllm_engine_kwargs.tool_call_parser if self.model_config.vllm_engine_kwargs.tool_call_parser is not None else None,
+            chat_template_content_format=self.vllm_engine_kwargs.chat_template_content_format,
+            enable_auto_tools=True if self.vllm_engine_kwargs.enable_auto_tool_choice is not None else False,
+            tool_parser=self.vllm_engine_kwargs.tool_call_parser if self.vllm_engine_kwargs.tool_call_parser is not None else None,
         )
 
         return OpenAIServingChat(
@@ -112,9 +121,9 @@ class VllmInfer():
             response_role="assistant",
             request_logger=RequestLogger(max_log_len=None),
             chat_template=None,
-            chat_template_content_format=self.model_config.vllm_engine_kwargs.chat_template_content_format,
-            enable_auto_tools=True if self.model_config.vllm_engine_kwargs.enable_auto_tool_choice is not None else False,
-            tool_parser=self.model_config.vllm_engine_kwargs.tool_call_parser if self.model_config.vllm_engine_kwargs.tool_call_parser is not None else None,
+            chat_template_content_format=self.vllm_engine_kwargs.chat_template_content_format,
+            enable_auto_tools=True if self.vllm_engine_kwargs.enable_auto_tool_choice is not None else False,
+            tool_parser=self.vllm_engine_kwargs.tool_call_parser if self.vllm_engine_kwargs.tool_call_parser is not None else None,
         )
 
     async def init_serving_embeding(self) -> ServingEmbedding|None:
@@ -124,7 +133,7 @@ class VllmInfer():
             models=OpenAIServingModels(
                 engine_client=self.engine,
                 base_model_paths=[
-                    BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
+                    BaseModelPath(name=self.model_config.name, model_path=self.vllm_engine_kwargs.model)
                 ]
             ),
             request_logger=RequestLogger(max_log_len=None),
@@ -139,7 +148,7 @@ class VllmInfer():
             models=OpenAIServingModels(
                 engine_client=self.engine,
                 base_model_paths=[
-                    BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
+                    BaseModelPath(name=self.model_config.name, model_path=self.vllm_engine_kwargs.model)
                 ]
             ),
             request_logger=RequestLogger(max_log_len=None),
@@ -152,7 +161,7 @@ class VllmInfer():
             models=OpenAIServingModels(
                 engine_client=self.engine,
                 base_model_paths=[
-                    BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
+                    BaseModelPath(name=self.model_config.name, model_path=self.vllm_engine_kwargs.model)
                 ]
             ),
             request_logger=RequestLogger(max_log_len=None),
@@ -166,7 +175,7 @@ class VllmInfer():
             models=OpenAIServingModels(
                 engine_client=self.engine,
                 base_model_paths=[
-                    BaseModelPath(name=self.model_config.name, model_path=self.model_config.model)
+                    BaseModelPath(name=self.model_config.name, model_path=self.vllm_engine_kwargs.model)
                 ]
             ),
             request_logger=RequestLogger(max_log_len=None),
@@ -177,34 +186,34 @@ class VllmInfer():
         self, request: ChatCompletionRequest, raw_request: DisconnectProxy
     ) -> ErrorResponse | ChatCompletionResponse | AsyncGenerator[str, None]:
         if self.serving_chat is None:
-            return ErrorResponse(message="model does not support this action", type="invalid_request_error", code=404)
-        return await self.serving_chat.create_chat_completion(request, raw_request)
+            return ErrorResponse(error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404))
+        return await self.serving_chat.create_chat_completion(request, cast(Request, raw_request))
 
     async def create_embedding(
         self, request: EmbeddingRequest, raw_request: DisconnectProxy
-    ) -> ErrorResponse | EmbeddingResponse | AsyncGenerator:
+    ) -> ErrorResponse | Response:
         if self.serving_embedding is None:
-            return ErrorResponse(message="model does not support this action", type="invalid_request_error", code=404)
-        return await self.serving_embedding.create_embedding(request, raw_request)
+            return ErrorResponse(error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404))
+        return await self.serving_embedding(request, cast(Request, raw_request))
 
     async def create_transcription(
         self, audio_data: bytes, request: TranscriptionRequest, raw_request: DisconnectProxy
-    ) -> ErrorResponse | TranscriptionResponse | AsyncGenerator:
+    ) -> ErrorResponse | TranscriptionResponse | TranscriptionResponseVerbose | AsyncGenerator[str, None]:
         if self.serving_transcription is None:
-            return ErrorResponse(message="model does not support this action", type="invalid_request_error", code=404)
+            return ErrorResponse(error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404))
         request.timestamp_granularities = []
-        return await self.serving_transcription.create_transcription(audio_data, request, raw_request)
+        return await self.serving_transcription.create_transcription(audio_data, request, cast(Request, raw_request))
 
     async def create_translation(
         self, audio_data: bytes, request: TranslationRequest, raw_request: DisconnectProxy
-    ) -> ErrorResponse | TranslationResponse | AsyncGenerator:
+    ) -> ErrorResponse | TranslationResponse | TranslationResponseVerbose | AsyncGenerator[str, None]:
         if self.serving_translation is None:
-            return ErrorResponse(message="model does not support this action", type="invalid_request_error", code=404)
-        return await self.serving_translation.create_translation(audio_data, request, raw_request)
+            return ErrorResponse(error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404))
+        return await self.serving_translation.create_translation(audio_data, request, cast(Request, raw_request))
 
     async def create_speech(
         self, request: SpeechRequest, raw_request: DisconnectProxy
     ) -> ErrorResponse | RawSpeechResponse | AsyncGenerator[str, None]:
         if self.serving_speech is None:
-            return ErrorResponse(message="model does not support this action", type="invalid_request_error", code=404)
-        return await self.serving_speech.create_speech(request, raw_request)
+            return ErrorResponse(error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404))
+        return await self.serving_speech.create_speech(request, cast(Request, raw_request))

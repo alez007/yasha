@@ -29,6 +29,17 @@ class ModelPlugin(BasePlugin):
         self.model = BarkModel.from_pretrained(pretrained_model_name_or_path=model_config.model).to(self.device)
         self.processor = BarkProcessor.from_pretrained(model_config.model)
     
+    def __del__(self):
+        try:
+            if model := getattr(self, "model", None):
+                del model
+                self.model = None
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
     async def start(self):
         pass
     
@@ -37,13 +48,13 @@ class ModelPlugin(BasePlugin):
 
         inputs = self.processor(input, voice_preset=voice).to(device=self.device)
         
-        sample_rate = self.model.generation_config.sample_rate
+        sample_rate = getattr(self.model.generation_config, "sample_rate", 24000)
 
         if stream_format=="sse":
             return create_error_response("sse stream format not supported")
         else:
             buf = io.BytesIO()
-            speech_output = self.model.generate(**inputs).cpu().numpy().squeeze()
+            speech_output = self.model.generate(**inputs).cpu().numpy().squeeze()  # type: ignore[call-arg]
             write_wav(buf, rate=sample_rate, data=speech_output)
 
             return RawSpeechResponse(audio=buf.getvalue(), media_type="audio/wav")

@@ -1,8 +1,10 @@
 import asyncio
 import torch
+from typing import cast
 from vllm import AsyncEngineArgs, SamplingParams
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.usage.usage_lib import UsageContext
+from vllm.config.model import ModelDType
 from transformers import AutoTokenizer
 import threading
 import queue
@@ -46,7 +48,7 @@ class OrpheusModel:
     def _setup_engine(self):
         engine_args = AsyncEngineArgs(
             model=self.model_name,
-            dtype=self.dtype,
+            dtype=cast(ModelDType, self.dtype),
             max_model_len=2048,
             kv_cache_dtype="fp8_e4m3",
             quantization="fp8"
@@ -64,7 +66,7 @@ class OrpheusModel:
 
     def validate_voice(self, voice):
         if voice:
-            if voice not in self.engine.available_voices:
+            if voice not in self.available_voices:
                 raise ValueError(f"Voice {voice} is not available for model {self.model_name}")
 
     def _format_prompt(self, prompt, voice="tara", model_type="larger"):
@@ -93,7 +95,7 @@ class OrpheusModel:
 
 
 
-    def generate_tokens_sync(self, prompt, voice=None, request_id="req-001", temperature=0.6, top_p=0.8, max_tokens=1200, stop_token_ids = [49158], repetition_penalty=1.3):
+    def generate_tokens_sync(self, prompt, voice: str | None = None, request_id="req-001", temperature=0.6, top_p=0.8, max_tokens=1200, stop_token_ids = [49158], repetition_penalty=1.3):
         logger.info("============generate_tokens_sync============%s, %s", prompt, voice)
         prompt_string = self._format_prompt(prompt, voice)
         print(prompt)
