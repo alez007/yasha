@@ -5,11 +5,13 @@ Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized mo
 ## Features
 
 - **Multi-model on a single GPU** — run chat, embedding, STT, and TTS models simultaneously with tunable per-model GPU memory allocation
+- **Per-model isolated deployments** — each model runs in its own Ray Serve deployment with independent lifecycle, health checks, and failure isolation
 - **OpenAI-compatible API** — drop-in replacement for any OpenAI SDK client
 - **Streaming** — SSE streaming for chat completions and TTS audio
 - **Tool/function calling** — auto tool choice with configurable parsers
-- **TTS plugin system** — pluggable backends (Kokoro, Bark, Orpheus) with voice selection, speed control, and multiple output formats (MP3, Opus, AAC, FLAC, WAV, PCM)
-- **Multi-GPU support** — assign models to specific GPUs via `use_gpu`
+- **TTS plugin system** — pluggable backends (Kokoro, Bark, Orpheus) with voice selection, speed control, dual streaming modes, and multiple output formats (MP3, Opus, AAC, FLAC, WAV, PCM)
+- **Multi-GPU support** — assign models to specific GPUs by index (`use_gpu: int`) or by named Ray resource (`use_gpu: str`), with full tensor parallelism support
+- **Client disconnect detection** — cancels in-flight inference when the client disconnects, freeing GPU resources immediately
 - **Ray dashboard** — monitor deployments, resources, and request logs
 - **Wyoming protocol** — use as a voice backend for Home Assistant
 
@@ -27,9 +29,16 @@ Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized mo
 
 | Plugin | Backend | Streaming | Notes |
 |---|---|---|---|
-| Kokoro | ONNX Runtime (GPU) | Yes (SSE) | Lightweight, auto-downloads model files |
+| Kokoro | ONNX Runtime (GPU) | Yes | Lightweight, auto-downloads model files |
 | Bark | HuggingFace Transformers | No (WAV only) | Voice cloning capability |
-| Orpheus | VLLm | Yes (SSE) | 4-bit quantized, token-streaming via SNAC decoder |
+| Orpheus | VLLm | Yes | 4-bit quantized, token-streaming via SNAC decoder |
+
+#### TTS streaming modes
+
+The `/v1/audio/speech` endpoint supports two streaming modes via the `stream_format` field:
+
+- `stream_format: "sse"` — server-sent events; each chunk is a base64-encoded audio fragment, compatible with streaming clients
+- `stream_format: "audio"` _(default)_ — returns a single WAV file after generation completes
 
 ## Requirements
 
@@ -99,6 +108,31 @@ docker run --rm --shm-size=8g --env-file .env --gpus all \
   -v ./models-cache:/yasha/.cache/models \
   -p 8265:8265 -p 8000:8000 yasha
 ```
+
+## Model configuration
+
+Each entry in `models.yaml` configures one model deployment. All fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Model identifier used in API requests |
+| `model` | string | HuggingFace model ID |
+| `usecase` | string | `generate`, `embed`, `transcription`, `translation`, or `tts` |
+| `loader` | string | `vllm`, `transformers`, or `custom` |
+| `plugin` | string | Plugin name (required when `loader: custom`) |
+| `num_gpus` | float | Fraction of a GPU to allocate (0.0–1.0); also sets VLLm `gpu_memory_utilization` |
+| `num_cpus` | float | CPU units to allocate (default `0.1`) |
+| `use_gpu` | int \| string | Pin to a specific GPU (see below) |
+| `vllm_engine_kwargs` | object | Passed directly to the VLLm engine (see [VLLm engine args](https://docs.vllm.ai/en/latest/configuration/engine_args.html)) |
+| `plugin_config` | object | Plugin-specific options passed through to the plugin |
+
+### GPU pinning
+
+`use_gpu` controls how a model is pinned to specific hardware:
+
+- **`use_gpu: <int>`** — pins via `CUDA_VISIBLE_DEVICES`; only compatible with `tensor_parallel_size: 1`
+- **`use_gpu: "<resource-name>"`** — requests a named Ray custom resource (e.g. `"rtx_5060ti"`); compatible with tensor parallelism; requires registering the resource when starting the Ray head: `ray start --head --resources='{"rtx_5060ti": 1}'`
+- **omit** — Ray schedules the deployment freely across available GPUs
 
 ## Environment variables
 
