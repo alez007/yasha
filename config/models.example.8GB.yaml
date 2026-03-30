@@ -1,0 +1,42 @@
+# 1 × 8 GB GPU — Nano stack
+# LLM: Qwen2.5-1.5B (fp16) · embed: nomic · STT: Whisper Tiny · TTS: Kokoro
+# GPU budget: 0.84 + 0.06 + 0.06 + 0.04 = 1.00
+
+models:
+  - name: "kokoro"
+    model: "hexgrad/Kokoro-82M"
+    usecase: "tts"
+    loader: "custom"
+    plugin: "kokoro"
+    num_gpus: 0.06
+    plugin_config:
+      onnx_provider: "CUDAExecutionProvider"
+
+  - name: "nomic-embed"
+    model: "nomic-ai/nomic-embed-text-v1.5"
+    usecase: "embed"
+    loader: "vllm"
+    num_gpus: 0.06
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      trust_remote_code: true
+
+  - name: "whisper"
+    model: "openai/whisper-tiny"
+    usecase: "transcription"
+    loader: "vllm"
+    num_gpus: 0.04
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      trust_remote_code: true
+
+  - name: "llm"
+    model: "Qwen/Qwen2.5-1.5B-Instruct"
+    usecase: "generate"
+    loader: "vllm"
+    num_gpus: 0.84
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      max_model_len: 32768
+      enable_auto_tool_choice: true
+      tool_call_parser: "hermes"
