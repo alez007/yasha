@@ -2,7 +2,12 @@ import os
 import logging
 
 _cache_dir = os.environ.get("YASHA_CACHE_DIR", "/yasha/.cache/models")
-os.environ.setdefault("HF_HOME", f"{_cache_dir}/huggingface")
+_cache_root = os.path.dirname(_cache_dir)
+_cache_env_vars = {
+    "HF_HOME": os.environ.get("HF_HOME", f"{_cache_root}/huggingface"),
+    "VLLM_CACHE_ROOT": os.environ.get("VLLM_CACHE_ROOT", f"{_cache_root}/vllm"),
+    "FLASHINFER_CACHE_DIR": os.environ.get("FLASHINFER_CACHE_DIR", f"{_cache_root}/flashinfer"),
+}
 
 import ray
 from ray import serve
@@ -26,10 +31,12 @@ def build_actor_options(config: YashaModelConfig) -> dict:
 
     options: dict = {"num_gpus": num_gpus, "num_cpus": config.num_cpus}
 
+    env_vars = dict(_cache_env_vars)
     if isinstance(config.use_gpu, int):
-        options["runtime_env"] = {"env_vars": {"CUDA_VISIBLE_DEVICES": str(config.use_gpu)}}
+        env_vars["CUDA_VISIBLE_DEVICES"] = str(config.use_gpu)
     elif isinstance(config.use_gpu, str):
         options["resources"] = {config.use_gpu: 1}
+    options["runtime_env"] = {"env_vars": env_vars}
 
     return options
 
