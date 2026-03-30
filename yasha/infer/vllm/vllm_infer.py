@@ -44,6 +44,22 @@ class VllmInfer():
         if config_engine_kwargs.get('gpu_memory_utilization') is None:
             config_engine_kwargs['gpu_memory_utilization'] = model_config.num_gpus if model_config.num_gpus < 1.0 else 0.9
 
+        # distributed_executor_backend: when use_gpu is a named Ray resource (str) and
+        # TP>1, the outer actor has num_gpus=0, so "mp" worker subprocesses see no GPUs.
+        # Force "ray" in that case — vLLM worker actors receive VLLM_RAY_PER_WORKER_GPUS
+        # (set by start.py) and claim the correct fractional GPU units themselves.
+        # For all other TP>1 cases, leave the user's value (or vLLM's own default) alone.
+        tp = config_engine_kwargs.get('tensor_parallel_size', 1)
+        if tp > 1 and isinstance(model_config.use_gpu, str):
+            explicit = config_engine_kwargs.get('distributed_executor_backend')
+            if explicit not in (None, 'ray'):
+                logger.warning(
+                    "distributed_executor_backend=%r is not supported with "
+                    "tensor_parallel_size>1 and use_gpu as a named resource — overriding to 'ray'.",
+                    explicit,
+                )
+            config_engine_kwargs['distributed_executor_backend'] = 'ray'
+
         self.vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
         logger.info("initialising vllm engine with args: %s", self.vllm_engine_kwargs.model_dump())
 

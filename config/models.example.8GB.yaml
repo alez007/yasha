@@ -8,7 +8,7 @@ models:
     usecase: "tts"
     loader: "custom"
     plugin: "kokoro"
-    num_gpus: 0.06
+    num_gpus: 0.09
     plugin_config:
       onnx_provider: "CUDAExecutionProvider"
 
@@ -16,7 +16,7 @@ models:
     model: "nomic-ai/nomic-embed-text-v1.5"
     usecase: "embed"
     loader: "vllm"
-    num_gpus: 0.06
+    num_gpus: 0.09
     vllm_engine_kwargs:
       tensor_parallel_size: 1
       trust_remote_code: true
@@ -25,18 +25,19 @@ models:
     model: "openai/whisper-tiny"
     usecase: "transcription"
     loader: "vllm"
-    num_gpus: 0.04
+    num_gpus: 0.20
     vllm_engine_kwargs:
       tensor_parallel_size: 1
       trust_remote_code: true
+      max_model_len: 448
 
   - name: "llm"
     model: "Qwen/Qwen2.5-1.5B-Instruct"
     usecase: "generate"
     loader: "vllm"
-    num_gpus: 0.84
+    num_gpus: 0.52
     vllm_engine_kwargs:
       tensor_parallel_size: 1
-      max_model_len: 32768
+      max_model_len: 8192
       enable_auto_tool_choice: true
       tool_call_parser: "hermes"

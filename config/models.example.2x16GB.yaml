@@ -1,16 +1,16 @@
 # 2 × 16 GB GPU — Dual-GPU stack
-# LLM: Qwen2.5-32B (fp8, TP=2) · embed: nomic · STT: Whisper Large-v3-Turbo · TTS: Kokoro
-# GPU budget: 0.82 (×2 via TP) + 0.08 + 0.08 + 0.06 — non-LLM deployments spread across both GPUs by Ray
+# LLM: Qwen2.5-14B (fp8, TP=2) · embed: nomic · STT: Whisper Large-v3-Turbo · TTS: Kokoro
+# GPU budget: 0.89 per LLM worker (×2 via TP = 1.78) + 0.08 + 0.08 + 0.06 = 2.00 across both GPUs
 #
-# fp8 quantization brings Qwen2.5-32B (~64 GB at bf16) down to ~16 GB across both GPUs,
-# leaving ~10 GB for KV cache. fp8 KV cache doubles effective context to 64K.
+# fp8 quantization brings Qwen2.5-14B (~28 GB at bf16) down to ~7 GB per GPU across TP=2,
+# leaving ~18 GB for KV cache. fp8 KV cache doubles that headroom for the 32K context window.
 #
 # Requirements:
-#   quantization: "fp8"      — Ampere+ (RTX 30xx / A10 / A100 and newer)
+#   quantization: "fp8"        — Ampere+ (RTX 30xx / A10 / A100 and newer)
 #   kv_cache_dtype: "fp8_e4m3" — Ada Lovelace / Hopper (RTX 40xx / H100) for hardware acceleration;
 #                                works in software on Ampere but is slower
-#   use_gpu: "dual_16gb"     — register named resource before starting the Ray head:
-#                              ray start --head --resources='{"dual_16gb": 1}'
+#   use_gpu: "dual_16gb"       — register named resource before starting the Ray head:
+#                                ray start --head --resources='{"dual_16gb": 1}'
 
 models:
   - name: "kokoro"
@@ -41,14 +41,14 @@ models:
       trust_remote_code: true
 
   - name: "llm"
-    model: "Qwen/Qwen2.5-32B-Instruct"
+    model: "Qwen/Qwen2.5-14B-Instruct"
     usecase: "generate"
     loader: "vllm"
     use_gpu: "dual_16gb"
-    num_gpus: 0.82
+    num_gpus: 0.89
     vllm_engine_kwargs:
       tensor_parallel_size: 2
-      max_model_len: 65536
+      max_model_len: 32768
       quantization: "fp8"
       kv_cache_dtype: "fp8_e4m3"
       enable_auto_tool_choice: true

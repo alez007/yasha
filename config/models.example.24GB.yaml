@@ -30,10 +30,10 @@ models:
       trust_remote_code: true
 
   - name: "whisper"
-    model: "openai/whisper-medium"
+    model: "openai/whisper-small"
     usecase: "transcription"
     loader: "vllm"
-    num_gpus: 0.07
+    num_gpus: 0.08
     vllm_engine_kwargs:
       tensor_parallel_size: 1
       trust_remote_code: true
@@ -42,7 +42,7 @@ models:
     model: "Qwen/Qwen2.5-14B-Instruct"
     usecase: "generate"
     loader: "vllm"
-    num_gpus: 0.80
+    num_gpus: 0.69
     vllm_engine_kwargs:
       tensor_parallel_size: 1
       max_model_len: 65536
