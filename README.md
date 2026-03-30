@@ -50,7 +50,7 @@ The `/v1/audio/speech` endpoint supports two streaming modes via the `stream_for
 
 1. Clone the repository
 2. Copy `.env.example` to `.env` and set your `HF_TOKEN`
-3. Copy `config/models.example.yaml` to `config/models.yaml` and uncomment the models you want to run — the example file documents all supported options
+3. Copy one of the example configs to `config/models.yaml` and adjust to your hardware — `config/` ships with ready-to-use presets for 8 GB, 16 GB, 24 GB, and 2×16 GB GPUs, or play with your own models and percentages
 
 ### Development
 
@@ -86,7 +86,7 @@ Or use `latest` for the most recent release:
 docker pull ghcr.io/alez007/yasha:latest
 ```
 
-The image ships with `models.example.yaml` as a reference. Mount your own `models.yaml` and a cache directory so models are only downloaded once:
+Mount your own `models.yaml` and a cache directory so models are only downloaded once:
 
 ```bash
 docker run --rm --shm-size=8g --env-file .env --gpus all \
@@ -97,7 +97,7 @@ docker run --rm --shm-size=8g --env-file .env --gpus all \
 
 The first startup downloads models from HuggingFace into the cache volume. Subsequent restarts reuse the cached models with no re-download.
 
-See `config/models.example.yaml` inside the image for all supported options (`docker run --rm ghcr.io/alez007/yasha:0.1.0 cat /yasha/config/models.example.yaml`).
+The image ships with example configs for 8 GB, 16 GB, 24 GB, and 2×16 GB setups — inspect them with e.g. `docker run --rm ghcr.io/alez007/yasha:0.1.0 cat /yasha/config/models.example.16GB.yaml`.
 
 To build locally instead:
 
@@ -131,7 +131,11 @@ Each entry in `models.yaml` configures one model deployment. All fields:
 `use_gpu` controls how a model is pinned to specific hardware:
 
 - **`use_gpu: <int>`** — pins via `CUDA_VISIBLE_DEVICES`; only compatible with `tensor_parallel_size: 1`
-- **`use_gpu: "<resource-name>"`** — requests a named Ray custom resource (e.g. `"rtx_5060ti"`); compatible with tensor parallelism; requires registering the resource when starting the Ray head: `ray start --head --resources='{"rtx_5060ti": 1}'`
+- **`use_gpu: "<resource-name>"`** — requests a named Ray custom resource; compatible with tensor parallelism; requires registering the resource when starting the Ray head:
+  ```bash
+  ray start --head --resources='{"dual_16gb": 1}'
+  ```
+  The name is arbitrary — it just has to match the value in `use_gpu`. The `models.example.2x16GB.yaml` preset uses `"dual_16gb"` for the TP=2 LLM deployment.
 - **omit** — Ray schedules the deployment freely across available GPUs
 
 ## Environment variables

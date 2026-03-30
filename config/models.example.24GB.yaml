@@ -1,0 +1,52 @@
+# 1 × 24 GB GPU — Power stack
+# LLM: Qwen2.5-14B (fp8) · embed: nomic · STT: Whisper Medium · TTS: Kokoro
+# GPU budget: 0.80 + 0.07 + 0.06 + 0.07 = 1.00
+#
+# fp8 quantization brings Qwen2.5-14B (~28 GB at bf16) down to ~7 GB, leaving
+# ~12 GB for KV cache. fp8 KV cache halves that footprint, pushing max_model_len to 64K.
+#
+# Requirements:
+#   quantization: "fp8"      — Ampere+ (RTX 30xx / A10 / A100 and newer)
+#   kv_cache_dtype: "fp8_e4m3" — Ada Lovelace / Hopper (RTX 40xx / H100) for hardware acceleration;
+#                                works in software on Ampere but is slower
+
+models:
+  - name: "kokoro"
+    model: "hexgrad/Kokoro-82M"
+    usecase: "tts"
+    loader: "custom"
+    plugin: "kokoro"
+    num_gpus: 0.07
+    plugin_config:
+      onnx_provider: "CUDAExecutionProvider"
+
+  - name: "nomic-embed"
+    model: "nomic-ai/nomic-embed-text-v1.5"
+    usecase: "embed"
+    loader: "vllm"
+    num_gpus: 0.06
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      trust_remote_code: true
+
+  - name: "whisper"
+    model: "openai/whisper-medium"
+    usecase: "transcription"
+    loader: "vllm"
+    num_gpus: 0.07
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      trust_remote_code: true
+
+  - name: "llm"
+    model: "Qwen/Qwen2.5-14B-Instruct"
+    usecase: "generate"
+    loader: "vllm"
+    num_gpus: 0.80
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      max_model_len: 65536
+      quantization: "fp8"
+      kv_cache_dtype: "fp8_e4m3"
+      enable_auto_tool_choice: true
+      tool_call_parser: "hermes"

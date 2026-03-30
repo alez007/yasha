@@ -57,6 +57,8 @@ class VllmInfer():
             gpu_memory_utilization=self.vllm_engine_kwargs.gpu_memory_utilization,
             distributed_executor_backend=cast(DistributedExecutorBackend, self.vllm_engine_kwargs.distributed_executor_backend),
             enable_log_requests=self.vllm_engine_kwargs.enable_log_requests if self.vllm_engine_kwargs.enable_log_requests is not None else False,
+            quantization=self.vllm_engine_kwargs.quantization,
+            kv_cache_dtype=self.vllm_engine_kwargs.kv_cache_dtype or "auto",
         )
 
         usage_context = UsageContext.OPENAI_API_SERVER

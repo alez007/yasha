@@ -24,10 +24,10 @@ logger = logging.getLogger("ray")
 def build_actor_options(config: YashaModelConfig) -> dict:
     tp = config.vllm_engine_kwargs.tensor_parallel_size if config.vllm_engine_kwargs else 1
 
-    # For tp=1: use num_gpus (fractional GPU sharing, e.g. 0.15 for whisper).
-    # For tp>1: use tensor_parallel_size — vllm initialises CUDA in the coordinator
-    # process too, so the outer actor must claim all GPUs up front.
-    num_gpus = config.num_gpus if tp == 1 else float(tp)
+    # Multiply by tp so Ray reserves the correct total GPU units across all shards
+    # (e.g. num_gpus=0.82, tp=2 → 1.64 units).  Claiming float(tp)=2.0 would leave
+    # no room for the small fractional models and cause a scheduling failure.
+    num_gpus = config.num_gpus * tp
 
     options: dict = {"num_gpus": num_gpus, "num_cpus": config.num_cpus}
 

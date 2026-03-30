@@ -1,0 +1,44 @@
+# 1 × 16 GB GPU — Balanced stack
+# LLM: Llama-3.1-8B (w8a8 pre-quantized) · embed: nomic · STT: Whisper Small · TTS: Kokoro
+# GPU budget: 0.82 + 0.06 + 0.06 + 0.06 = 1.00
+#
+# Pre-quantized w8a8 model — no quantization flag needed, vLLM auto-detects it.
+
+models:
+  - name: "kokoro"
+    model: "hexgrad/Kokoro-82M"
+    usecase: "tts"
+    loader: "custom"
+    plugin: "kokoro"
+    num_gpus: 0.06
+    plugin_config:
+      onnx_provider: "CUDAExecutionProvider"
+
+  - name: "nomic-embed"
+    model: "nomic-ai/nomic-embed-text-v1.5"
+    usecase: "embed"
+    loader: "vllm"
+    num_gpus: 0.06
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      trust_remote_code: true
+
+  - name: "whisper"
+    model: "openai/whisper-small"
+    usecase: "transcription"
+    loader: "vllm"
+    num_gpus: 0.06
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      trust_remote_code: true
+
+  - name: "llm"
+    model: "RedHatAI/Meta-Llama-3.1-8B-Instruct-quantized.w8a8"
+    usecase: "generate"
+    loader: "vllm"
+    num_gpus: 0.82
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      max_model_len: 32768
+      enable_auto_tool_choice: true
+      tool_call_parser: "llama3_json"
