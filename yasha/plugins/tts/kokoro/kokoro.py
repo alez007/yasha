@@ -47,6 +47,14 @@ class ModelPlugin(BasePlugin):
         logger.info("kokoro session providers: %s", self.kokoro.sess.get_providers())
         
     
+    def __del__(self):
+        try:
+            if kokoro := getattr(self, "kokoro", None):
+                del kokoro
+                self.kokoro = None
+        except Exception:
+            pass
+
     async def start(self):
         pass
     

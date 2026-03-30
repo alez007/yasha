@@ -1,6 +1,7 @@
 import asyncio
 import ray
 from typing import Any, Literal
+from vllm.entrypoints.chat_utils import ChatTemplateContentFormatOption
 from pydantic import BaseModel, Field, model_validator
 from enum import Enum
 
@@ -30,7 +31,7 @@ class VllmEngineConfig(BaseModel):
     dtype: str = "auto"
     tokenizer: str|None = None
     trust_remote_code: bool = False
-    gpu_memory_utilization: float|None = None  # None → use num_gpus from parent config (when < 1.0)
+    gpu_memory_utilization: float = 0.9  # overridden by num_gpus when not explicitly set in config
     distributed_executor_backend: str|None = None
     task: str = "auto"
     model_impl: str|None = None
@@ -39,7 +40,7 @@ class VllmEngineConfig(BaseModel):
     quantization: str|None = None
     enable_auto_tool_choice: bool|None = None
     tool_call_parser: str|None = None
-    chat_template_content_format: str = "auto"
+    chat_template_content_format: ChatTemplateContentFormatOption = "auto"
 
 
 class TransformersConfig(BaseModel):
@@ -55,7 +56,7 @@ class YashaModelConfig(BaseModel):
     num_gpus: float = 0.9
     num_cpus: float = 0.1
     use_gpu: int|str|None = None
-    vllm_engine_kwargs: VllmEngineConfig|None = None
+    vllm_engine_kwargs: VllmEngineConfig = Field(default_factory=VllmEngineConfig)
     transformers_config: TransformersConfig|None = None
     plugin_config: dict[str, Any]|None = None  # plugin devs parse this themselves
 
@@ -63,6 +64,8 @@ class YashaModelConfig(BaseModel):
     def check_model_or_plugin(self):
         if self.model is None and self.plugin is None:
             raise ValueError('model and plugin fields cannot be both empty')
+        if self.loader in (ModelLoader.vllm, ModelLoader.transformers) and self.model is None:
+            raise ValueError(f"loader='{self.loader}' requires model to be set")
         return self
 
     @model_validator(mode='after')
@@ -111,7 +114,7 @@ class RequestWatcher:
     async def _watch(self):
         while True:
             if await self._request.is_disconnected():
-                await self._event.set.remote()
+                await self._event.set.remote()  # type: ignore[attr-defined]
                 break
             await asyncio.sleep(0.1)
 

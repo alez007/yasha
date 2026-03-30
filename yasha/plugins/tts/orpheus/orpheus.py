@@ -25,7 +25,7 @@ class ModelPlugin(BasePlugin):
     def __init__(self, model_config: YashaModelConfig):
         self.model_config = model_config
 
-        config_engine_kwargs = model_config.vllm_engine_kwargs.model_dump() if model_config.vllm_engine_kwargs is not None else {}
+        config_engine_kwargs = model_config.vllm_engine_kwargs.model_dump(exclude_unset=True)
         config_engine_kwargs['model'] = model_config.model
         vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
         logger.info("initialising vllm engine with args: %s", vllm_engine_kwargs.model_dump())
@@ -33,7 +33,7 @@ class ModelPlugin(BasePlugin):
         engine_args = AsyncEngineArgs(
             model=vllm_engine_kwargs.model,
             tensor_parallel_size=vllm_engine_kwargs.tensor_parallel_size,
-            max_model_len=vllm_engine_kwargs.max_model_len,
+            max_model_len=cast(int, vllm_engine_kwargs.max_model_len),
             dtype=cast(ModelDType, vllm_engine_kwargs.dtype),
             tokenizer=vllm_engine_kwargs.tokenizer,
             trust_remote_code=vllm_engine_kwargs.trust_remote_code,
@@ -53,6 +53,13 @@ class ModelPlugin(BasePlugin):
             disable_log_stats=engine_args.disable_log_stats,
         )
     
+    def __del__(self):
+        try:
+            if engine := getattr(self, "engine", None):
+                engine.shutdown()
+        except Exception:
+            pass
+
     async def start(self):
         vllm_config = self.engine.vllm_config
 
