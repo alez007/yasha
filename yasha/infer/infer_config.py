@@ -41,6 +41,7 @@ class VllmEngineConfig(BaseModel):
     enable_auto_tool_choice: bool|None = None
     tool_call_parser: str|None = None
     chat_template_content_format: ChatTemplateContentFormatOption = "auto"
+    enforce_eager: bool|None = None
 
 
 class TransformersConfig(BaseModel):
@@ -53,7 +54,7 @@ class YashaModelConfig(BaseModel):
     usecase: ModelUsecase
     loader: ModelLoader = ModelLoader.vllm
     plugin: str|None = None              # only meaningful for loader='custom', silently ignored otherwise
-    num_gpus: float = 0.9
+    num_gpus: float = 0
     num_cpus: float = 0.1
     use_gpu: int|str|None = None
     vllm_engine_kwargs: VllmEngineConfig = Field(default_factory=VllmEngineConfig)
