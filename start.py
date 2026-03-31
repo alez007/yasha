@@ -15,7 +15,7 @@ from ray import serve
 from ray.serve.config import HTTPOptions
 from pydantic_yaml import parse_yaml_raw_as
 
-from yasha.infer.infer_config import YashaConfig, YashaModelConfig
+from yasha.infer.infer_config import ModelUsecase, YashaConfig, YashaModelConfig
 from yasha.infer.model_deployment import ModelDeployment
 from yasha.openai.api import YashaAPI
 
@@ -25,16 +25,32 @@ logger = logging.getLogger("ray")
 def build_actor_options(config: YashaModelConfig) -> dict:
     tp = config.vllm_engine_kwargs.tensor_parallel_size if config.vllm_engine_kwargs else 1
 
-    if tp > 1 and isinstance(config.use_gpu, str):
-        # Named resource provides scheduling exclusivity — no GPU units needed.
-        # Ray requires whole numbers for num_gpus > 1, and num_gpus * tp would be
-        # fractional here. VRAM is managed by each model's gpu_memory_utilization.
+    tp_backend = config.vllm_engine_kwargs.distributed_executor_backend if config.vllm_engine_kwargs else None
+
+    if config.num_gpus == 0:
         num_gpus = 0
-    elif tp > 1:
-        # No named resource: Ray uses GPU units for placement. Must be a whole number.
-        # TP models are sorted first so they are scheduled before fractional models
-        # consume the pool.
+    elif isinstance(config.use_gpu, str):
+        # Named resource provides scheduling exclusivity — no GPU units needed on the
+        # main actor. TP worker placement is handled by VLLM_RAY_PER_WORKER_GPUS.
+        num_gpus = 0
+    elif tp > 1 and tp_backend == "mp":
+        # mp backend: the main actor forks TP worker subprocesses, each owning one
+        # physical GPU. Allocate tp whole units so Ray exposes all devices via
+        # CUDA_VISIBLE_DEVICES. num_gpus is not used for Ray allocation in this path —
+        # gpu_memory_utilization is passed directly to vLLM instead.
+        if config.num_gpus > 0:
+            logger.warning(
+                "num_gpus=%s is ignored for model '%s': with vllm mp backend and "
+                "tensor_parallel_size=%d, Ray GPU allocation is determined by tp.",
+                config.num_gpus, config.name, tp,
+            )
         num_gpus = float(tp)
+    elif tp > 1:
+        # ray backend without named resource: vLLM spawns tp worker Ray actors that
+        # each claim their own fractional GPU. The outer actor is a coordinator only
+        # and needs no GPU units. VLLM_RAY_PER_WORKER_GPUS tells vLLM what fraction
+        # each worker actor should request.
+        num_gpus = 0
     else:
         num_gpus = config.num_gpus
 
@@ -45,11 +61,13 @@ def build_actor_options(config: YashaModelConfig) -> dict:
         env_vars["CUDA_VISIBLE_DEVICES"] = str(config.use_gpu)
     elif isinstance(config.use_gpu, str):
         options["resources"] = {config.use_gpu: 1}
-        if tp > 1:
-            # Tell vLLM's Ray executor what fraction of a GPU each worker actor
-            # should claim, so they respect our memory budget rather than
-            # requesting 1.0 GPU unit each (the default).
-            env_vars["VLLM_RAY_PER_WORKER_GPUS"] = str(config.num_gpus)
+
+    if tp > 1 and tp_backend != "mp" and config.num_gpus > 0:
+        # ray backend (named resource or plain): set per-worker GPU fraction so vLLM
+        # worker actors claim the right amount. Only override when num_gpus is
+        # explicitly set; otherwise let vLLM use its built-in default (0.9/worker).
+        env_vars["VLLM_RAY_PER_WORKER_GPUS"] = str(config.num_gpus)
+
     options["runtime_env"] = {"env_vars": env_vars}
 
     return options
@@ -57,6 +75,7 @@ def build_actor_options(config: YashaModelConfig) -> dict:
 
 def main():
     ray_port = os.environ.get("RAY_REDIS_PORT", "6379")
+    os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     serve.shutdown()
     ray.shutdown()
     ray.init(address=f"0.0.0.0:{ray_port}")
@@ -99,7 +118,7 @@ def main():
                 route_prefix=None,  # not exposed via HTTP — accessed only via handle
             )
             logger.info("Model ready: %s", config.name)
-            model_handles[config.name] = handle
+            model_handles[config.name] = (handle, config.usecase)
 
         logger.info("All models ready, starting API gateway...")
         serve.run(

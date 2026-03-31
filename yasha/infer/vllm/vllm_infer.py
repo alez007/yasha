@@ -75,6 +75,7 @@ class VllmInfer():
             enable_log_requests=self.vllm_engine_kwargs.enable_log_requests if self.vllm_engine_kwargs.enable_log_requests is not None else False,
             quantization=self.vllm_engine_kwargs.quantization,
             kv_cache_dtype=self.vllm_engine_kwargs.kv_cache_dtype or "auto",
+            enforce_eager=self.vllm_engine_kwargs.enforce_eager or False,
         )
 
         usage_context = UsageContext.OPENAI_API_SERVER

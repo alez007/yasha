@@ -14,7 +14,7 @@ from http import HTTPStatus
 from ray import serve
 from ray.serve.handle import DeploymentHandle
 
-from yasha.infer.infer_config import RawSpeechResponse, RequestWatcher, SpeechRequest
+from yasha.infer.infer_config import ModelUsecase, RawSpeechResponse, RequestWatcher, SpeechRequest
 
 
 logger = logging.getLogger("ray.serve")
@@ -65,9 +65,13 @@ def _error_response(result: ErrorResponse) -> JSONResponse:
 @serve.deployment
 @serve.ingress(app)
 class YashaAPI:
-    def __init__(self, model_handles: dict[str, DeploymentHandle]):
-        self.models = model_handles
-        self.model_list = [OpenAiModelCard(id=name) for name in model_handles]
+    def __init__(self, model_handles: dict[str, tuple[DeploymentHandle, ModelUsecase]]):
+        self.models = {name: handle for name, (handle, _) in model_handles.items()}
+        self.model_list = [
+            OpenAiModelCard(id=name)
+            for name, (_, usecase) in model_handles.items()
+            if usecase is ModelUsecase.generate
+        ]
 
     def _get_handle(self, model_name: str | None) -> DeploymentHandle:
         if model_name is None or model_name not in self.models:
@@ -110,6 +114,11 @@ class YashaAPI:
         handle = self._get_handle(request.model)
         watcher = RequestWatcher(raw_request)
         headers = dict(raw_request.headers)
+        # Force evaluation of any lazy pydantic validators (e.g. ValidatorIterator in
+        # tool_calls fields inside raw message dicts) before crossing the Ray process
+        # boundary, where pickling fails. model_dump_json uses pydantic's Rust serializer
+        # which recurses into raw dict values and consumes iterators; model_dump does not.
+        request = ChatCompletionRequest.model_validate_json(request.model_dump_json())
         response_gen = handle.generate.options(stream=True).remote(request, headers, watcher.event)
         return await self._handle_response(response_gen)
 
@@ -118,6 +127,8 @@ class YashaAPI:
         handle = self._get_handle(request.model)
         watcher = RequestWatcher(raw_request)
         headers = dict(raw_request.headers)
+        # EmbeddingRequest is a UnionType — force resolution before Ray pickle boundary.
+        request = type(request).model_validate_json(request.model_dump_json())
         response_gen = handle.embed.options(stream=True).remote(request, headers, watcher.event)
         return await self._handle_response(response_gen)
 
