@@ -1941,7 +1941,7 @@ version = "0.1.0"
 source = { editable = "plugins/orpheus" }
 dependencies = [
     { name = "numpy" },
-    { name = "orpheus-tts" },
+    { name = "snac" },
     { name = "transformers" },
     { name = "yasha" },
 ]
@@ -1949,21 +1949,9 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.2.6" },
-    { name = "orpheus-tts" },
+    { name = "snac" },
     { name = "transformers", specifier = ">=4.57.5" },
     { name = "yasha", editable = "." },
-]
-
-[[package]]
-name = "orpheus-tts"
-version = "0.1.6"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "websockets" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/71/f1/2b6d13f23383a0176c3bce285b6a4a7154b03a33640f5b0432828007125d/orpheus_tts-0.1.6.tar.gz", hash = "sha256:7e58a61aeb625c6372a079d3f3d1e8d4f7ded8717e9f4e46793ca46657f48ec6", size = 11881, upload-time = "2026-03-17T23:02:23.975Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/61/fd/b9aca0cae12728672154516f3566927c73cdbc617042179168c907901ff0/orpheus_tts-0.1.6-py3-none-any.whl", hash = "sha256:7d2d790aad91b26991bb3e2ba460dad2ad609d2edfb418102364eeda3b4085cc", size = 12807, upload-time = "2026-03-17T23:02:22.937Z" },
 ]
 
 [[package]]
@@ -2941,6 +2929,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/67/9a/0a7acb748b86e2922982366d780ca4b16c33f7246fa5860d26005c97e4f3/smart_open-7.5.0.tar.gz", hash = "sha256:f394b143851d8091011832ac8113ea4aba6b92e6c35f6e677ddaaccb169d7cb9", size = 53920, upload-time = "2025-11-08T21:38:40.698Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ad/95/bc978be7ea0babf2fb48a414b6afaad414c6a9e8b1eafc5b8a53c030381a/smart_open-7.5.0-py3-none-any.whl", hash = "sha256:87e695c5148bbb988f15cec00971602765874163be85acb1c9fb8abc012e6599", size = 63940, upload-time = "2025-11-08T21:38:39.024Z" },
+]
+
+[[package]]
+name = "snac"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "einops" },
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/38/5b64fb15c1cf02233252975c43c4b85ccacd9f77c55f7fee72b16b3bd2f6/snac-1.2.1.tar.gz", hash = "sha256:697f27fc5b98308eee8946739e5fd9c1b4ec629ef51b4f01c08dace1290685ee", size = 8737, upload-time = "2024-09-11T15:00:46.175Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/4f/6401dc74af3d9e9602209763eccbb7eac739c2501e499b51b560f71443c0/snac-1.2.1-py3-none-any.whl", hash = "sha256:96f90e221121ad03d6e3b060a787268b1efdbe424560a58f6f732df6d4914dc7", size = 8444, upload-time = "2024-09-11T15:00:44.906Z" },
 ]
 
 [[package]]

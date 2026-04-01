@@ -10,10 +10,7 @@ from vllm.entrypoints.utils import create_error_response
 from vllm.entrypoints.logger import RequestLogger
 
 from yasha.infer.infer_config import SpeechRequest, SpeechResponse, RawSpeechResponse
-from yasha.plugins import tts
-import pkgutil
-import importlib
-from yasha.plugins.base_plugin import BasePluginTransformers, PluginProtoTransformers
+from yasha.plugins.base_plugin import BasePluginTransformers
 import torch
 from transformers import pipeline, AutomaticSpeechRecognitionPipeline, TextToAudioPipeline, PretrainedConfig
 from yasha.infer.infer_config import ModelUsecase, SpeechRequest, SpeechResponse, VllmEngineConfig, YashaModelConfig, RawSpeechResponse

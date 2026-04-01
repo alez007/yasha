@@ -10,10 +10,9 @@ from vllm.entrypoints.openai.models.serving import OpenAIServingModels
 from vllm.entrypoints.utils import create_error_response
 from vllm.entrypoints.logger import RequestLogger
 
-from yasha.infer.infer_config import SpeechRequest, SpeechResponse, RawSpeechResponse
-from yasha.plugins import tts
-import pkgutil
 import importlib
+from typing import cast
+from yasha.infer.infer_config import SpeechRequest, SpeechResponse, RawSpeechResponse
 from yasha.plugins.base_plugin import PluginProtoVllm
 
 
@@ -39,11 +38,9 @@ class OpenAIServingSpeech(OpenAIServing):
         logger = logging.getLogger("ray")
 
         if plugin is not None:
-            for _, modname, ispkg in pkgutil.iter_modules(tts.__path__):
-                if ispkg is False and modname==plugin:
-                    logger.info("Found submodule %s (is a package: %s)", modname, ispkg)
-                    module = cast(PluginProtoVllm, importlib.import_module(".".join([tts.__name__, modname]), package=None))
-                    self.speech_model = module.ModelPlugin(engine_client=engine_client, model_config=model_config)
+            logger.info("Loading plugin: %s", plugin)
+            module = cast(PluginProtoVllm, importlib.import_module(plugin))
+            self.speech_model = module.ModelPlugin(engine_client=engine_client, model_config=model_config)
     
     
 
