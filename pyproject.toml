@@ -10,23 +10,16 @@ requires-python = "==3.12.10"
 dependencies = [
     "argparse>=1.4.0",
     "asyncio>=4.0.0",
-    "bitsandbytes>=0.47.0",
     "fastapi>=0.116.1",
     "flashinfer-python>=0.6.1",
     "httpx>=0.28.1",
-    "onnxruntime-gpu==1.19.2",
-    "kokoro-onnx[gpu]>=0.4.9",
     "numpy>=2.2.6",
-    "orpheus-speech>=0.1.0",
     "pydantic>=2.12.0",
     "pydantic-yaml>=1.6.0",
     "python-multipart>=0.0.20",
     "ray[data,default,serve-grpc]>=2.51.1",
     "scipy>=1.16.1",
-    "spacy>=3.8.8",
-    "timm>=1.0.19",
     "torch>=2.10.0",
-    "torchaudio>=2.10.0",
     "torchvision>=0.25.0",
     "transformers>=4.57.5",
     "vllm==0.18.0",
@@ -34,24 +27,22 @@ dependencies = [
     "requests>=2.32.5",
 ]
 
+[project.optional-dependencies]
+kokoro = ["kokoro"]
+bark = ["bark"]
+orpheus = ["orpheus"]
+
 [build-system]
 requires = ["uv_build"]
 build-backend = "uv_build"
 
+[tool.uv.workspace]
+members = ["plugins/*"]
 
-# kokoro-onnx depends on onnxruntime (CPU) which overwrites onnxruntime-gpu's
-# Python module and removes GPU providers. We rewrite its metadata to depend
-# on onnxruntime-gpu instead.
-[[tool.uv.dependency-metadata]]
-name = "kokoro-onnx"
-version = "0.4.9"
-requires-dist = [
-    "colorlog>=6.9.0",
-    "espeakng-loader>=0.2.4",
-    "numpy>=2.0.2",
-    "onnxruntime-gpu==1.19.2",
-    "phonemizer-fork>=3.3.2",
-]
+[tool.uv.sources]
+kokoro = { workspace = true }
+bark = { workspace = true }
+orpheus = { workspace = true }
 
 [tool.uv.build-backend]
 module-name = "yasha"

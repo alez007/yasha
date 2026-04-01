@@ -1,0 +1,24 @@
+[project]
+name = "kokoro"
+version = "0.1.0"
+description = "Kokoro ONNX TTS plugin for Yasha"
+requires-python = "==3.12.10"
+dependencies = [
+    "yasha",
+    "kokoro-onnx[gpu]>=0.4.9",
+    "numpy>=2.2.6",
+    "onnxruntime-gpu>=1.20.1",
+    "scipy>=1.16.1",
+]
+
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+yasha = { workspace = true }
+
+[tool.uv.build-backend]
+module-name = "kokoro"
+module-root = ""
+

@@ -1,0 +1,23 @@
+[project]
+name = "orpheus"
+version = "0.1.0"
+description = "Orpheus TTS plugin for Yasha"
+requires-python = "==3.12.10"
+dependencies = [
+    "yasha",
+    "orpheus-tts",
+    "transformers>=4.57.5",
+    "numpy>=2.2.6",
+]
+
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+yasha = { workspace = true }
+orpheus-tts = { git = "https://github.com/canopyai/Orpheus-TTS" }
+
+[tool.uv.build-backend]
+module-name = "orpheus"
+module-root = ""
