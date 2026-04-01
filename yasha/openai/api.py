@@ -59,7 +59,7 @@ class OpenaiModelList(BaseModel):
 
 
 def _error_response(result: ErrorResponse) -> JSONResponse:
-    return JSONResponse(content=result.model_dump(), status_code=result.error.code if result.error else 500)
+    return JSONResponse(content=result.model_dump(mode='json'), status_code=result.error.code if result.error else 500)
 
 
 @serve.deployment
@@ -78,23 +78,29 @@ class YashaAPI:
             raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
         return self.models[model_name]
 
-    async def _handle_response(self, response_gen, stream_media_type: str = "text/event-stream"):
+    async def _handle_response(self, response_gen, watcher: RequestWatcher, stream_media_type: str = "text/event-stream"):
         first = await response_gen.__anext__()
 
         if isinstance(first, ErrorResponse):
+            watcher.stop()
             return _error_response(first)
 
         if isinstance(first, RawSpeechResponse):
+            watcher.stop()
             return Response(content=first.audio, media_type=first.media_type)
 
         if isinstance(first, (ChatCompletionResponse, EmbeddingResponse, TranscriptionResponse, TranslationResponse)):
-            return JSONResponse(content=first.model_dump())
+            watcher.stop()
+            return JSONResponse(content=first.model_dump(mode='json'))
 
         # streaming — first chunk already consumed, chain it back
         async def _stream():
-            yield first
-            async for chunk in response_gen:
-                yield chunk
+            try:
+                yield first
+                async for chunk in response_gen:
+                    yield chunk
+            finally:
+                watcher.stop()
 
         return StreamingResponse(content=_stream(), media_type=stream_media_type)
 
@@ -119,8 +125,22 @@ class YashaAPI:
         # boundary, where pickling fails. model_dump_json uses pydantic's Rust serializer
         # which recurses into raw dict values and consumes iterators; model_dump does not.
         request = ChatCompletionRequest.model_validate_json(request.model_dump_json())
+        # model_validate_json recreates a ValidatorIterator for fields typed as Iterable[T]
+        # (e.g. tool_calls in assistant messages) — force those to lists now.
+        for msg in request.messages:
+            if isinstance(msg, dict):
+                tool_calls = msg.get("tool_calls")
+                if tool_calls is not None and not isinstance(tool_calls, list):
+                    msg["tool_calls"] = list(tool_calls)
+        logger.info("chat_completion actor input: %s", request.model_dump_json())
         response_gen = handle.generate.options(stream=True).remote(request, headers, watcher.event)
-        return await self._handle_response(response_gen)
+
+        async def _logged_gen():
+            async for chunk in response_gen:
+                logger.info("chat_completion actor output: %s", chunk)
+                yield chunk
+
+        return await self._handle_response(_logged_gen(), watcher)
 
     @app.post("/v1/embeddings")
     async def create_embeddings(self, request: EmbeddingRequest, raw_request: Request):
@@ -130,7 +150,7 @@ class YashaAPI:
         # EmbeddingRequest is a UnionType — force resolution before Ray pickle boundary.
         request = type(request).model_validate_json(request.model_dump_json())
         response_gen = handle.embed.options(stream=True).remote(request, headers, watcher.event)
-        return await self._handle_response(response_gen)
+        return await self._handle_response(response_gen, watcher)
 
     @app.post("/v1/audio/transcriptions")
     async def create_transcriptions(
@@ -144,7 +164,7 @@ class YashaAPI:
         audio_data = await request.file.read()
         request_no_file = TranscriptionRequest.model_construct(**request.model_dump(exclude={"file"}))
         response_gen = handle.transcribe.options(stream=True).remote(audio_data, request_no_file, headers, watcher.event)
-        return await self._handle_response(response_gen)
+        return await self._handle_response(response_gen, watcher)
 
     @app.post("/v1/audio/translations")
     async def create_translations(
@@ -158,12 +178,14 @@ class YashaAPI:
         audio_data = await request.file.read()
         request_no_file = TranslationRequest.model_construct(**request.model_dump(exclude={"file"}))
         response_gen = handle.translate.options(stream=True).remote(audio_data, request_no_file, headers, watcher.event)
-        return await self._handle_response(response_gen)
+        return await self._handle_response(response_gen, watcher)
 
     @app.post("/v1/audio/speech")
     async def create_speech(self, request: SpeechRequest, raw_request: Request):
+        logger.info("speech request headers: %s", dict(raw_request.headers))
+        logger.info("speech request body: %s", request.model_dump_json())
         handle = self._get_handle(request.model)
         watcher = RequestWatcher(raw_request)
         headers = dict(raw_request.headers)
         response_gen = handle.speak.options(stream=True).remote(request, headers, watcher.event)
-        return await self._handle_response(response_gen)
+        return await self._handle_response(response_gen, watcher)

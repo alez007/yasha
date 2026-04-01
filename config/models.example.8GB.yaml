@@ -29,7 +29,6 @@ models:
     vllm_engine_kwargs:
       tensor_parallel_size: 1
       trust_remote_code: true
-      max_model_len: 448
 
   - name: "llm"
     model: "Qwen/Qwen2.5-1.5B-Instruct"

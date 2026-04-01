@@ -1,5 +1,6 @@
 import os
 import signal
+import sys
 import logging
 
 _cache_dir = os.environ.get("YASHA_CACHE_DIR", "/yasha/.cache/models")
@@ -132,17 +133,32 @@ def main():
         )
 
         def _shutdown(sig, frame):
-            logger.info("Shutting down...")
-            serve.shutdown()
-            ray.shutdown()
+            logger.info("Shutting down (signal %s)...", sig)
+            try:
+                serve.shutdown()
+            except Exception:
+                logger.exception("serve.shutdown() failed")
+            try:
+                ray.shutdown()
+            except Exception:
+                logger.exception("ray.shutdown() failed")
+            sys.exit(0)
 
         signal.signal(signal.SIGINT, _shutdown)
         signal.signal(signal.SIGTERM, _shutdown)
         signal.pause()
-    except Exception:
+    except BaseException as e:
+        if isinstance(e, SystemExit):
+            raise
         logger.exception("Startup failed, shutting down serve actors...")
-        serve.shutdown()
-        ray.shutdown()
+        try:
+            serve.shutdown()
+        except Exception:
+            logger.exception("serve.shutdown() failed during error cleanup")
+        try:
+            ray.shutdown()
+        except Exception:
+            logger.exception("ray.shutdown() failed during error cleanup")
         raise
 
 
