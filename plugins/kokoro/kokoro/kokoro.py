@@ -1,24 +1,38 @@
-from typing import Literal, Union
+"""
+Kokoro ONNX TTS plugin for Yasha.
+
+Selected voices (full list in voices-v1.0.bin):
+
+    American Female: af_heart, af_bella, af_nicole, af_sarah, af_sky
+    American Male:   am_adam, am_michael
+    British Female:  bf_emma, bf_isabella
+    British Male:    bm_george, bm_lewis
+
+Plugin config options (via plugin_config in models.yaml):
+
+    onnx_provider: ONNX execution provider (default: "CUDAExecutionProvider")
+                   Other options: "CPUExecutionProvider", "TensorrtExecutionProvider"
+    sample_rate:   Resample output to this rate in Hz (default: model native ~24000)
+
+Example request:
+
+    curl http://localhost:8000/v1/audio/speech \\
+      -H "Content-Type: application/json" \\
+      -d '{"model": "kokoro", "input": "Hello world", "voice": "af_heart", "response_format": "wav"}' \\
+      --output speech.wav
+"""
+
+from typing import Literal
 import os
-from vllm.engine.protocol import EngineClient
-from vllm.config.model import ModelConfig
-from transformers import AutoTokenizer
-import torch
-from vllm import SamplingParams
 import logging
 from collections.abc import AsyncGenerator
 import base64
-
-from vllm.entrypoints.utils import create_error_response
-from yasha.infer.infer_config import SpeechResponse, SpeechRequest, RawSpeechResponse, YashaModelConfig
-from vllm.entrypoints.openai.engine.protocol import ErrorInfo, ErrorResponse
-import wave
 import io
 import numpy as np
+
+from yasha.infer.infer_config import SpeechResponse, RawSpeechResponse, YashaModelConfig
+from vllm.entrypoints.openai.engine.protocol import ErrorResponse
 from yasha.plugins.base_plugin import BasePlugin
-from transformers import BarkModel, BarkProcessor
-from yasha.infer.infer_config import SpeechResponse, SpeechRequest, RawSpeechResponse
-from collections.abc import AsyncGenerator
 from scipy.io.wavfile import write as write_wav
 from scipy.signal import resample_poly
 from kokoro_onnx import Kokoro
@@ -47,8 +61,7 @@ class ModelPlugin(BasePlugin):
         self.kokoro = Kokoro(model_path, voices_path)
         logger.info("kokoro session providers: %s", self.kokoro.sess.get_providers())
         self.target_sample_rate: int | None = (model_config.plugin_config or {}).get("sample_rate")
-        
-    
+
     def __del__(self):
         try:
             if kokoro := getattr(self, "kokoro", None):
@@ -59,7 +72,7 @@ class ModelPlugin(BasePlugin):
 
     async def start(self):
         pass
-    
+
     def _resample(self, audio: np.ndarray, from_rate: int) -> tuple[np.ndarray, int]:
         if self.target_sample_rate is None or from_rate == self.target_sample_rate:
             return audio, from_rate
@@ -71,7 +84,7 @@ class ModelPlugin(BasePlugin):
     async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         logger.info("started generation: %s with voice: %s", input, voice)
 
-        if stream_format=="sse":
+        if stream_format == "sse":
             return self.generate_sse(input, voice, request_id)
         else:
             chunks = []
@@ -87,8 +100,7 @@ class ModelPlugin(BasePlugin):
             buf = io.BytesIO()
             write_wav(buf, rate=sample_rate, data=audio)
             return RawSpeechResponse(audio=buf.getvalue(), media_type="audio/wav")
-       
-        
+
     async def generate_sse(self, input: str, voice: str, request_id: str) -> AsyncGenerator[str, None]:
         async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
             audio_bytes, sample_rate = self._resample(audio_bytes, sample_rate)
@@ -99,12 +111,6 @@ class ModelPlugin(BasePlugin):
                 type="speech.audio.delta"
             )
             yield f"data: {event_data.model_dump_json()}\n\n"
-            
-        completion_event=SpeechResponse(audio=None, type="speech.audio.done")
+
+        completion_event = SpeechResponse(audio=None, type="speech.audio.done")
         yield f"data: {completion_event.model_dump_json()}\n\n"
-
-        
-    
-
-    
-    

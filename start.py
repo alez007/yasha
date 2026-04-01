@@ -1,3 +1,4 @@
+import importlib
 import os
 import signal
 import sys
@@ -16,7 +17,7 @@ from ray import serve
 from ray.serve.config import HTTPOptions
 from pydantic_yaml import parse_yaml_raw_as
 
-from yasha.infer.infer_config import ModelUsecase, YashaConfig, YashaModelConfig
+from yasha.infer.infer_config import ModelLoader, ModelUsecase, YashaConfig, YashaModelConfig
 from yasha.infer.model_deployment import ModelDeployment
 from yasha.openai.api import YashaAPI
 
@@ -74,6 +75,16 @@ def build_actor_options(config: YashaModelConfig) -> dict:
     return options
 
 
+def ensure_plugin(module_name: str):
+    try:
+        importlib.import_module(module_name)
+    except ImportError:
+        raise RuntimeError(
+            f"Plugin '{module_name}' is not installed. "
+            f"Run: uv sync --extra {module_name}"
+        )
+
+
 def main():
     ray_port = os.environ.get("RAY_REDIS_PORT", "6379")
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
@@ -94,6 +105,10 @@ def main():
         yml_conf: YashaConfig = parse_yaml_raw_as(YashaConfig, f)
 
     logger.info("Init yasha app with config: %s", yml_conf)
+
+    for config in yml_conf.models:
+        if config.loader == ModelLoader.custom and config.plugin:
+            ensure_plugin(config.plugin)
 
     # Schedule TP>1 models first so they claim whole GPU units before fractional
     # models consume the pool (relevant when use_gpu is not a named resource).

@@ -1,8 +1,7 @@
 import logging
+import importlib
 from collections.abc import AsyncGenerator
 from typing import cast
-import pkgutil
-import importlib
 
 from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, YashaModelConfig, SpeechRequest, RawSpeechResponse
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
@@ -13,7 +12,6 @@ from starlette.requests import Request
 from yasha.infer.custom.openai.serving_speech import OpenAIServingSpeech
 
 from yasha.plugins.base_plugin import BasePlugin, PluginProto
-from yasha.plugins import tts
 
 logger = logging.getLogger("ray")
 
@@ -27,16 +25,9 @@ class CustomInfer():
     async def start(self):
         plugin = self.model_config.plugin
         if plugin is not None:
-            for _, modname, ispkg in pkgutil.iter_modules(tts.__path__):
-                if modname == plugin:
-                    logger.info("Found submodule %s (is a package: %s)", modname, ispkg)
-                    module = cast(PluginProto, importlib.import_module(
-                        ".".join([tts.__name__, modname, modname]) if ispkg is True
-                        else ".".join([tts.__name__, modname]),
-                        package=None
-                    ))
-                    self.custom_engine = module.ModelPlugin(model_config=self.model_config)
-                    await self.custom_engine.start()
+            module = cast(PluginProto, importlib.import_module(plugin))
+            self.custom_engine = module.ModelPlugin(model_config=self.model_config)
+            await self.custom_engine.start()
 
         self.serving_speech = await self.init_serving_speech()
 

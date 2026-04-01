@@ -9,7 +9,7 @@ Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized mo
 - **OpenAI-compatible API** — drop-in replacement for any OpenAI SDK client
 - **Streaming** — SSE streaming for chat completions and TTS audio
 - **Tool/function calling** — auto tool choice with configurable parsers
-- **TTS plugin system** — pluggable backends (Kokoro, Bark, Orpheus) with voice selection, speed control, dual streaming modes, and multiple output formats (MP3, Opus, AAC, FLAC, WAV, PCM)
+- **TTS plugin system** — pluggable backends (Kokoro, Bark, Orpheus) with voice selection, speed control, dual streaming modes, and multiple output formats (MP3, Opus, AAC, FLAC, WAV, PCM); each plugin is an opt-in uv workspace package with its own isolated dependencies
 - **Multi-GPU support** — assign models to specific GPUs by index (`use_gpu: int`) or by named Ray resource (`use_gpu: str`), with full tensor parallelism support
 - **Client disconnect detection** — cancels in-flight inference when the client disconnects, freeing GPU resources immediately
 - **Ray dashboard** — monitor deployments, resources, and request logs
@@ -32,6 +32,24 @@ Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized mo
 | Kokoro | ONNX Runtime (GPU) | Yes | Lightweight, auto-downloads model files |
 | Bark | HuggingFace Transformers | No (WAV only) | Voice cloning capability |
 | Orpheus | VLLm | Yes | 4-bit quantized, token-streaming via SNAC decoder |
+
+#### Installing plugins
+
+Plugins are opt-in uv workspace packages. Install them via extras before starting the server:
+
+```bash
+uv sync --extra kokoro
+uv sync --extra kokoro --extra orpheus  # multiple plugins
+```
+
+When using Docker, pass `YASHA_PLUGINS` as a comma-separated list and the container installs them at startup:
+
+```
+YASHA_PLUGINS=kokoro
+YASHA_PLUGINS=kokoro,orpheus
+```
+
+Third-party plugins not in this repo can be installed the same way as long as the module name matches the PyPI package name with underscores replaced by hyphens (e.g. `my_plugin` → `pip install my-plugin`).
 
 #### TTS streaming modes
 
@@ -59,8 +77,10 @@ The `/v1/audio/speech` endpoint supports two streaming modes via the `stream_for
 docker build -t yasha_dev -f Dockerfile.dev .
 
 # Run (mounts local source for live editing)
+# YASHA_PLUGINS is a comma-separated list of plugins to install at startup
 docker run -it --rm --shm-size=8g --env-file .env --gpus all \
   --mount type=bind,src=./,dst=/yasha \
+  -e YASHA_PLUGINS=kokoro \
   -p 8265:8265 -p 8000:8000 yasha_dev
 
 # Inside the container, start the server
@@ -119,7 +139,7 @@ Each entry in `models.yaml` configures one model deployment. All fields:
 | `model` | string | HuggingFace model ID |
 | `usecase` | string | `generate`, `embed`, `transcription`, `translation`, or `tts` |
 | `loader` | string | `vllm`, `transformers`, or `custom` |
-| `plugin` | string | Plugin name (required when `loader: custom`) |
+| `plugin` | string | Plugin module name (required when `loader: custom`); must be installed via `uv sync --extra <plugin>` |
 | `num_gpus` | float | Fraction of a GPU to allocate (0.0–1.0); also sets VLLm `gpu_memory_utilization` |
 | `num_cpus` | float | CPU units to allocate (default `0.1`) |
 | `use_gpu` | int \| string | Pin to a specific GPU (see below) |
@@ -143,6 +163,7 @@ Each entry in `models.yaml` configures one model deployment. All fields:
 | Variable | Description | Default |
 |---|---|---|
 | `HF_TOKEN` | HuggingFace access token | — |
+| `YASHA_PLUGINS` | Comma-separated list of plugins to install at startup (e.g. `kokoro,orpheus`) | — |
 | `YASHA_CACHE_DIR` | Model cache directory (HuggingFace + plugins) | `/yasha/.cache/models` |
 | `RAY_REDIS_PORT` | Ray GCS server port | `6379` |
 | `RAY_DASHBOARD_PORT` | Ray dashboard port | `8265` |
