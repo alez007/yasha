@@ -1,13 +1,23 @@
 ARG CUDA_VERSION=13.0.2
 ARG PYTHON_VERSION=3.12.10
 
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS base
+FROM ubuntu:24.04 AS base
 
-RUN apt update -y && \
-    apt install -y --no-install-recommends \
+ARG CUDA_VERSION
+ARG PYTHON_VERSION
+
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg && \
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
+        | gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
+        > /etc/apt/sources.list.d/cuda.list
+
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends \
     build-essential \
     curl \
-    zlib1g
+    git
 
 RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && CUDA_MAJOR_VERSION=$(echo $CUDA_VERSION | cut -d. -f1) && \
     apt update -y && \

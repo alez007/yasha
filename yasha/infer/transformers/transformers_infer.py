@@ -9,12 +9,9 @@ from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest
 from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest
 from vllm.entrypoints.openai.engine.protocol import ErrorResponse, ErrorInfo
 from starlette.requests import Request
-from yasha.infer.transformers.openai.serving_speech import OpenAIServingSpeech
-import pkgutil
 import importlib
-
+from yasha.infer.transformers.openai.serving_speech import OpenAIServingSpeech
 from yasha.plugins.base_plugin import PluginProtoTransformers, BasePluginTransformers
-from yasha.plugins import tts
 
 logger = logging.getLogger("ray")
 
@@ -51,12 +48,10 @@ class TransformersInfer():
         speech_model: BasePluginTransformers|None = None
         plugin = self.model_config.plugin
         if plugin is not None:
-            for _, modname, ispkg in pkgutil.iter_modules(tts.__path__):
-                if ispkg is False and modname == plugin:
-                    logger.info("Found submodule %s (is a package: %s)", modname, ispkg)
-                    module = cast(PluginProtoTransformers, importlib.import_module(".".join([tts.__name__, modname]), package=None))
-                    assert self.model_config.model is not None
-                    speech_model = module.ModelPlugin(model_name=self.model_config.model, device=self.device)
+            logger.info("Loading plugin: %s", plugin)
+            module = cast(PluginProtoTransformers, importlib.import_module(plugin))
+            assert self.model_config.model is not None
+            speech_model = module.ModelPlugin(model_name=self.model_config.model, device=self.device)
 
         return OpenAIServingSpeech(
             speech_model=speech_model
