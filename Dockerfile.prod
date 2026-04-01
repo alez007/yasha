@@ -32,7 +32,7 @@ ADD ./README.md README.md
 ADD ./uv.lock uv.lock
 ADD ./start.py start.py
 ADD ./yasha yasha
-ADD ./config/models.example.yaml config/models.example.yaml
+ADD ./config config
 
 ENV UV_PROJECT_ENVIRONMENT=/.venv
 ENV VIRTUAL_ENV=/.venv

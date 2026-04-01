@@ -1,6 +1,6 @@
 # 1 × 8 GB GPU — Nano stack
-# LLM: Qwen2.5-1.5B (fp16) · embed: nomic · STT: Whisper Tiny · TTS: Kokoro
-# GPU budget: 0.84 + 0.06 + 0.06 + 0.04 = 1.00
+# LLM: Qwen2.5-7B-Instruct-AWQ (int4) · embed: nomic · STT: Whisper Tiny · TTS: Kokoro
+# GPU budget: 0.52 + 0.20 + 0.09 + 0.09 = 0.90
 
 models:
   - name: "kokoro"
@@ -31,12 +31,12 @@ models:
       trust_remote_code: true
 
   - name: "llm"
-    model: "Qwen/Qwen2.5-1.5B-Instruct"
+    model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
     usecase: "generate"
     loader: "vllm"
     num_gpus: 0.52
     vllm_engine_kwargs:
       tensor_parallel_size: 1
-      max_model_len: 8192
+      max_model_len: 16000
       enable_auto_tool_choice: true
       tool_call_parser: "hermes"
