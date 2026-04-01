@@ -110,7 +110,7 @@ class RequestWatcher:
     def __init__(self, raw_request: Request):
         self._request = raw_request
         self._event = DisconnectEvent.remote()
-        asyncio.create_task(self._watch())
+        self._task = asyncio.create_task(self._watch())
 
     async def _watch(self):
         while True:
@@ -118,6 +118,11 @@ class RequestWatcher:
                 await self._event.set.remote()  # type: ignore[attr-defined]
                 break
             await asyncio.sleep(0.1)
+
+    def stop(self):
+        """Cancel the watch task and kill the Ray actor. Call when the request is fully handled."""
+        self._task.cancel()
+        ray.kill(self._event)
 
     @property
     def event(self):

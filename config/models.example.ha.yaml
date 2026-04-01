@@ -1,14 +1,6 @@
-# Home Assistant stack — voice assistant via Wyoming protocol proxy
-# LLM: Qwen2.5-0.5B (fp16, tool-calling for HA service calls) · STT: Whisper Tiny · TTS: Kokoro
-# No embedder — not needed for HA extended_openai_conversation.
-# GPU budget: 0.09 + 0.20 + 0.15 = 0.44  (fits comfortably on 4 GB+)
-#
-# Intended usage:
-#   - A Wyoming protocol Docker sidecar proxies HA voice pipeline requests
-#     to yasha's OpenAI-compatible /audio/speech, /audio/transcriptions, and
-#     /v1/chat/completions endpoints.
-#   - The HACS extended_openai_conversation integration handles LLM-based
-#     intent recognition and service calls.
+# 1 × 8 GB GPU — Nano stack
+# LLM: Qwen2.5-7B-Instruct-AWQ (int4) · embed: nomic · STT: Whisper Tiny · TTS: Kokoro
+# GPU budget: 0.85 + 0.09 = 0.94
 
 models:
   - name: "kokoro"
@@ -16,28 +8,35 @@ models:
     usecase: "tts"
     loader: "custom"
     plugin: "kokoro"
-    num_gpus: 0
-    num+cpus: 1
+    num_cpus: 1
     plugin_config:
       onnx_provider: "CPUExecutionProvider"
 
-  - name: "whisper"
-    model: "openai/whisper-tiny"
-    usecase: "transcription"
+  - name: "nomic-embed"
+    model: "nomic-ai/nomic-embed-text-v1.5"
+    usecase: "embed"
     loader: "vllm"
-    num_gpus: 0.20
+    num_gpus: 0.09
     vllm_engine_kwargs:
       tensor_parallel_size: 1
       trust_remote_code: true
-      max_model_len: 448
 
-  - name: "llm"
-    model: "Qwen/Qwen2.5-0.5B-Instruct"
-    usecase: "generate"
+  - name: "whisper"
+    model: "openai/whisper-small"
+    usecase: "transcription"
     loader: "vllm"
     num_gpus: 0.15
     vllm_engine_kwargs:
       tensor_parallel_size: 1
-      max_model_len: 8192
+      trust_remote_code: true
+
+  - name: "llm"
+    model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    usecase: "generate"
+    loader: "vllm"
+    num_gpus: 0.70
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      max_model_len: 16000
       enable_auto_tool_choice: true
       tool_call_parser: "hermes"

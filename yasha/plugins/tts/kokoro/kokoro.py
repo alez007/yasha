@@ -20,6 +20,7 @@ from transformers import BarkModel, BarkProcessor
 from yasha.infer.infer_config import SpeechResponse, SpeechRequest, RawSpeechResponse
 from collections.abc import AsyncGenerator
 from scipy.io.wavfile import write as write_wav
+from scipy.signal import resample_poly
 from kokoro_onnx import Kokoro
 import onnxruntime as ort
 from yasha.utils import download, cache_dir
@@ -45,6 +46,7 @@ class ModelPlugin(BasePlugin):
         logger.info("ONNX_PROVIDER=%s", onnx_provider)
         self.kokoro = Kokoro(model_path, voices_path)
         logger.info("kokoro session providers: %s", self.kokoro.sess.get_providers())
+        self.target_sample_rate: int | None = (model_config.plugin_config or {}).get("sample_rate")
         
     
     def __del__(self):
@@ -58,22 +60,38 @@ class ModelPlugin(BasePlugin):
     async def start(self):
         pass
     
+    def _resample(self, audio: np.ndarray, from_rate: int) -> tuple[np.ndarray, int]:
+        if self.target_sample_rate is None or from_rate == self.target_sample_rate:
+            return audio, from_rate
+        from math import gcd
+        g = gcd(self.target_sample_rate, from_rate)
+        audio = resample_poly(audio, self.target_sample_rate // g, from_rate // g).astype(audio.dtype)
+        return audio, self.target_sample_rate
+
     async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         logger.info("started generation: %s with voice: %s", input, voice)
 
         if stream_format=="sse":
             return self.generate_sse(input, voice, request_id)
         else:
-            buf = io.BytesIO()
-            async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
-                logger.info("got some audio bytes (sample rate %s) for input: %s", sample_rate, input)
-                write_wav(buf, rate=sample_rate, data=audio_bytes)
+            chunks = []
+            sample_rate = self.target_sample_rate
+            async for audio_bytes, sr in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
+                audio_bytes, sample_rate = self._resample(audio_bytes, sr)
+                chunks.append(audio_bytes)
 
+            logger.info("got %d chunks (sample rate %s) for input: %s", len(chunks), sample_rate, input)
+            audio = np.concatenate(chunks)
+            if np.issubdtype(audio.dtype, np.floating):
+                audio = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
+            buf = io.BytesIO()
+            write_wav(buf, rate=sample_rate, data=audio)
             return RawSpeechResponse(audio=buf.getvalue(), media_type="audio/wav")
        
         
     async def generate_sse(self, input: str, voice: str, request_id: str) -> AsyncGenerator[str, None]:
         async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
+            audio_bytes, sample_rate = self._resample(audio_bytes, sample_rate)
             logger.info("got some audio bytes (sample rate %s) for input: %s", sample_rate, input)
             encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')
             event_data = SpeechResponse(
