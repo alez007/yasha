@@ -1,17 +1,27 @@
 ARG CUDA_VERSION=13.0.2
 ARG PYTHON_VERSION=3.12.10
 
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS base
+FROM ubuntu:24.04 AS base
 
-RUN apt update -y && \
-    apt install -y --no-install-recommends \
+ARG CUDA_VERSION
+ARG PYTHON_VERSION
+
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg && \
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
+        | gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
+        > /etc/apt/sources.list.d/cuda.list
+
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends \
     build-essential \
     curl \
-    zlib1g
+    git
 
 RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && CUDA_MAJOR_VERSION=$(echo $CUDA_VERSION | cut -d. -f1) && \
-    apt update -y && \
-    apt install -y --no-install-recommends \
+    apt-get update -y && \
+    apt-get install -y --no-install-recommends \
         build-essential \
         cuda-nvcc-${CUDA_VERSION_DASH} \
         cuda-cudart-${CUDA_VERSION_DASH} \
@@ -33,6 +43,7 @@ ADD ./uv.lock uv.lock
 ADD ./start.py start.py
 ADD ./yasha yasha
 ADD ./config config
+ADD ./plugins plugins
 
 ENV UV_PROJECT_ENVIRONMENT=/.venv
 ENV VIRTUAL_ENV=/.venv
@@ -51,7 +62,13 @@ WORKDIR /
 COPY <<EOF start.sh
 #!/bin/bash
 
-uv sync --project /yasha --locked
+EXTRAS=""
+if [ -n "\${YASHA_PLUGINS}" ]; then
+    for plugin in \$(echo "\${YASHA_PLUGINS}" | tr ',' ' '); do
+        EXTRAS="\$EXTRAS --extra \$plugin"
+    done
+fi
+uv sync --project /yasha --locked \$EXTRAS
 
 cd /yasha && ray start --head --dashboard-port=\${RAY_DASHBOARD_PORT} --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=\${RAY_HEAD_CPU_NUM} --num-gpus=\${RAY_HEAD_GPU_NUM} --disable-usage-stats
 if ray status --address=0.0.0.0:\${RAY_REDIS_PORT}; then
