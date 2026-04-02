@@ -18,6 +18,9 @@ release-major:
 	@$(MAKE) _release NEW_VERSION=$(NEW_VERSION)
 
 _release:
+	@if [ "$$(git branch --show-current)" != "main" ]; then echo "Error: releases must be made from the main branch" >&2; exit 1; fi
+	@if [ -n "$$(git status --porcelain)" ]; then echo "Error: working tree is dirty, commit or stash changes first" >&2; exit 1; fi
+	@git pull --rebase origin main
 	@echo "Bumping version: $(VERSION) -> $(NEW_VERSION)"
 	@sed -i '0,/^version = ".*"/{s/^version = ".*"/version = "$(NEW_VERSION)"/}' pyproject.toml
 	@uv lock
