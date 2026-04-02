@@ -70,7 +70,7 @@ if [ -n "\${YASHA_PLUGINS}" ]; then
 fi
 uv sync --project /yasha --locked \$EXTRAS
 
-cd /yasha && ray start --head --dashboard-port=\${RAY_DASHBOARD_PORT} --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=\${RAY_HEAD_CPU_NUM} --num-gpus=\${RAY_HEAD_GPU_NUM} --disable-usage-stats
+cd /yasha && ray start --head --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=\${RAY_HEAD_CPU_NUM} --num-gpus=\${RAY_HEAD_GPU_NUM} --disable-usage-stats
 if ray status --address=0.0.0.0:\${RAY_REDIS_PORT}; then
     uv run start.py
 else
