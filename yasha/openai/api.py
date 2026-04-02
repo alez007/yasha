@@ -122,16 +122,16 @@ class YashaAPI:
         headers = dict(raw_request.headers)
         # Force evaluation of any lazy pydantic validators (e.g. ValidatorIterator in
         # tool_calls fields inside raw message dicts) before crossing the Ray process
-        # boundary, where pickling fails. model_dump_json uses pydantic's Rust serializer
-        # which recurses into raw dict values and consumes iterators; model_dump does not.
-        request = ChatCompletionRequest.model_validate_json(request.model_dump_json())
-        # model_validate_json recreates a ValidatorIterator for fields typed as Iterable[T]
-        # (e.g. tool_calls in assistant messages) — force those to lists now.
+        # boundary, where pickling fails.
+        # Pre-convert any Iterable tool_calls to lists before model_dump_json; the Rust
+        # serializer expects a generator type for Iterable fields, so passing a list
+        # produces PydanticSerializationUnexpectedValue warnings otherwise.
         for msg in request.messages:
             if isinstance(msg, dict):
                 tool_calls = msg.get("tool_calls")
                 if tool_calls is not None and not isinstance(tool_calls, list):
                     msg["tool_calls"] = list(tool_calls)
+        request = ChatCompletionRequest.model_validate_json(request.model_dump_json())
         logger.info("chat_completion actor input: %s", request.model_dump_json())
         response_gen = handle.generate.options(stream=True).remote(request, headers, watcher.event)
 
