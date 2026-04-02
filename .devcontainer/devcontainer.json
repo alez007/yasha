@@ -1,0 +1,53 @@
+{
+  "name": "yasha",
+  "build": {
+    "dockerfile": "../Dockerfile.dev",
+    "context": ".."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    }
+  },
+  "workspaceFolder": "/yasha",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/yasha,type=bind",
+  "runArgs": [
+    "--shm-size=8g",
+    "--gpus=all",
+    "-p", "0.0.0.0:8000:8000",
+    "-p", "0.0.0.0:8265:8265"
+  ],
+  "forwardPorts": [8000, 8265],
+  "portsAttributes": {
+    "8000": { "label": "API" },
+    "8265": { "label": "Ray Dashboard" }
+  },
+  "mounts": [
+    "source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind"
+  ],
+  "postCreateCommand": "npm install -g @anthropic-ai/claude-code",
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/root/.claude"
+  },
+  "remoteEnv": {
+    "HF_TOKEN": "${localEnv:HF_TOKEN}",
+    "YASHA_PLUGINS": "${localEnv:YASHA_PLUGINS}"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "charliermarsh.ruff",
+        "ms-python.python",
+        "ms-pyright.pyright"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/.venv/bin/python",
+        "ruff.interpreter": ["/.venv/bin/python"],
+        "python.analysis.extraPaths": ["/.venv/lib/python3.12/site-packages"],
+        "pyright.venvPath": "/",
+        "pyright.venv": ".venv"
+      }
+    }
+  }
+}

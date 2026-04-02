@@ -37,6 +37,9 @@ ENV UV_LINK_MODE=copy
 
 WORKDIR /yasha
 
+# Copy dependency manifests and workspace members so uv can resolve and
+# pre-install packages during the image build.  At runtime the dev container
+# bind-mounts the full host repo over /yasha, shadowing everything below.
 ADD ./pyproject.toml pyproject.toml
 ADD ./README.md README.md
 ADD ./uv.lock uv.lock
@@ -45,6 +48,11 @@ ADD ./plugins plugins
 ENV UV_PROJECT_ENVIRONMENT=/.venv
 ENV VIRTUAL_ENV=/.venv
 ENV YASHA_CACHE_DIR=/yasha/.cache/models
+ENV RAY_REDIS_PORT=6379
+ENV RAY_CLUSTER_ADDRESS=ray://0.0.0.0
+ENV RAY_HEAD_CPU_NUM=2
+ENV RAY_HEAD_GPU_NUM=1
+ENV YASHA_USE_EXISTING_RAY_CLUSTER=false
 RUN uv venv
 
 ARG PYTHON_VERSION
@@ -53,7 +61,7 @@ RUN uv python install ${PYTHON_VERSION}
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-install-project
+    uv sync --locked --no-install-project --extra dev
 
 WORKDIR /
 COPY <<EOF start.sh
@@ -67,22 +75,17 @@ if [ -n "\${YASHA_PLUGINS}" ]; then
 fi
 uv sync --project /yasha --locked \$EXTRAS
 
-cd /yasha && ray start --head --dashboard-port=\${RAY_DASHBOARD_PORT} --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=\${RAY_HEAD_CPU_NUM} --num-gpus=\${RAY_HEAD_GPU_NUM} --disable-usage-stats
-if ray status --address=0.0.0.0:\${RAY_REDIS_PORT}; then
-    /bin/bash
-    # start project 
-    # uv run start.py
-else
-    echo "ray cluster failed to start"
+if [ "\${YASHA_USE_EXISTING_RAY_CLUSTER}" != "true" ]; then
+    cd /yasha && ray start --head --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=\${RAY_HEAD_CPU_NUM} --num-gpus=\${RAY_HEAD_GPU_NUM} --disable-usage-stats
+    if ! ray status --address=0.0.0.0:\${RAY_REDIS_PORT}; then
+        echo "ray cluster failed to start"
+        exit 1
+    fi
 fi
+/bin/bash
 
 EOF
 RUN chmod +x start.sh
 
 WORKDIR /
 CMD ["uv", "run", "--active", "bash", "start.sh"]
-
-
-
-
-
