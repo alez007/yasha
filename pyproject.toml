@@ -1,11 +1,20 @@
 [project]
 name = "yasha"
 version = "0.1.11"
-description = "Yet another self-hosted agent"
+description = "Self-hosted, multi-model AI inference server. Run LLMs, TTS, STT, and embeddings with an OpenAI-compatible API."
 authors = [
     { name = "Alex Margarit" }
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
+license = { text = "MIT" }
+keywords = ["ai", "inference", "vllm", "ray", "openai", "llm", "tts", "stt", "embeddings", "self-hosted"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Home Automation",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
 requires-python = "==3.12.10"
 dependencies = [
     "argparse>=1.4.0",
@@ -34,7 +43,15 @@ orpheus = ["orpheus"]
 dev = [
     "ruff>=0.11.0",
     "pyright>=1.1.400",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.25.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/alez007/yasha"
+Documentation = "https://github.com/alez007/yasha/tree/main/docs"
+Issues = "https://github.com/alez007/yasha/issues"
+Changelog = "https://github.com/alez007/yasha/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["uv_build"]
