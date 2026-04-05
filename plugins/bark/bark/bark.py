@@ -33,10 +33,9 @@ from typing import Literal
 import torch
 from scipy.io.wavfile import write as write_wav
 from transformers import BarkModel, BarkProcessor
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse
-from vllm.entrypoints.utils import create_error_response
 
-from yasha.infer.infer_config import RawSpeechResponse, YashaModelConfig
+from yasha.infer.infer_config import YashaModelConfig
+from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, create_error_response
 from yasha.plugins.base_plugin import BasePlugin
 
 logger = logging.getLogger("ray")

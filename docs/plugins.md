@@ -47,8 +47,8 @@ from collections.abc import AsyncGenerator
 from typing import Literal
 
 from yasha.plugins.base_plugin import BasePlugin
-from yasha.infer.infer_config import RawSpeechResponse, YashaModelConfig
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse
+from yasha.infer.infer_config import YashaModelConfig
+from yasha.openai.protocol import ErrorResponse, RawSpeechResponse
 
 
 class ModelPlugin(BasePlugin):

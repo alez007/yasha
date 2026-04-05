@@ -35,9 +35,9 @@ import onnxruntime as ort  # type: ignore[import-unresolved]
 from kokoro_onnx import Kokoro  # type: ignore[import-unresolved]
 from scipy.io.wavfile import write as write_wav
 from scipy.signal import resample_poly
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse
 
-from yasha.infer.infer_config import RawSpeechResponse, SpeechResponse, YashaModelConfig
+from yasha.infer.infer_config import YashaModelConfig
+from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechResponse
 from yasha.plugins.base_plugin import BasePlugin
 from yasha.utils import cache_dir, download
 
