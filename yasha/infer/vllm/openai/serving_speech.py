@@ -20,20 +20,23 @@ class OpenAIServingSpeech(OpenAIServing):
     request_id_prefix = "tts"
 
     """Handles speech requests"""
+
     def __init__(
         self,
         engine_client: EngineClient,
         model_config: ModelConfig,
         models: OpenAIServingModels,
         *,
-        request_logger: RequestLogger|None = None,
+        request_logger: RequestLogger | None = None,
         return_tokens_as_token_ids: bool = False,
-        plugin: str|None = None,
+        plugin: str | None = None,
     ):
-        super().__init__(engine_client=engine_client,
-                         models=models,
-                         request_logger=request_logger,
-                         return_tokens_as_token_ids=return_tokens_as_token_ids)
+        super().__init__(
+            engine_client=engine_client,
+            models=models,
+            request_logger=request_logger,
+            return_tokens_as_token_ids=return_tokens_as_token_ids,
+        )
 
         logger = logging.getLogger("ray")
 
@@ -42,10 +45,9 @@ class OpenAIServingSpeech(OpenAIServing):
             module = cast("PluginProtoVllm", importlib.import_module(plugin))
             self.speech_model = module.ModelPlugin(engine_client=engine_client, model_config=model_config)
 
-
-
-    async def create_speech(self, request: SpeechRequest, raw_request: Request) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
-
+    async def create_speech(
+        self, request: SpeechRequest, raw_request: Request
+    ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         if self.speech_model is None:
             return create_error_response("tts model is not yet accessible")
 

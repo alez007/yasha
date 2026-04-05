@@ -44,7 +44,9 @@ def build_actor_options(config: YashaModelConfig) -> dict:
             logger.warning(
                 "num_gpus=%s is ignored for model '%s': with vllm mp backend and "
                 "tensor_parallel_size=%d, Ray GPU allocation is determined by tp.",
-                config.num_gpus, config.name, tp,
+                config.num_gpus,
+                config.name,
+                tp,
             )
         num_gpus = float(tp)
     elif tp > 1:
@@ -79,10 +81,7 @@ def ensure_plugin(module_name: str):
     try:
         importlib.import_module(module_name)
     except ImportError as err:
-        raise RuntimeError(
-            f"Plugin '{module_name}' is not installed. "
-            f"Run: uv sync --extra {module_name}"
-        ) from err
+        raise RuntimeError(f"Plugin '{module_name}' is not installed. Run: uv sync --extra {module_name}") from err
 
 
 def main():
@@ -97,8 +96,7 @@ def main():
     _config_file = _config_dir + "/models.yaml"
     if not os.path.exists(_config_file):
         raise FileNotFoundError(
-            f"{_config_file} not found. "
-            f"Copy one of the example configs from config/ to config/models.yaml."
+            f"{_config_file} not found. Copy one of the example configs from config/ to config/models.yaml."
         )
 
     with open(_config_file) as f:

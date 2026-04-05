@@ -46,7 +46,9 @@ class ModelDeployment:
         else:
             yield result
 
-    async def transcribe(self, audio_data: bytes, request: TranscriptionRequest, request_headers: dict[str, str], disconnect_event: Any):
+    async def transcribe(
+        self, audio_data: bytes, request: TranscriptionRequest, request_headers: dict[str, str], disconnect_event: Any
+    ):
         proxy = DisconnectProxy(disconnect_event, request_headers)
         result = await self.infer.create_transcription(audio_data, request, proxy)
         if isinstance(result, AsyncGenerator):
@@ -55,7 +57,9 @@ class ModelDeployment:
         else:
             yield result
 
-    async def translate(self, audio_data: bytes, request: TranslationRequest, request_headers: dict[str, str], disconnect_event: Any):
+    async def translate(
+        self, audio_data: bytes, request: TranslationRequest, request_headers: dict[str, str], disconnect_event: Any
+    ):
         proxy = DisconnectProxy(disconnect_event, request_headers)
         result = await self.infer.create_translation(audio_data, request, proxy)
         if isinstance(result, AsyncGenerator):

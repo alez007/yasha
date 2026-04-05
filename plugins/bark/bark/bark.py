@@ -61,7 +61,9 @@ class ModelPlugin(BasePlugin):
     async def start(self):
         pass
 
-    async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
+    async def generate(
+        self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]
+    ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         logger.info("started generation: %s with voice: %s to device %s", input, voice, self.device)
 
         if stream_format == "sse":
