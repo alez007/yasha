@@ -53,8 +53,14 @@ class ModelPlugin(BasePlugin):
 
         model_path = f"{plugin_dir}/kokoro-v1.0.onnx"
         voices_path = f"{plugin_dir}/voices-v1.0.bin"
-        download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx", model_path)
-        download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin", voices_path)
+        download(
+            "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
+            model_path,
+        )
+        download(
+            "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+            voices_path,
+        )
 
         onnx_provider = (model_config.plugin_config or {}).get("onnx_provider", "CUDAExecutionProvider")
         os.environ["ONNX_PROVIDER"] = onnx_provider
@@ -78,11 +84,14 @@ class ModelPlugin(BasePlugin):
         if self.target_sample_rate is None or from_rate == self.target_sample_rate:
             return audio, from_rate
         from math import gcd
+
         g = gcd(self.target_sample_rate, from_rate)
         audio = resample_poly(audio, self.target_sample_rate // g, from_rate // g).astype(audio.dtype)
         return audio, self.target_sample_rate
 
-    async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
+    async def generate(
+        self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]
+    ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         logger.info("started generation: %s with voice: %s", input, voice)
 
         if stream_format == "sse":
@@ -106,11 +115,8 @@ class ModelPlugin(BasePlugin):
         async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
             audio_bytes, sample_rate = self._resample(audio_bytes, sample_rate)
             logger.info("got some audio bytes (sample rate %s) for input: %s", sample_rate, input)
-            encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')
-            event_data = SpeechResponse(
-                audio=encoded_audio,
-                type="speech.audio.delta"
-            )
+            encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
+            event_data = SpeechResponse(audio=encoded_audio, type="speech.audio.delta")
             yield f"data: {event_data.model_dump_json()}\n\n"
 
         completion_event = SpeechResponse(audio=None, type="speech.audio.done")

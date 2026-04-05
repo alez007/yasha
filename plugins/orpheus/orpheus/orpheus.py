@@ -108,11 +108,15 @@ def _convert_to_audio(multiframe: list[int]) -> bytes | None:
         return None
 
     num_frames = len(multiframe) // 7
-    frame = multiframe[:num_frames * 7]
+    frame = multiframe[: num_frames * 7]
 
     codes_0 = torch.tensor([frame[7 * j] for j in range(num_frames)], device=_snac_device, dtype=torch.int32)
-    codes_1 = torch.tensor([frame[7 * j + k] for j in range(num_frames) for k in (1, 4)], device=_snac_device, dtype=torch.int32)
-    codes_2 = torch.tensor([frame[7 * j + k] for j in range(num_frames) for k in (2, 3, 5, 6)], device=_snac_device, dtype=torch.int32)
+    codes_1 = torch.tensor(
+        [frame[7 * j + k] for j in range(num_frames) for k in (1, 4)], device=_snac_device, dtype=torch.int32
+    )
+    codes_2 = torch.tensor(
+        [frame[7 * j + k] for j in range(num_frames) for k in (2, 3, 5, 6)], device=_snac_device, dtype=torch.int32
+    )
 
     codes = [codes_0.unsqueeze(0), codes_1.unsqueeze(0), codes_2.unsqueeze(0)]
     if any(torch.any(c < 0) or torch.any(c > 4096) for c in codes):
@@ -154,7 +158,12 @@ class ModelPlugin(BasePlugin):
         max_model_len = plugin_config.get("max_model_len", 2048)
         tokenizer = plugin_config.get("tokenizer", model_config.model)
 
-        logger.info("initialising vllm engine for model: %s, max_model_len: %s, tokenizer: %s", model_config.model, max_model_len, tokenizer)
+        logger.info(
+            "initialising vllm engine for model: %s, max_model_len: %s, tokenizer: %s",
+            model_config.model,
+            max_model_len,
+            tokenizer,
+        )
 
         engine_args = AsyncEngineArgs(
             model=model_config.model,
@@ -199,7 +208,9 @@ class ModelPlugin(BasePlugin):
         formatted_prompt = f"{voice}: {prompt}"
         return f"<|audio|>{formatted_prompt}<|eot_id|>"
 
-    async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
+    async def generate(
+        self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]
+    ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         logger.info("started generation: %s with voice: %s", input, voice)
         if stream_format == "sse":
             return self.generate_sse(input, voice, request_id)
@@ -223,7 +234,7 @@ class ModelPlugin(BasePlugin):
     async def generate_sse(self, input: str, voice: str, request_id: str) -> AsyncGenerator[str, None]:
         async for audio_bytes in self.generate_audio_bytes_async(input, voice, request_id):
             logger.info("got some audio bytes: %s", audio_bytes)
-            encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')
+            encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
             event_data = SpeechResponse(audio=encoded_audio, type="speech.audio.delta")
             yield f"data: {event_data.model_dump_json()}\n\n"
 

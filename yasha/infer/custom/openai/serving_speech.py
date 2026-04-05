@@ -14,19 +14,18 @@ from yasha.utils import base_request_id
 
 logger = logging.getLogger("ray")
 
+
 class OpenAIServingSpeech:
     request_id_prefix = "tts"
 
     """Handles speech requests"""
-    def __init__(
-        self,
-        serving_engine: BasePlugin|None
-    ):
+
+    def __init__(self, serving_engine: BasePlugin | None):
         self.serving_engine = serving_engine
 
-
-    async def create_speech(self, request: SpeechRequest, raw_request: Request) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
-
+    async def create_speech(
+        self, request: SpeechRequest, raw_request: Request
+    ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         if self.serving_engine is None:
             return create_error_response("tts model is not yet accessible")
 

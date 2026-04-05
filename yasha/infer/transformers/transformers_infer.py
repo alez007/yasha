@@ -43,10 +43,10 @@ class TransformersInfer:
         self.serving_translation = None
         self.serving_speech = await self.init_serving_speech()
 
-    async def init_serving_speech(self) -> OpenAIServingSpeech|None:
+    async def init_serving_speech(self) -> OpenAIServingSpeech | None:
         logger.info("init serving speech with model: %s", self.model_config.name)
 
-        speech_model: BasePluginTransformers|None = None
+        speech_model: BasePluginTransformers | None = None
         plugin = self.model_config.plugin
         if plugin is not None:
             logger.info("Loading plugin: %s", plugin)
@@ -54,33 +54,39 @@ class TransformersInfer:
             assert self.model_config.model is not None
             speech_model = module.ModelPlugin(model_name=self.model_config.model, device=self.device)
 
-        return OpenAIServingSpeech(
-            speech_model=speech_model
-        ) if self.model_config.usecase is ModelUsecase.tts else None
+        return OpenAIServingSpeech(speech_model=speech_model) if self.model_config.usecase is ModelUsecase.tts else None
 
     async def create_chat_completion(
         self, _request: ChatCompletionRequest, _raw_request: DisconnectProxy
     ) -> ErrorResponse:
-        return ErrorResponse(error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404))
+        return ErrorResponse(
+            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
+        )
 
-    async def create_embedding(
-        self, _request: EmbeddingRequest, _raw_request: DisconnectProxy
-    ) -> ErrorResponse:
-        return ErrorResponse(error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404))
+    async def create_embedding(self, _request: EmbeddingRequest, _raw_request: DisconnectProxy) -> ErrorResponse:
+        return ErrorResponse(
+            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
+        )
 
     async def create_transcription(
         self, _audio_data: bytes, _request: TranscriptionRequest, _raw_request: DisconnectProxy
     ) -> ErrorResponse:
-        return ErrorResponse(error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404))
+        return ErrorResponse(
+            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
+        )
 
     async def create_translation(
         self, _audio_data: bytes, _request: TranslationRequest, _raw_request: DisconnectProxy
     ) -> ErrorResponse:
-        return ErrorResponse(error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404))
+        return ErrorResponse(
+            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
+        )
 
     async def create_speech(
         self, request: SpeechRequest, raw_request: DisconnectProxy
     ) -> ErrorResponse | RawSpeechResponse | AsyncGenerator[str, None]:
         if self.serving_speech is None:
-            return ErrorResponse(error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404))
+            return ErrorResponse(
+                error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
+            )
         return await self.serving_speech.create_speech(request, cast("Request", raw_request))
