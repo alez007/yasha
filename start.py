@@ -85,11 +85,16 @@ def ensure_plugin(module_name: str):
 
 
 def main():
-    ray_cluster_address = os.environ.get("RAY_CLUSTER_ADDRESS", "ray://0.0.0.0")
+    ray_cluster_address = os.environ["RAY_CLUSTER_ADDRESS"]
+    ray_client_server_port = os.environ["RAY_CLIENT_SERVER_PORT"]
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     serve.shutdown()
     ray.shutdown()
-    ray.init(address=f"{ray_cluster_address}:10001")
+    if ray_cluster_address == "auto":
+        ray_address = ray_cluster_address
+    else:
+        ray_address = f"ray://{ray_cluster_address}:{ray_client_server_port}"
+    ray.init(address=ray_address)
     serve.start(http_options=HTTPOptions(host="0.0.0.0"))
 
     _config_dir = os.path.dirname(os.path.abspath(__file__)) + "/config"

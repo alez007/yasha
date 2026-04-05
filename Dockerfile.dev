@@ -50,7 +50,8 @@ ENV UV_PROJECT_ENVIRONMENT=/.venv
 ENV VIRTUAL_ENV=/.venv
 ENV YASHA_CACHE_DIR=/yasha/.cache/models
 ENV RAY_REDIS_PORT=6379
-ENV RAY_CLUSTER_ADDRESS=ray://0.0.0.0
+ENV RAY_CLUSTER_ADDRESS=0.0.0.0
+ENV RAY_CLIENT_SERVER_PORT=10001
 ENV RAY_HEAD_CPU_NUM=2
 ENV RAY_HEAD_GPU_NUM=1
 ENV YASHA_USE_EXISTING_RAY_CLUSTER=false
@@ -79,7 +80,7 @@ cd /yasha && uv run pre-commit install
 
 if [ "\${YASHA_USE_EXISTING_RAY_CLUSTER}" != "true" ]; then
     cd /yasha && ray start --head --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=\${RAY_HEAD_CPU_NUM} --num-gpus=\${RAY_HEAD_GPU_NUM} --disable-usage-stats
-    if ! ray status --address=0.0.0.0:\${RAY_REDIS_PORT}; then
+    if ! ray status --address=\${RAY_CLUSTER_ADDRESS}:\${RAY_REDIS_PORT}; then
         echo "ray cluster failed to start"
         exit 1
     fi
