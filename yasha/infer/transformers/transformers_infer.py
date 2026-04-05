@@ -1,23 +1,24 @@
+import importlib
 import logging
 from collections.abc import AsyncGenerator
-from typing import cast
-import torch
+from typing import ClassVar, cast
 
-from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, YashaModelConfig, SpeechRequest, RawSpeechResponse
+import torch
+from starlette.requests import Request
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
+from vllm.entrypoints.openai.engine.protocol import ErrorInfo, ErrorResponse
 from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranslationRequest
 from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse, ErrorInfo
-from starlette.requests import Request
-import importlib
+
+from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, RawSpeechResponse, SpeechRequest, YashaModelConfig
 from yasha.infer.transformers.openai.serving_speech import OpenAIServingSpeech
-from yasha.plugins.base_plugin import PluginProtoTransformers, BasePluginTransformers
+from yasha.plugins.base_plugin import BasePluginTransformers, PluginProtoTransformers
 
 logger = logging.getLogger("ray")
 
 
-class TransformersInfer():
-    _transformers_usecases = [ModelUsecase.tts]
+class TransformersInfer:
+    _transformers_usecases: ClassVar[list[ModelUsecase]] = [ModelUsecase.tts]
 
     def __init__(self, model_config: YashaModelConfig):
         self.model_config = model_config
@@ -49,7 +50,7 @@ class TransformersInfer():
         plugin = self.model_config.plugin
         if plugin is not None:
             logger.info("Loading plugin: %s", plugin)
-            module = cast(PluginProtoTransformers, importlib.import_module(plugin))
+            module = cast("PluginProtoTransformers", importlib.import_module(plugin))
             assert self.model_config.model is not None
             speech_model = module.ModelPlugin(model_name=self.model_config.model, device=self.device)
 
@@ -82,4 +83,4 @@ class TransformersInfer():
     ) -> ErrorResponse | RawSpeechResponse | AsyncGenerator[str, None]:
         if self.serving_speech is None:
             return ErrorResponse(error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404))
-        return await self.serving_speech.create_speech(request, cast(Request, raw_request))
+        return await self.serving_speech.create_speech(request, cast("Request", raw_request))

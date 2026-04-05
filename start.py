@@ -1,8 +1,17 @@
 import importlib
+import logging
 import os
 import signal
 import sys
-import logging
+
+import ray
+from pydantic_yaml import parse_yaml_raw_as
+from ray import serve
+from ray.serve.config import HTTPOptions
+
+from yasha.infer.infer_config import ModelLoader, YashaConfig, YashaModelConfig
+from yasha.infer.model_deployment import ModelDeployment
+from yasha.openai.api import YashaAPI
 
 _cache_dir = os.environ.get("YASHA_CACHE_DIR", "/yasha/.cache/models")
 _cache_root = os.path.dirname(_cache_dir)
@@ -11,15 +20,6 @@ _cache_env_vars = {
     "VLLM_CACHE_ROOT": os.environ.get("VLLM_CACHE_ROOT", f"{_cache_root}/vllm"),
     "FLASHINFER_CACHE_DIR": os.environ.get("FLASHINFER_CACHE_DIR", f"{_cache_root}/flashinfer"),
 }
-
-import ray
-from ray import serve
-from ray.serve.config import HTTPOptions
-from pydantic_yaml import parse_yaml_raw_as
-
-from yasha.infer.infer_config import ModelLoader, ModelUsecase, YashaConfig, YashaModelConfig
-from yasha.infer.model_deployment import ModelDeployment
-from yasha.openai.api import YashaAPI
 
 logger = logging.getLogger("ray")
 
@@ -78,15 +78,14 @@ def build_actor_options(config: YashaModelConfig) -> dict:
 def ensure_plugin(module_name: str):
     try:
         importlib.import_module(module_name)
-    except ImportError:
+    except ImportError as err:
         raise RuntimeError(
             f"Plugin '{module_name}' is not installed. "
             f"Run: uv sync --extra {module_name}"
-        )
+        ) from err
 
 
 def main():
-    ray_port = os.environ.get("RAY_REDIS_PORT", "6379")
     ray_cluster_address = os.environ.get("RAY_CLUSTER_ADDRESS", "ray://0.0.0.0")
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     serve.shutdown()
@@ -102,7 +101,7 @@ def main():
             f"Copy one of the example configs from config/ to config/models.yaml."
         )
 
-    with open(_config_file, "r") as f:
+    with open(_config_file) as f:
         yml_conf: YashaConfig = parse_yaml_raw_as(YashaConfig, f)
 
     logger.info("Init yasha app with config: %s", yml_conf)

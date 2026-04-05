@@ -1,13 +1,14 @@
-from typing import Optional
-from fastapi import Request
-import uuid
 import os
+import uuid
+
 import requests
+from fastapi import Request
+
 
 def random_uuid() -> str:
     return str(uuid.uuid4().hex)
 
-def base_request_id(raw_request: Optional[Request], default: Optional[str] = None) -> Optional[str]:
+def base_request_id(raw_request: Request | None, default: str | None = None) -> str | None:
     """Pulls the request id to use from a header, if provided"""
     default = default or random_uuid()
     if raw_request is None:

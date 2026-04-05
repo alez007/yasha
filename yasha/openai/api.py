@@ -1,21 +1,25 @@
 import logging
 import time
+from http import HTTPStatus
 from typing import Annotated
 
-from pydantic import BaseModel, Field
-from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest, ChatCompletionResponse
-from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranslationRequest, TranscriptionResponse, TranslationResponse
-from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest, EmbeddingResponse
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from http import HTTPStatus
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel, Field
 from ray import serve
 from ray.serve.handle import DeploymentHandle
+from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest, ChatCompletionResponse
+from vllm.entrypoints.openai.engine.protocol import ErrorResponse
+from vllm.entrypoints.openai.speech_to_text.protocol import (
+    TranscriptionRequest,
+    TranscriptionResponse,
+    TranslationRequest,
+    TranslationResponse,
+)
+from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest, EmbeddingResponse
 
 from yasha.infer.infer_config import ModelUsecase, RawSpeechResponse, RequestWatcher, SpeechRequest
-
 
 logger = logging.getLogger("ray.serve")
 

@@ -25,17 +25,16 @@ Example request:
       --output speech.wav
 """
 
-from typing import Literal
 import io
 import logging
 from collections.abc import AsyncGenerator
+from typing import Literal
 
 import torch
-import numpy as np
-from transformers import BarkModel, BarkProcessor
 from scipy.io.wavfile import write as write_wav
-from vllm.entrypoints.utils import create_error_response
+from transformers import BarkModel, BarkProcessor
 from vllm.entrypoints.openai.engine.protocol import ErrorResponse
+from vllm.entrypoints.utils import create_error_response
 
 from yasha.infer.infer_config import RawSpeechResponse, YashaModelConfig
 from yasha.plugins.base_plugin import BasePlugin

@@ -22,22 +22,23 @@ Example request:
       --output speech.wav
 """
 
-from typing import Literal
-import os
-import logging
-from collections.abc import AsyncGenerator
 import base64
 import io
-import numpy as np
+import logging
+import os
+from collections.abc import AsyncGenerator
+from typing import Literal
 
-from yasha.infer.infer_config import SpeechResponse, RawSpeechResponse, YashaModelConfig
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse
-from yasha.plugins.base_plugin import BasePlugin
+import numpy as np
+import onnxruntime as ort
+from kokoro_onnx import Kokoro
 from scipy.io.wavfile import write as write_wav
 from scipy.signal import resample_poly
-from kokoro_onnx import Kokoro
-import onnxruntime as ort
-from yasha.utils import download, cache_dir
+from vllm.entrypoints.openai.engine.protocol import ErrorResponse
+
+from yasha.infer.infer_config import RawSpeechResponse, SpeechResponse, YashaModelConfig
+from yasha.plugins.base_plugin import BasePlugin
+from yasha.utils import cache_dir, download
 
 logger = logging.getLogger("ray")
 
