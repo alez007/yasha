@@ -1,16 +1,16 @@
 import logging
 from collections.abc import AsyncGenerator
-from ray import serve
+from typing import Any
 
+from ray import serve
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
 from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranslationRequest
 from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest
 
-from typing import Any
-from yasha.infer.infer_config import ModelLoader, SpeechRequest, YashaModelConfig, DisconnectProxy
-from yasha.infer.vllm.vllm_infer import VllmInfer
-from yasha.infer.transformers.transformers_infer import TransformersInfer
 from yasha.infer.custom.custom_infer import CustomInfer
+from yasha.infer.infer_config import DisconnectProxy, ModelLoader, SpeechRequest, YashaModelConfig
+from yasha.infer.transformers.transformers_infer import TransformersInfer
+from yasha.infer.vllm.vllm_infer import VllmInfer
 
 logger = logging.getLogger("ray.serve")
 
@@ -46,7 +46,9 @@ class ModelDeployment:
         else:
             yield result
 
-    async def transcribe(self, audio_data: bytes, request: TranscriptionRequest, request_headers: dict[str, str], disconnect_event: Any):
+    async def transcribe(
+        self, audio_data: bytes, request: TranscriptionRequest, request_headers: dict[str, str], disconnect_event: Any
+    ):
         proxy = DisconnectProxy(disconnect_event, request_headers)
         result = await self.infer.create_transcription(audio_data, request, proxy)
         if isinstance(result, AsyncGenerator):
@@ -55,7 +57,9 @@ class ModelDeployment:
         else:
             yield result
 
-    async def translate(self, audio_data: bytes, request: TranslationRequest, request_headers: dict[str, str], disconnect_event: Any):
+    async def translate(
+        self, audio_data: bytes, request: TranslationRequest, request_headers: dict[str, str], disconnect_event: Any
+    ):
         proxy = DisconnectProxy(disconnect_event, request_headers)
         result = await self.infer.create_translation(audio_data, request, proxy)
         if isinstance(result, AsyncGenerator):

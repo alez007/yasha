@@ -1,47 +1,47 @@
 import asyncio
-import ray
+from enum import StrEnum
 from typing import Any, Literal
-from vllm.entrypoints.chat_utils import ChatTemplateContentFormatOption
-from pydantic import BaseModel, Field, model_validator
-from enum import Enum
 
-from vllm.entrypoints.openai.engine.protocol import OpenAIBaseModel
+import ray
 from fastapi import Request
+from pydantic import BaseModel, Field, model_validator
 from starlette.datastructures import Headers, State
+from vllm.entrypoints.chat_utils import ChatTemplateContentFormatOption
+from vllm.entrypoints.openai.engine.protocol import OpenAIBaseModel
 
 
-class ModelUsecase(str, Enum):
-    generate = 'generate'
-    embed = 'embed'
-    transcription = 'transcription'
-    translation = 'translation'
-    tts = 'tts'
+class ModelUsecase(StrEnum):
+    generate = "generate"
+    embed = "embed"
+    transcription = "transcription"
+    translation = "translation"
+    tts = "tts"
 
 
-class ModelLoader(str, Enum):
-    vllm = 'vllm'
-    transformers = 'transformers'
-    custom = 'custom'
+class ModelLoader(StrEnum):
+    vllm = "vllm"
+    transformers = "transformers"
+    custom = "custom"
 
 
 class VllmEngineConfig(BaseModel):
     model: str = ""
     tensor_parallel_size: int = 1
-    max_model_len: int|None = None
+    max_model_len: int | None = None
     dtype: str = "auto"
-    tokenizer: str|None = None
+    tokenizer: str | None = None
     trust_remote_code: bool = False
     gpu_memory_utilization: float = 0.9  # overridden by num_gpus when not explicitly set in config
-    distributed_executor_backend: str|None = None
+    distributed_executor_backend: str | None = None
     task: str = "auto"
-    model_impl: str|None = None
-    enable_log_requests: bool|None = False
-    kv_cache_dtype: str|None = None
-    quantization: str|None = None
-    enable_auto_tool_choice: bool|None = None
-    tool_call_parser: str|None = None
+    model_impl: str | None = None
+    enable_log_requests: bool | None = False
+    kv_cache_dtype: str | None = None
+    quantization: str | None = None
+    enable_auto_tool_choice: bool | None = None
+    tool_call_parser: str | None = None
     chat_template_content_format: ChatTemplateContentFormatOption = "auto"
-    enforce_eager: bool|None = None
+    enforce_eager: bool | None = None
 
 
 class TransformersConfig(BaseModel):
@@ -50,32 +50,32 @@ class TransformersConfig(BaseModel):
 
 class YashaModelConfig(BaseModel):
     name: str
-    model: str|None = None
+    model: str | None = None
     usecase: ModelUsecase
     loader: ModelLoader = ModelLoader.vllm
-    plugin: str|None = None              # only meaningful for loader='custom', silently ignored otherwise
+    plugin: str | None = None  # only meaningful for loader='custom', silently ignored otherwise
     num_gpus: float = 0
     num_cpus: float = 0.1
-    use_gpu: int|str|None = None
+    use_gpu: int | str | None = None
     vllm_engine_kwargs: VllmEngineConfig = Field(default_factory=VllmEngineConfig)
-    transformers_config: TransformersConfig|None = None
-    plugin_config: dict[str, Any]|None = None  # plugin devs parse this themselves
+    transformers_config: TransformersConfig | None = None
+    plugin_config: dict[str, Any] | None = None  # plugin devs parse this themselves
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def check_model_or_plugin(self):
         if self.model is None and self.plugin is None:
-            raise ValueError('model and plugin fields cannot be both empty')
+            raise ValueError("model and plugin fields cannot be both empty")
         if self.loader in (ModelLoader.vllm, ModelLoader.transformers) and self.model is None:
             raise ValueError(f"loader='{self.loader}' requires model to be set")
         return self
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def check_custom_requires_plugin(self):
         if self.loader == ModelLoader.custom and self.plugin is None:
             raise ValueError("loader='custom' requires plugin to be set")
         return self
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def check_use_gpu_int_incompatible_with_tp(self):
         if isinstance(self.use_gpu, int):
             tp = self.vllm_engine_kwargs.tensor_parallel_size if self.vllm_engine_kwargs else 1
@@ -95,6 +95,7 @@ class YashaConfig(BaseModel):
 @ray.remote(num_cpus=0)
 class DisconnectEvent:
     """Ray actor that holds a disconnect flag — shareable across process boundaries."""
+
     def __init__(self):
         self._set = False
 
@@ -107,6 +108,7 @@ class DisconnectEvent:
 
 class RequestWatcher:
     """Watches a FastAPI Request for client disconnect and signals via a Ray actor event."""
+
     def __init__(self, raw_request: Request):
         self._request = raw_request
         self._event = DisconnectEvent.remote()
@@ -144,6 +146,7 @@ class DisconnectProxy:
 
     Any additional attributes vllm reads from raw_request in future should be added here.
     """
+
     def __init__(self, event, headers: dict):
         self._event = event
         self.headers = Headers(headers=headers)
@@ -180,7 +183,7 @@ class SpeechRequest(OpenAIBaseModel):
 
 
 class SpeechResponse(OpenAIBaseModel):
-    audio: str|None = Field(default=None, description="The generated audio data encoded in base 64")
+    audio: str | None = Field(default=None, description="The generated audio data encoded in base 64")
     type: Literal["speech.audio.delta", "speech.audio.done"] = Field(
         ...,
         description="Type of audio chunk",

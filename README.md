@@ -1,6 +1,32 @@
 # Yasha
 
-Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized models (TTS, speech-to-text, embeddings) on a single GPU, exposing an OpenAI-compatible API. Built on [vLLM](https://github.com/vllm-project/vllm) and [Ray](https://github.com/ray-project/ray).
+Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized models (TTS, speech-to-text, embeddings) on one or more GPUs, exposing an OpenAI-compatible API. Built on [vLLM](https://github.com/vllm-project/vllm) and [Ray](https://github.com/ray-project/ray).
+
+## Architecture
+
+```mermaid
+graph TD
+    Client["Client (OpenAI SDK / curl)"]
+    API["FastAPI Gateway<br/>OpenAI-compatible API<br/>:8000"]
+    Ray["Ray Serve"]
+
+    Client -->|HTTP| API
+    API --> Ray
+
+    Ray --> LLM["LLM Deployment<br/>e.g. Llama 3.1 8B<br/>70% GPU"]
+    Ray --> TTS["TTS Deployment<br/>e.g. Kokoro 82M<br/>5% GPU"]
+    Ray --> STT["STT Deployment<br/>e.g. Whisper<br/>10% GPU"]
+    Ray --> EMB["Embedding Deployment<br/>e.g. Nomic Embed<br/>5% GPU"]
+
+    subgraph GPU["Single GPU"]
+        LLM
+        TTS
+        STT
+        EMB
+    end
+```
+
+Each model runs as an isolated Ray Serve deployment with its own lifecycle, health checks, and GPU memory budget.
 
 ## Requirements
 
@@ -31,6 +57,47 @@ Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized mo
 | `POST /v1/audio/speech` | Text-to-speech (SSE streaming or single-response) |
 | `GET /v1/models` | List available models |
 
+## Quick Start
+
+Pull the latest image from GHCR:
+
+```bash
+docker pull ghcr.io/alez007/yasha:latest
+```
+
+Grab an example config for your GPU and edit it to your liking:
+
+```bash
+docker run --rm ghcr.io/alez007/yasha:latest cat /yasha/config/models.example.16GB.yaml > models.yaml
+```
+
+Start the server:
+
+```bash
+docker run --rm --shm-size=8g --gpus all \
+  -e HF_TOKEN=your_token_here \
+  -e YASHA_PLUGINS=kokoro \
+  -v ./models.yaml:/yasha/config/models.yaml \
+  -v ./models-cache:/yasha/.cache/models \
+  -p 8265:8265 -p 8000:8000 ghcr.io/alez007/yasha:latest
+```
+
+Try it out:
+
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "your-model-name",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+- API: `http://localhost:8000`
+- Ray dashboard: `http://localhost:8265`
+
+Example configs are included for 8 GB, 16 GB, 24 GB, and 2×16 GB GPU setups.
+
 ## Plugin Support
 
 Yasha's TTS system is built around a plugin architecture — each TTS backend is an opt-in package with its own isolated dependencies. Plugins ship inside this repo (`plugins/`) or can be installed from PyPI.
@@ -50,44 +117,18 @@ YASHA_PLUGINS=kokoro,orpheus
 
 For a full guide on writing your own plugin, see [Plugin Development](docs/plugins.md).
 
-## Getting Started
+## Documentation
 
-Pull the latest image from GHCR:
+- [Development](docs/development.md) — dev environment setup, building, and running locally
+- [Model Configuration](docs/model-configuration.md) — full `models.yaml` reference, GPU pinning, environment variables
+- [Architecture](docs/architecture.md) — system design, request lifecycle, plugin loading
+- [Plugin Development](docs/plugins.md) — writing custom TTS backends
+- [Home Assistant Integration](docs/home-assistant.md) — Wyoming protocol setup for voice automation
 
-```bash
-docker pull ghcr.io/alez007/yasha:latest
-```
+## Future Work
 
-Grab an example config for your GPU and edit it to your liking:
+- [ ] Automated test suite (unit tests for config parsing, API serialization; integration tests)
 
-```bash
-docker run --rm ghcr.io/alez007/yasha:latest cat /yasha/config/models.example.16GB.yaml > models.yaml
-```
+## Contributing
 
-Start the server, mounting your config and a cache directory so models are only downloaded once:
-
-```bash
-docker run --rm --shm-size=8g --gpus all \
-  -e HF_TOKEN=your_token_here \
-  -e YASHA_PLUGINS=your_plugins_here \
-  -v ./models.yaml:/yasha/config/models.yaml \
-  -v ./models-cache:/yasha/.cache/models \
-  -p 8265:8265 -p 8000:8000 ghcr.io/alez007/yasha:latest
-```
-
-- API: `http://localhost:8000`
-- Ray dashboard: `http://localhost:8265`
-
-Example configs are included for 8 GB, 16 GB, 24 GB, and 2×16 GB GPU setups.
-
-## Development
-
-See [Development](docs/development.md) for instructions on building the dev image, running with live source mounting, and attaching to the container.
-
-## Model Configuration
-
-See [Model Configuration](docs/model-configuration.md) for a full reference of all `models.yaml` fields, GPU pinning options, and environment variables.
-
-## Home Assistant Integration
-
-Yasha can serve as a voice backend for [Home Assistant](https://www.home-assistant.io/) via the Wyoming protocol. See [Home Assistant Integration](docs/home-assistant.md) for setup instructions.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on setting up the dev environment, code style, and submitting pull requests.
