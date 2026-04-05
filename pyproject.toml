@@ -1,6 +1,6 @@
 [project]
 name = "yasha"
-version = "0.1.13"
+version = "0.1.14"
 description = "Self-hosted, multi-model AI inference server. Run LLMs, TTS, STT, and embeddings with an OpenAI-compatible API."
 authors = [
     { name = "Alex Margarit" }
