@@ -132,12 +132,12 @@ class YashaAPI:
             if isinstance(msg, dict) and "tool_calls" in msg:
                 tc = msg["tool_calls"]
                 if not isinstance(tc, list):
-                    msg["tool_calls"] = list(tc)
+                    msg["tool_calls"] = list(tc)  # type: ignore[arg-type]
         logger.info("chat_completion actor input: %s", request.model_dump_json())
         response_gen = handle.generate.options(stream=True).remote(request, headers, watcher.event)
 
         async def _logged_gen():
-            async for chunk in response_gen:
+            async for chunk in response_gen:  # type: ignore[union-attr]
                 logger.info("chat_completion actor output: %s", chunk)
                 yield chunk
 

@@ -96,7 +96,7 @@ class VllmInfer:
             if self.vllm_engine_kwargs.enable_log_requests is not None
             else False,
             quantization=self.vllm_engine_kwargs.quantization,
-            kv_cache_dtype=self.vllm_engine_kwargs.kv_cache_dtype or "auto",
+            kv_cache_dtype=self.vllm_engine_kwargs.kv_cache_dtype or "auto",  # type: ignore[arg-type]
             enforce_eager=self.vllm_engine_kwargs.enforce_eager or False,
         )
 

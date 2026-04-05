@@ -45,7 +45,7 @@ logger = logging.getLogger("ray")
 class ModelPlugin(BasePlugin):
     def __init__(self, model_config: YashaModelConfig):
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self.model = BarkModel.from_pretrained(pretrained_model_name_or_path=model_config.model).to(self.device)
+        self.model = BarkModel.from_pretrained(pretrained_model_name_or_path=model_config.model).to(self.device)  # type: ignore[arg-type]
         self.processor = BarkProcessor.from_pretrained(model_config.model)
 
     def __del__(self):
@@ -70,7 +70,7 @@ class ModelPlugin(BasePlugin):
             return create_error_response("sse stream format not supported")
 
         inputs = self.processor(input, voice_preset=voice).to(device=self.device)
-        sample_rate = getattr(self.model.generation_config, "sample_rate", 24000)
+        sample_rate = getattr(self.model.generation_config, "sample_rate", 24000)  # type: ignore[union-attr]
         speech_output = self.model.generate(**inputs).cpu().numpy().squeeze()  # type: ignore[call-arg]
 
         buf = io.BytesIO()
