@@ -22,28 +22,36 @@ Example request:
       --output speech.wav
 """
 
-from typing import Literal
-import os
-import logging
-from collections.abc import AsyncGenerator
 import base64
 import io
-import numpy as np
+import logging
+import os
+import shutil
+from collections.abc import AsyncGenerator
+from typing import Literal
 
-from yasha.infer.infer_config import SpeechResponse, RawSpeechResponse, YashaModelConfig
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse
-from yasha.plugins.base_plugin import BasePlugin
+import numpy as np
+import onnxruntime as ort  # type: ignore[import-unresolved]
+from kokoro_onnx import Kokoro  # type: ignore[import-unresolved]
 from scipy.io.wavfile import write as write_wav
 from scipy.signal import resample_poly
-from kokoro_onnx import Kokoro
-import onnxruntime as ort
-from yasha.utils import download, cache_dir
+from vllm.entrypoints.openai.engine.protocol import ErrorResponse
+
+from yasha.infer.infer_config import RawSpeechResponse, SpeechResponse, YashaModelConfig
+from yasha.plugins.base_plugin import BasePlugin
+from yasha.utils import cache_dir, download
 
 logger = logging.getLogger("ray")
 
 
 class ModelPlugin(BasePlugin):
     def __init__(self, model_config: YashaModelConfig):
+        if not shutil.which("espeak-ng") and not shutil.which("espeak"):
+            raise RuntimeError(
+                "espeak/espeak-ng is required by kokoro but not found on this system. "
+                "Install it with: apt-get install -y espeak-ng (Debian/Ubuntu) "
+                "or brew install espeak (macOS)"
+            )
         logger.info("onnxruntime device: %s", ort.get_device())
         logger.info("available providers: %s", ort.get_available_providers())
 
@@ -52,8 +60,14 @@ class ModelPlugin(BasePlugin):
 
         model_path = f"{plugin_dir}/kokoro-v1.0.onnx"
         voices_path = f"{plugin_dir}/voices-v1.0.bin"
-        download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx", model_path)
-        download("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin", voices_path)
+        download(
+            "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
+            model_path,
+        )
+        download(
+            "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+            voices_path,
+        )
 
         onnx_provider = (model_config.plugin_config or {}).get("onnx_provider", "CUDAExecutionProvider")
         os.environ["ONNX_PROVIDER"] = onnx_provider
@@ -77,11 +91,14 @@ class ModelPlugin(BasePlugin):
         if self.target_sample_rate is None or from_rate == self.target_sample_rate:
             return audio, from_rate
         from math import gcd
+
         g = gcd(self.target_sample_rate, from_rate)
         audio = resample_poly(audio, self.target_sample_rate // g, from_rate // g).astype(audio.dtype)
         return audio, self.target_sample_rate
 
-    async def generate(self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
+    async def generate(
+        self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]
+    ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         logger.info("started generation: %s with voice: %s", input, voice)
 
         if stream_format == "sse":
@@ -89,7 +106,7 @@ class ModelPlugin(BasePlugin):
         else:
             chunks = []
             sample_rate = self.target_sample_rate
-            async for audio_bytes, sr in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
+            async for audio_bytes, sr in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):  # type: ignore[union-attr]
                 audio_bytes, sample_rate = self._resample(audio_bytes, sr)
                 chunks.append(audio_bytes)
 
@@ -102,14 +119,11 @@ class ModelPlugin(BasePlugin):
             return RawSpeechResponse(audio=buf.getvalue(), media_type="audio/wav")
 
     async def generate_sse(self, input: str, voice: str, request_id: str) -> AsyncGenerator[str, None]:
-        async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
+        async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):  # type: ignore[union-attr]
             audio_bytes, sample_rate = self._resample(audio_bytes, sample_rate)
             logger.info("got some audio bytes (sample rate %s) for input: %s", sample_rate, input)
-            encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')
-            event_data = SpeechResponse(
-                audio=encoded_audio,
-                type="speech.audio.delta"
-            )
+            encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
+            event_data = SpeechResponse(audio=encoded_audio, type="speech.audio.delta")
             yield f"data: {event_data.model_dump_json()}\n\n"
 
         completion_event = SpeechResponse(audio=None, type="speech.audio.done")
