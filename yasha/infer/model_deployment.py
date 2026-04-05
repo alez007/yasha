@@ -3,14 +3,18 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from ray import serve
-from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
-from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranslationRequest
-from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest
 
 from yasha.infer.custom.custom_infer import CustomInfer
-from yasha.infer.infer_config import DisconnectProxy, ModelLoader, SpeechRequest, YashaModelConfig
+from yasha.infer.infer_config import DisconnectProxy, ModelLoader, YashaModelConfig
 from yasha.infer.transformers.transformers_infer import TransformersInfer
 from yasha.infer.vllm.vllm_infer import VllmInfer
+from yasha.openai.protocol import (
+    ChatCompletionRequest,
+    EmbeddingRequest,
+    SpeechRequest,
+    TranscriptionRequest,
+    TranslationRequest,
+)
 
 logger = logging.getLogger("ray.serve")
 
