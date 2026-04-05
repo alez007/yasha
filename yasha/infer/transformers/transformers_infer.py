@@ -5,13 +5,19 @@ from typing import ClassVar, cast
 
 import torch
 from starlette.requests import Request
-from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
-from vllm.entrypoints.openai.engine.protocol import ErrorInfo, ErrorResponse
-from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranslationRequest
-from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest
 
-from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, RawSpeechResponse, SpeechRequest, YashaModelConfig
+from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, YashaModelConfig
 from yasha.infer.transformers.openai.serving_speech import OpenAIServingSpeech
+from yasha.openai.protocol import (
+    ChatCompletionRequest,
+    EmbeddingRequest,
+    ErrorInfo,
+    ErrorResponse,
+    RawSpeechResponse,
+    SpeechRequest,
+    TranscriptionRequest,
+    TranslationRequest,
+)
 from yasha.plugins.base_plugin import BasePluginTransformers, PluginProtoTransformers
 
 logger = logging.getLogger("ray")

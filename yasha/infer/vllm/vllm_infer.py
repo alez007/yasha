@@ -8,12 +8,25 @@ from vllm.config.model import ModelDType
 from vllm.config.parallel import DistributedExecutorBackend
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.entrypoints.logger import RequestLogger
-from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest, ChatCompletionResponse
 from vllm.entrypoints.openai.chat_completion.serving import OpenAIServingChat
-from vllm.entrypoints.openai.engine.protocol import ErrorInfo, ErrorResponse
 from vllm.entrypoints.openai.models.protocol import BaseModelPath
 from vllm.entrypoints.openai.models.serving import OpenAIServingModels
-from vllm.entrypoints.openai.speech_to_text.protocol import (
+from vllm.entrypoints.openai.speech_to_text.serving import OpenAIServingTranscription, OpenAIServingTranslation
+from vllm.entrypoints.pooling.embed.serving import ServingEmbedding
+from vllm.entrypoints.serve.render.serving import OpenAIServingRender
+from vllm.usage.usage_lib import UsageContext
+from vllm.v1.engine.async_llm import AsyncLLM
+
+from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, VllmEngineConfig, YashaModelConfig
+from yasha.infer.vllm.openai.serving_speech import OpenAIServingSpeech
+from yasha.openai.protocol import (
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    EmbeddingRequest,
+    ErrorInfo,
+    ErrorResponse,
+    RawSpeechResponse,
+    SpeechRequest,
     TranscriptionRequest,
     TranscriptionResponse,
     TranscriptionResponseVerbose,
@@ -21,22 +34,6 @@ from vllm.entrypoints.openai.speech_to_text.protocol import (
     TranslationResponse,
     TranslationResponseVerbose,
 )
-from vllm.entrypoints.openai.speech_to_text.serving import OpenAIServingTranscription, OpenAIServingTranslation
-from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest
-from vllm.entrypoints.pooling.embed.serving import ServingEmbedding
-from vllm.entrypoints.serve.render.serving import OpenAIServingRender
-from vllm.usage.usage_lib import UsageContext
-from vllm.v1.engine.async_llm import AsyncLLM
-
-from yasha.infer.infer_config import (
-    DisconnectProxy,
-    ModelUsecase,
-    RawSpeechResponse,
-    SpeechRequest,
-    VllmEngineConfig,
-    YashaModelConfig,
-)
-from yasha.infer.vllm.openai.serving_speech import OpenAIServingSpeech
 
 logger = logging.getLogger("ray")
 
