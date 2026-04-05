@@ -86,14 +86,12 @@ def ensure_plugin(module_name: str):
 
 def main():
     ray_cluster_address = os.environ["RAY_CLUSTER_ADDRESS"]
-    ray_client_server_port = os.environ["RAY_CLIENT_SERVER_PORT"]
+    ray_redis_port = os.environ["RAY_REDIS_PORT"]
+    use_existing_cluster = os.environ.get("YASHA_USE_EXISTING_RAY_CLUSTER", "false").lower() == "true"
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     serve.shutdown()
     ray.shutdown()
-    if ray_cluster_address == "auto":
-        ray_address = ray_cluster_address
-    else:
-        ray_address = f"ray://{ray_cluster_address}:{ray_client_server_port}"
+    ray_address = f"{ray_cluster_address}:{ray_redis_port}" if use_existing_cluster else "auto"
     ray.init(address=ray_address)
     serve.start(http_options=HTTPOptions(host="0.0.0.0"))
 
