@@ -7,12 +7,10 @@ from fastapi import Request
 from vllm.config.model import ModelConfig
 from vllm.engine.protocol import EngineClient
 from vllm.entrypoints.logger import RequestLogger
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse
 from vllm.entrypoints.openai.engine.serving import OpenAIServing
 from vllm.entrypoints.openai.models.serving import OpenAIServingModels
-from vllm.entrypoints.utils import create_error_response
 
-from yasha.infer.infer_config import RawSpeechResponse, SpeechRequest
+from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechRequest, create_error_response
 from yasha.plugins.base_plugin import PluginProtoVllm
 
 

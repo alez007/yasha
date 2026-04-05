@@ -43,11 +43,11 @@ from snac import SNAC  # type: ignore[import-unresolved]
 from transformers import AutoTokenizer
 from vllm import SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse
 from vllm.usage.usage_lib import UsageContext
 from vllm.v1.engine.async_llm import AsyncLLM
 
-from yasha.infer.infer_config import RawSpeechResponse, SpeechResponse, YashaModelConfig
+from yasha.infer.infer_config import YashaModelConfig
+from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechResponse
 from yasha.plugins.base_plugin import BasePlugin
 
 logger = logging.getLogger("ray")

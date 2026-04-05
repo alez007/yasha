@@ -2,13 +2,8 @@ import logging
 from collections.abc import AsyncGenerator
 
 from fastapi import Request
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse
-from vllm.entrypoints.utils import create_error_response
 
-from yasha.infer.infer_config import (
-    RawSpeechResponse,
-    SpeechRequest,
-)
+from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechRequest, create_error_response
 from yasha.plugins.base_plugin import BasePluginTransformers
 from yasha.utils import base_request_id
 

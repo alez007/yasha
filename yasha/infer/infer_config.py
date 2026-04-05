@@ -1,13 +1,12 @@
 import asyncio
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any
 
 import ray
 from fastapi import Request
 from pydantic import BaseModel, Field, model_validator
 from starlette.datastructures import Headers, State
 from vllm.entrypoints.chat_utils import ChatTemplateContentFormatOption
-from vllm.entrypoints.openai.engine.protocol import OpenAIBaseModel
 
 
 class ModelUsecase(StrEnum):
@@ -154,42 +153,3 @@ class DisconnectProxy:
 
     async def is_disconnected(self) -> bool:
         return await self._event.is_set.remote()
-
-
-class SpeechRequest(OpenAIBaseModel):
-    input: str = Field(..., description="The text to generate audio for")
-    model: str = Field(
-        ...,
-        description="The model to use for generation.",
-    )
-    voice: str = Field(
-        ...,
-        description="The voice to use for generation.",
-    )
-    response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] = Field(
-        default="mp3",
-        description="The format to return audio in.",
-    )
-    speed: float = Field(
-        default=1.0,
-        ge=0.25,
-        le=4.0,
-        description="The speed of the generated audio. Select a value from 0.25 to 4.0.",
-    )
-    stream_format: Literal["sse", "audio"] = Field(
-        default="audio",
-        description="The stream format to return the audio in.",
-    )
-
-
-class SpeechResponse(OpenAIBaseModel):
-    audio: str | None = Field(default=None, description="The generated audio data encoded in base 64")
-    type: Literal["speech.audio.delta", "speech.audio.done"] = Field(
-        ...,
-        description="Type of audio chunk",
-    )
-
-
-class RawSpeechResponse(BaseModel):
-    audio: bytes = Field(..., description="full audio file bytes")
-    media_type: Literal["audio/wav"] = Field(default="audio/wav", description="audio bytes media type")
