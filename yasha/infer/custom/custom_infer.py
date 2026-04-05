@@ -1,22 +1,22 @@
-import logging
 import importlib
+import logging
 from collections.abc import AsyncGenerator
 from typing import cast
 
-from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, YashaModelConfig, SpeechRequest, RawSpeechResponse
+from starlette.requests import Request
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
+from vllm.entrypoints.openai.engine.protocol import ErrorInfo, ErrorResponse
 from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionRequest, TranslationRequest
 from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse, ErrorInfo
-from starlette.requests import Request
-from yasha.infer.custom.openai.serving_speech import OpenAIServingSpeech
 
+from yasha.infer.custom.openai.serving_speech import OpenAIServingSpeech
+from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, RawSpeechResponse, SpeechRequest, YashaModelConfig
 from yasha.plugins.base_plugin import BasePlugin, PluginProto
 
 logger = logging.getLogger("ray")
 
 
-class CustomInfer():
+class CustomInfer:
     def __init__(self, model_config: YashaModelConfig):
         self.model_config = model_config
         self.custom_engine: BasePlugin|None = None
@@ -25,7 +25,7 @@ class CustomInfer():
     async def start(self):
         plugin = self.model_config.plugin
         if plugin is not None:
-            module = cast(PluginProto, importlib.import_module(plugin))
+            module = cast("PluginProto", importlib.import_module(plugin))
             self.custom_engine = module.ModelPlugin(model_config=self.model_config)
             await self.custom_engine.start()
 
@@ -62,4 +62,4 @@ class CustomInfer():
     ) -> ErrorResponse | RawSpeechResponse | AsyncGenerator[str, None]:
         if self.serving_speech is None:
             return ErrorResponse(error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404))
-        return await self.serving_speech.create_speech(request, cast(Request, raw_request))
+        return await self.serving_speech.create_speech(request, cast("Request", raw_request))

@@ -29,25 +29,25 @@ Example request:
       --output speech.wav
 """
 
-from typing import Literal
-import os
-import wave
+import base64
 import io
 import logging
-import base64
+import os
+import wave
 from collections.abc import AsyncGenerator
+from typing import Literal
 
 import numpy as np
 import torch
 from snac import SNAC
+from transformers import AutoTokenizer
 from vllm import SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.v1.engine.async_llm import AsyncLLM
-from vllm.usage.usage_lib import UsageContext
 from vllm.entrypoints.openai.engine.protocol import ErrorResponse
-from transformers import AutoTokenizer
+from vllm.usage.usage_lib import UsageContext
+from vllm.v1.engine.async_llm import AsyncLLM
 
-from yasha.infer.infer_config import SpeechResponse, RawSpeechResponse, YashaModelConfig
+from yasha.infer.infer_config import RawSpeechResponse, SpeechResponse, YashaModelConfig
 from yasha.plugins.base_plugin import BasePlugin
 
 logger = logging.getLogger("ray")
@@ -100,9 +100,9 @@ def _convert_to_audio(multiframe: list[int]) -> bytes | None:
     tokens are deinterleaved into those three tensors before being passed
     to ``SNAC.decode``.
 
-    The decoded waveform is sliced to samples 2048–4096 to discard edge
+    The decoded waveform is sliced to samples 2048-4096 to discard edge
     artefacts, then converted to signed 16-bit PCM and returned as bytes.
-    Returns None if any token is out of the valid 0–4096 range.
+    Returns None if any token is out of the valid 0-4096 range.
     """
     if len(multiframe) < 7:
         return None

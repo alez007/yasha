@@ -1,16 +1,16 @@
 import asyncio
-import ray
+from enum import StrEnum
 from typing import Any, Literal
-from vllm.entrypoints.chat_utils import ChatTemplateContentFormatOption
-from pydantic import BaseModel, Field, model_validator
-from enum import Enum
 
-from vllm.entrypoints.openai.engine.protocol import OpenAIBaseModel
+import ray
 from fastapi import Request
+from pydantic import BaseModel, Field, model_validator
 from starlette.datastructures import Headers, State
+from vllm.entrypoints.chat_utils import ChatTemplateContentFormatOption
+from vllm.entrypoints.openai.engine.protocol import OpenAIBaseModel
 
 
-class ModelUsecase(str, Enum):
+class ModelUsecase(StrEnum):
     generate = 'generate'
     embed = 'embed'
     transcription = 'transcription'
@@ -18,7 +18,7 @@ class ModelUsecase(str, Enum):
     tts = 'tts'
 
 
-class ModelLoader(str, Enum):
+class ModelLoader(StrEnum):
     vllm = 'vllm'
     transformers = 'transformers'
     custom = 'custom'

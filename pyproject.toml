@@ -85,7 +85,6 @@ select = [
     "UP",     # pyupgrade
     "B",      # flake8-bugbear
     "SIM",    # flake8-simplify
-    "TCH",    # flake8-type-checking
     "RUF",    # ruff-specific rules
 ]
 ignore = [
