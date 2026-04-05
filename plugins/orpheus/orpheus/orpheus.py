@@ -39,7 +39,7 @@ from typing import Literal
 
 import numpy as np
 import torch
-from snac import SNAC
+from snac import SNAC  # type: ignore[import-unresolved]
 from transformers import AutoTokenizer
 from vllm import SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
@@ -166,7 +166,7 @@ class ModelPlugin(BasePlugin):
         )
 
         engine_args = AsyncEngineArgs(
-            model=model_config.model,
+            model=model_config.model,  # type: ignore[arg-type]
             max_model_len=max_model_len,
             tokenizer=tokenizer,
             gpu_memory_utilization=model_config.num_gpus if model_config.num_gpus < 1.0 else 0.9,

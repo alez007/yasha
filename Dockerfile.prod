@@ -17,6 +17,7 @@ RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    espeak-ng \
     git
 
 RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && CUDA_MAJOR_VERSION=$(echo $CUDA_VERSION | cut -d. -f1) && \

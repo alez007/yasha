@@ -26,12 +26,13 @@ import base64
 import io
 import logging
 import os
+import shutil
 from collections.abc import AsyncGenerator
 from typing import Literal
 
 import numpy as np
-import onnxruntime as ort
-from kokoro_onnx import Kokoro
+import onnxruntime as ort  # type: ignore[import-unresolved]
+from kokoro_onnx import Kokoro  # type: ignore[import-unresolved]
 from scipy.io.wavfile import write as write_wav
 from scipy.signal import resample_poly
 from vllm.entrypoints.openai.engine.protocol import ErrorResponse
@@ -45,6 +46,12 @@ logger = logging.getLogger("ray")
 
 class ModelPlugin(BasePlugin):
     def __init__(self, model_config: YashaModelConfig):
+        if not shutil.which("espeak-ng") and not shutil.which("espeak"):
+            raise RuntimeError(
+                "espeak/espeak-ng is required by kokoro but not found on this system. "
+                "Install it with: apt-get install -y espeak-ng (Debian/Ubuntu) "
+                "or brew install espeak (macOS)"
+            )
         logger.info("onnxruntime device: %s", ort.get_device())
         logger.info("available providers: %s", ort.get_available_providers())
 
@@ -99,7 +106,7 @@ class ModelPlugin(BasePlugin):
         else:
             chunks = []
             sample_rate = self.target_sample_rate
-            async for audio_bytes, sr in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
+            async for audio_bytes, sr in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):  # type: ignore[union-attr]
                 audio_bytes, sample_rate = self._resample(audio_bytes, sr)
                 chunks.append(audio_bytes)
 
@@ -112,7 +119,7 @@ class ModelPlugin(BasePlugin):
             return RawSpeechResponse(audio=buf.getvalue(), media_type="audio/wav")
 
     async def generate_sse(self, input: str, voice: str, request_id: str) -> AsyncGenerator[str, None]:
-        async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):
+        async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):  # type: ignore[union-attr]
             audio_bytes, sample_rate = self._resample(audio_bytes, sample_rate)
             logger.info("got some audio bytes (sample rate %s) for input: %s", sample_rate, input)
             encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
