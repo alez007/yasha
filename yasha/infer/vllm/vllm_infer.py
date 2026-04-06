@@ -25,6 +25,7 @@ from yasha.openai.protocol import (
     EmbeddingRequest,
     ErrorInfo,
     ErrorResponse,
+    ImageGenerationRequest,
     RawSpeechResponse,
     SpeechRequest,
     TranscriptionRequest,
@@ -286,3 +287,10 @@ class VllmInfer:
                 error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
             )
         return await self.serving_speech.create_speech(request, cast("Request", raw_request))
+
+    async def create_image_generation(
+        self, _request: ImageGenerationRequest, _raw_request: DisconnectProxy
+    ) -> ErrorResponse:
+        return ErrorResponse(
+            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
+        )

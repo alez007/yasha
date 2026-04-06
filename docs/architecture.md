@@ -34,6 +34,7 @@ Each deployment uses one of three loaders:
 |--------|---------|-----------|
 | `vllm` | vLLM engine | Chat/generation, embeddings, transcription, translation |
 | `transformers` | PyTorch + HuggingFace | Custom model implementations |
+| `diffusers` | HuggingFace Diffusers | Image generation (any `AutoPipelineForText2Image` model) |
 | `custom` | Plugin system | TTS backends (Kokoro, Bark, Orpheus) |
 
 ## GPU Allocation
@@ -66,5 +67,6 @@ See [Plugin Development](plugins.md) for details.
 | `yasha/infer/model_deployment.py` | Ray Serve deployment actor |
 | `yasha/infer/infer_config.py` | Pydantic config models and protocols |
 | `yasha/infer/vllm/vllm_infer.py` | vLLM engine wrapper |
+| `yasha/infer/diffusers/diffusers_infer.py` | Diffusers pipeline wrapper |
 | `yasha/plugins/base_plugin.py` | Plugin base classes |
 | `config/models.yaml` | Model configuration |
