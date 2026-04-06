@@ -1,6 +1,6 @@
 # Yasha
 
-Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized models (TTS, speech-to-text, embeddings) on one or more GPUs, exposing an OpenAI-compatible API. Built on [vLLM](https://github.com/vllm-project/vllm) and [Ray](https://github.com/ray-project/ray).
+Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized models (TTS, speech-to-text, embeddings, image generation) on one or more GPUs, exposing an OpenAI-compatible API. Built on [vLLM](https://github.com/vllm-project/vllm) and [Ray](https://github.com/ray-project/ray).
 
 ## Architecture
 
@@ -36,7 +36,7 @@ Each model runs as an isolated Ray Serve deployment with its own lifecycle, heal
 
 ## Features
 
-- **Multi-model on a single GPU** — run chat, embedding, STT, and TTS models simultaneously with tunable per-model GPU memory allocation
+- **Multi-model on a single GPU** — run chat, embedding, STT, TTS, and image generation models simultaneously with tunable per-model GPU memory allocation
 - **Per-model isolated deployments** — each model runs in its own Ray Serve deployment with independent lifecycle, health checks, and failure isolation
 - **OpenAI-compatible API** — drop-in replacement for any OpenAI SDK client
 - **Streaming** — SSE streaming for chat completions and TTS audio
@@ -55,6 +55,7 @@ Each model runs as an isolated Ray Serve deployment with its own lifecycle, heal
 | `POST /v1/audio/transcriptions` | Speech-to-text |
 | `POST /v1/audio/translations` | Audio translation |
 | `POST /v1/audio/speech` | Text-to-speech (SSE streaming or single-response) |
+| `POST /v1/images/generations` | Image generation |
 | `GET /v1/models` | List available models |
 
 ## Quick Start

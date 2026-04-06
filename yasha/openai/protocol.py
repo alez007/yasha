@@ -85,6 +85,30 @@ class RawSpeechResponse(BaseModel):
     media_type: Literal["audio/wav"] = Field(default="audio/wav", description="audio bytes media type")
 
 
+# -- image generation (not yet provided by vllm) ---------------------------
+class ImageGenerationRequest(OpenAIBaseModel):
+    model: str = Field(..., description="The model to use for image generation.")
+    prompt: str = Field(..., description="A text description of the desired image(s).")
+    n: int = Field(default=1, ge=1, le=10, description="The number of images to generate.")
+    size: str = Field(default="512x512", description="The size of the generated images in WxH format.")
+    response_format: Literal["b64_json"] = Field(
+        default="b64_json",
+        description="The format in which the generated images are returned.",
+    )
+    num_inference_steps: int | None = Field(default=None, description="Override default inference steps.")
+    guidance_scale: float | None = Field(default=None, description="Override default guidance scale.")
+
+
+class ImageObject(OpenAIBaseModel):
+    b64_json: str = Field(..., description="The base64-encoded JSON of the generated image.")
+    revised_prompt: str | None = Field(default=None, description="The prompt that was used to generate the image.")
+
+
+class ImageGenerationResponse(OpenAIBaseModel):
+    created: int = Field(..., description="The Unix timestamp of when the response was created.")
+    data: list[ImageObject] = Field(..., description="The list of generated images.")
+
+
 __all__ = [
     "ChatCompletionRequest",
     "ChatCompletionResponse",
@@ -92,6 +116,9 @@ __all__ = [
     "EmbeddingResponse",
     "ErrorInfo",
     "ErrorResponse",
+    "ImageGenerationRequest",
+    "ImageGenerationResponse",
+    "ImageObject",
     "OpenAIBaseModel",
     "RawSpeechResponse",
     "SpeechRequest",

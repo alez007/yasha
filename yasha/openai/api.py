@@ -17,6 +17,8 @@ from yasha.openai.protocol import (
     EmbeddingRequest,
     EmbeddingResponse,
     ErrorResponse,
+    ImageGenerationRequest,
+    ImageGenerationResponse,
     RawSpeechResponse,
     SpeechRequest,
     TranscriptionRequest,
@@ -75,9 +77,7 @@ def _error_response(result: ErrorResponse) -> JSONResponse:
 class YashaAPI:
     def __init__(self, model_handles: dict[str, tuple[DeploymentHandle, ModelUsecase]]):
         self.models = {name: handle for name, (handle, _) in model_handles.items()}
-        self.model_list = [
-            OpenAiModelCard(id=name) for name, (_, usecase) in model_handles.items() if usecase is ModelUsecase.generate
-        ]
+        self.model_list = [OpenAiModelCard(id=name) for name in model_handles]
 
     def _get_handle(self, model_name: str | None) -> DeploymentHandle:
         if model_name is None or model_name not in self.models:
@@ -97,7 +97,14 @@ class YashaAPI:
             watcher.stop()
             return Response(content=first.audio, media_type=first.media_type)
 
-        if isinstance(first, ChatCompletionResponse | EmbeddingResponse | TranscriptionResponse | TranslationResponse):
+        if isinstance(
+            first,
+            ChatCompletionResponse
+            | EmbeddingResponse
+            | TranscriptionResponse
+            | TranslationResponse
+            | ImageGenerationResponse,
+        ):
             watcher.stop()
             return JSONResponse(content=first.model_dump(mode="json"))
 
@@ -191,4 +198,12 @@ class YashaAPI:
         watcher = RequestWatcher(raw_request)
         headers = dict(raw_request.headers)
         response_gen = handle.speak.options(stream=True).remote(request, headers, watcher.event)
+        return await self._handle_response(response_gen, watcher)
+
+    @app.post("/v1/images/generations")
+    async def create_image(self, request: ImageGenerationRequest, raw_request: Request):
+        handle = self._get_handle(request.model)
+        watcher = RequestWatcher(raw_request)
+        headers = dict(raw_request.headers)
+        response_gen = handle.imagine.options(stream=True).remote(request, headers, watcher.event)
         return await self._handle_response(response_gen, watcher)
