@@ -45,7 +45,7 @@ class DiffusersInfer:
             pass
 
     async def start(self):
-        from diffusers import AutoPipelineForText2Image
+        from diffusers.pipelines.auto_pipeline import AutoPipelineForText2Image
 
         config = self.model_config.diffusers_config or DiffusersConfig()
         dtype = _TORCH_DTYPES.get(config.torch_dtype, torch.float16)
