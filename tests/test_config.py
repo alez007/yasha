@@ -18,6 +18,7 @@ class TestYashaModelConfig:
             name="test-llm",
             model="some-org/some-model",
             usecase=ModelUsecase.generate,
+            loader=ModelLoader.vllm,
         )
         assert config.name == "test-llm"
         assert config.loader == ModelLoader.vllm
@@ -46,35 +47,27 @@ class TestYashaModelConfig:
     def test_custom_loader_plugin_only(self):
         config = YashaModelConfig(
             name="test-tts",
+            model="some-model",
             usecase=ModelUsecase.tts,
             loader=ModelLoader.custom,
             plugin="kokoro",
         )
-        assert config.model is None
         assert config.plugin == "kokoro"
 
-    def test_vllm_loader_requires_model(self):
-        with pytest.raises(ValidationError, match="cannot be both empty"):
+    def test_model_required(self):
+        with pytest.raises(ValidationError, match="Field required"):
             YashaModelConfig(
                 name="test-llm",
                 usecase=ModelUsecase.generate,
                 loader=ModelLoader.vllm,
             )
 
-    def test_transformers_loader_requires_model(self):
-        with pytest.raises(ValidationError, match="cannot be both empty"):
+    def test_loader_required(self):
+        with pytest.raises(ValidationError, match="Field required"):
             YashaModelConfig(
                 name="test-llm",
+                model="some-model",
                 usecase=ModelUsecase.generate,
-                loader=ModelLoader.transformers,
-            )
-
-    def test_model_and_plugin_both_empty_fails(self):
-        with pytest.raises(ValidationError, match="cannot be both empty"):
-            YashaModelConfig(
-                name="test",
-                usecase=ModelUsecase.generate,
-                loader=ModelLoader.custom,
             )
 
     def test_gpu_index_with_tensor_parallelism_fails(self):
@@ -83,6 +76,7 @@ class TestYashaModelConfig:
                 name="test-llm",
                 model="some-model",
                 usecase=ModelUsecase.generate,
+                loader=ModelLoader.vllm,
                 use_gpu=0,
                 vllm_engine_kwargs=VllmEngineConfig(tensor_parallel_size=2),
             )
@@ -92,6 +86,7 @@ class TestYashaModelConfig:
             name="test-llm",
             model="some-model",
             usecase=ModelUsecase.generate,
+            loader=ModelLoader.vllm,
             use_gpu=0,
             vllm_engine_kwargs=VllmEngineConfig(tensor_parallel_size=1),
         )
@@ -102,6 +97,7 @@ class TestYashaModelConfig:
             name="test-llm",
             model="some-model",
             usecase=ModelUsecase.generate,
+            loader=ModelLoader.vllm,
             use_gpu="dual_16gb",
             vllm_engine_kwargs=VllmEngineConfig(tensor_parallel_size=2),
         )
@@ -112,6 +108,7 @@ class TestYashaModelConfig:
             name="test-llm",
             model="some-model",
             usecase=ModelUsecase.generate,
+            loader=ModelLoader.vllm,
             num_gpus=0.70,
         )
         assert config.num_gpus == 0.70
@@ -122,16 +119,15 @@ class TestYashaModelConfig:
                 name=f"test-{usecase.value}",
                 model="some-model",
                 usecase=usecase,
+                loader=ModelLoader.vllm,
             )
             assert config.usecase == usecase
 
     def test_all_loaders_valid(self):
         for loader in ModelLoader:
-            kwargs = {"name": "test", "usecase": ModelUsecase.generate}
+            kwargs = {"name": "test", "model": "some-model", "usecase": ModelUsecase.generate}
             if loader == ModelLoader.custom:
                 kwargs["plugin"] = "test-plugin"
-            else:
-                kwargs["model"] = "some-model"
             config = YashaModelConfig(loader=loader, **kwargs)
             assert config.loader == loader
 
@@ -165,10 +161,12 @@ class TestYashaConfig:
                     name="llm",
                     model="some-org/some-llm",
                     usecase=ModelUsecase.generate,
+                    loader=ModelLoader.vllm,
                     num_gpus=0.70,
                 ),
                 YashaModelConfig(
                     name="tts",
+                    model="some-model",
                     usecase=ModelUsecase.tts,
                     loader=ModelLoader.custom,
                     plugin="kokoro",

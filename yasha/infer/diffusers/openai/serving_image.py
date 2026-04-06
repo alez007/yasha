@@ -4,11 +4,12 @@ import io
 import logging
 import time
 
-from diffusers import AutoPipelineForText2Image
+from diffusers.pipelines.auto_pipeline import AutoPipelineForText2Image
 from fastapi import Request
 
 from yasha.infer.infer_config import DiffusersConfig
 from yasha.openai.protocol import (
+    ErrorResponse,
     ImageGenerationRequest,
     ImageGenerationResponse,
     ImageObject,
@@ -28,7 +29,7 @@ class OpenAIServingImage:
 
     async def create_image_generation(
         self, request: ImageGenerationRequest, raw_request: Request
-    ) -> ImageGenerationResponse:
+    ) -> ImageGenerationResponse | ErrorResponse:
         request_id = f"{self.request_id_prefix}-{base_request_id(raw_request)}"
         logger.info(
             "image generation request %s: prompt=%r, n=%d, size=%s", request_id, request.prompt, request.n, request.size
@@ -46,7 +47,7 @@ class OpenAIServingImage:
         images = await loop.run_in_executor(
             None,
             lambda: (
-                self.pipeline(
+                self.pipeline(  # type: ignore[reportCallIssue]
                     prompt=request.prompt,
                     num_images_per_prompt=request.n,
                     width=width,
