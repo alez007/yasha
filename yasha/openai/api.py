@@ -11,6 +11,14 @@ from ray import serve
 from ray.serve.handle import DeploymentHandle
 
 from yasha.infer.infer_config import ModelUsecase, RequestWatcher
+from yasha.metrics import (
+    MODELS_LOADED,
+    REQUEST_DURATION_SECONDS,
+    REQUEST_ERRORS_TOTAL,
+    REQUEST_IN_PROGRESS,
+    REQUEST_TOTAL,
+    STREAM_CHUNKS_TOTAL,
+)
 from yasha.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -78,6 +86,7 @@ class YashaAPI:
     def __init__(self, model_handles: dict[str, tuple[DeploymentHandle, ModelUsecase]]):
         self.models = {name: handle for name, (handle, _) in model_handles.items()}
         self.model_list = [OpenAiModelCard(id=name) for name in model_handles]
+        MODELS_LOADED.set(len(self.models))  # all models are RUNNING by this point
 
     def _get_handle(self, model_name: str | None) -> DeploymentHandle:
         if model_name is None or model_name not in self.models:
@@ -85,39 +94,68 @@ class YashaAPI:
         return self.models[model_name]
 
     async def _handle_response(
-        self, response_gen, watcher: RequestWatcher, stream_media_type: str = "text/event-stream"
+        self,
+        response_gen,
+        watcher: RequestWatcher,
+        model: str,
+        endpoint: str,
+        stream_media_type: str = "text/event-stream",
     ):
-        first = await response_gen.__anext__()
+        start = time.monotonic()
+        REQUEST_IN_PROGRESS.set(1, tags={"model": model, "endpoint": endpoint})
+        try:
+            first = await response_gen.__anext__()
 
-        if isinstance(first, ErrorResponse):
-            watcher.stop()
-            return _error_response(first)
-
-        if isinstance(first, RawSpeechResponse):
-            watcher.stop()
-            return Response(content=first.audio, media_type=first.media_type)
-
-        if isinstance(
-            first,
-            ChatCompletionResponse
-            | EmbeddingResponse
-            | TranscriptionResponse
-            | TranslationResponse
-            | ImageGenerationResponse,
-        ):
-            watcher.stop()
-            return JSONResponse(content=first.model_dump(mode="json"))
-
-        # streaming — first chunk already consumed, chain it back
-        async def _stream():
-            try:
-                yield first
-                async for chunk in response_gen:
-                    yield chunk
-            finally:
+            if isinstance(first, ErrorResponse):
+                REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "inference_error"})
+                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
                 watcher.stop()
+                return _error_response(first)
 
-        return StreamingResponse(content=_stream(), media_type=stream_media_type)
+            if isinstance(first, RawSpeechResponse):
+                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
+                watcher.stop()
+                return Response(content=first.audio, media_type=first.media_type)
+
+            if isinstance(
+                first,
+                ChatCompletionResponse
+                | EmbeddingResponse
+                | TranscriptionResponse
+                | TranslationResponse
+                | ImageGenerationResponse,
+            ):
+                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
+                watcher.stop()
+                return JSONResponse(content=first.model_dump(mode="json"))
+
+            # streaming — first chunk already consumed, chain it back
+            async def _stream():
+                try:
+                    STREAM_CHUNKS_TOTAL.inc(tags={"model": model})
+                    yield first
+                    async for chunk in response_gen:
+                        STREAM_CHUNKS_TOTAL.inc(tags={"model": model})
+                        yield chunk
+                    REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
+                except Exception:
+                    REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "stream_error"})
+                    raise
+                finally:
+                    watcher.stop()
+
+            return StreamingResponse(content=_stream(), media_type=stream_media_type)
+        except Exception:
+            REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "unhandled"})
+            raise
+        finally:
+            duration = time.monotonic() - start
+            REQUEST_DURATION_SECONDS.observe(duration, tags={"model": model, "endpoint": endpoint})
+            REQUEST_IN_PROGRESS.set(0, tags={"model": model, "endpoint": endpoint})
+
+    @app.get("/health")
+    async def health(self):
+        return {"status": "ok"}
 
     @app.get("/v1/models", response_model=OpenaiModelList)
     async def list_models(self):
@@ -132,8 +170,9 @@ class YashaAPI:
 
     @app.post("/v1/chat/completions")
     async def create_chat_completion(self, request: ChatCompletionRequest, raw_request: Request):
+        model = request.model or ""
         handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request)
+        watcher = RequestWatcher(raw_request, model=model, endpoint="create_chat_completion")
         headers = dict(raw_request.headers)
         # Materialize any lazy pydantic ValidatorIterators (from Iterable-typed fields
         # like tool_calls) in place — they can't be pickled across the Ray boundary.
@@ -152,22 +191,24 @@ class YashaAPI:
                 logger.info("chat_completion actor output: %s", chunk)
                 yield chunk
 
-        return await self._handle_response(_logged_gen(), watcher)
+        return await self._handle_response(_logged_gen(), watcher, model, "create_chat_completion")
 
     @app.post("/v1/embeddings")
     async def create_embeddings(self, request: EmbeddingRequest, raw_request: Request):
+        model = request.model or ""
         handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request)
+        watcher = RequestWatcher(raw_request, model=model, endpoint="create_embeddings")
         headers = dict(raw_request.headers)
         # EmbeddingRequest is a UnionType — force resolution before Ray pickle boundary.
         request = type(request).model_validate_json(request.model_dump_json())
         response_gen = handle.embed.options(stream=True).remote(request, headers, watcher.event)
-        return await self._handle_response(response_gen, watcher)
+        return await self._handle_response(response_gen, watcher, model, "create_embeddings")
 
     @app.post("/v1/audio/transcriptions")
     async def create_transcriptions(self, request: Annotated[TranscriptionRequest, Form()], raw_request: Request):
+        model = request.model or ""
         handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request)
+        watcher = RequestWatcher(raw_request, model=model, endpoint="create_transcriptions")
         headers = dict(raw_request.headers)
         # Read audio bytes before crossing process boundary — UploadFile is not serializable.
         # The bytes are passed separately; the request is reconstructed without the file field.
@@ -176,34 +217,35 @@ class YashaAPI:
         response_gen = handle.transcribe.options(stream=True).remote(
             audio_data, request_no_file, headers, watcher.event
         )
-        return await self._handle_response(response_gen, watcher)
+        return await self._handle_response(response_gen, watcher, model, "create_transcriptions")
 
     @app.post("/v1/audio/translations")
     async def create_translations(self, request: Annotated[TranslationRequest, Form()], raw_request: Request):
+        model = request.model or ""
         handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request)
+        watcher = RequestWatcher(raw_request, model=model, endpoint="create_translations")
         headers = dict(raw_request.headers)
         # Read audio bytes before crossing process boundary — UploadFile is not serializable.
         # The bytes are passed separately; the request is reconstructed without the file field.
         audio_data = await request.file.read()
         request_no_file = TranslationRequest.model_construct(**request.model_dump(exclude={"file"}))
         response_gen = handle.translate.options(stream=True).remote(audio_data, request_no_file, headers, watcher.event)
-        return await self._handle_response(response_gen, watcher)
+        return await self._handle_response(response_gen, watcher, model, "create_translations")
 
     @app.post("/v1/audio/speech")
     async def create_speech(self, request: SpeechRequest, raw_request: Request):
         logger.info("speech request headers: %s", dict(raw_request.headers))
         logger.info("speech request body: %s", request.model_dump_json())
         handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request)
+        watcher = RequestWatcher(raw_request, model=request.model, endpoint="create_speech")
         headers = dict(raw_request.headers)
         response_gen = handle.speak.options(stream=True).remote(request, headers, watcher.event)
-        return await self._handle_response(response_gen, watcher)
+        return await self._handle_response(response_gen, watcher, request.model, "create_speech")
 
     @app.post("/v1/images/generations")
     async def create_image(self, request: ImageGenerationRequest, raw_request: Request):
         handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request)
+        watcher = RequestWatcher(raw_request, model=request.model, endpoint="create_image")
         headers = dict(raw_request.headers)
         response_gen = handle.imagine.options(stream=True).remote(request, headers, watcher.event)
-        return await self._handle_response(response_gen, watcher)
+        return await self._handle_response(response_gen, watcher, request.model, "create_image")

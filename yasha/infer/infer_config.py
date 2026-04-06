@@ -109,14 +109,19 @@ class DisconnectEvent:
 class RequestWatcher:
     """Watches a FastAPI Request for client disconnect and signals via a Ray actor event."""
 
-    def __init__(self, raw_request: Request):
+    def __init__(self, raw_request: Request, model: str = "", endpoint: str = ""):
         self._request = raw_request
         self._event = DisconnectEvent.remote()
+        self._model = model
+        self._endpoint = endpoint
         self._task = asyncio.create_task(self._watch())
 
     async def _watch(self):
+        from yasha.metrics import CLIENT_DISCONNECTS_TOTAL
+
         while True:
             if await self._request.is_disconnected():
+                CLIENT_DISCONNECTS_TOTAL.inc(tags={"model": self._model, "endpoint": self._endpoint})
                 await self._event.set.remote()  # type: ignore[attr-defined]
                 break
             await asyncio.sleep(0.1)

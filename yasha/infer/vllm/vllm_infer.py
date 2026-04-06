@@ -115,7 +115,9 @@ class VllmInfer:
             if engine := getattr(self, "engine", None):
                 engine.shutdown()
         except Exception:
-            pass
+            from yasha.metrics import RESOURCE_CLEANUP_ERRORS_TOTAL
+
+            RESOURCE_CLEANUP_ERRORS_TOTAL.inc(tags={"model": self.model_config.name, "component": "vllm_engine"})
 
     async def start(self):
         logger.info("Start vllm infer for model: %s", self.model_config)
