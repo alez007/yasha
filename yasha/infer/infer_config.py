@@ -15,11 +15,13 @@ class ModelUsecase(StrEnum):
     transcription = "transcription"
     translation = "translation"
     tts = "tts"
+    image = "image"
 
 
 class ModelLoader(StrEnum):
     vllm = "vllm"
     transformers = "transformers"
+    diffusers = "diffusers"
     custom = "custom"
 
 
@@ -47,26 +49,25 @@ class TransformersConfig(BaseModel):
     device: str = "cpu"
 
 
+class DiffusersConfig(BaseModel):
+    torch_dtype: str = "float16"
+    num_inference_steps: int = 30
+    guidance_scale: float = 7.5
+
+
 class YashaModelConfig(BaseModel):
     name: str
-    model: str | None = None
+    model: str
     usecase: ModelUsecase
-    loader: ModelLoader = ModelLoader.vllm
+    loader: ModelLoader
     plugin: str | None = None  # only meaningful for loader='custom', silently ignored otherwise
     num_gpus: float = 0
     num_cpus: float = 0.1
     use_gpu: int | str | None = None
     vllm_engine_kwargs: VllmEngineConfig = Field(default_factory=VllmEngineConfig)
     transformers_config: TransformersConfig | None = None
+    diffusers_config: DiffusersConfig | None = None
     plugin_config: dict[str, Any] | None = None  # plugin devs parse this themselves
-
-    @model_validator(mode="after")
-    def check_model_or_plugin(self):
-        if self.model is None and self.plugin is None:
-            raise ValueError("model and plugin fields cannot be both empty")
-        if self.loader in (ModelLoader.vllm, ModelLoader.transformers) and self.model is None:
-            raise ValueError(f"loader='{self.loader}' requires model to be set")
-        return self
 
     @model_validator(mode="after")
     def check_custom_requires_plugin(self):

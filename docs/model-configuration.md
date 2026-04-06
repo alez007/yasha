@@ -8,13 +8,14 @@ Models are configured in `config/models.yaml`. Each entry defines one deployment
 |---|---|---|
 | `name` | string | Model identifier used in API requests |
 | `model` | string | HuggingFace model ID |
-| `usecase` | string | `generate`, `embed`, `transcription`, `translation`, or `tts` |
-| `loader` | string | `vllm`, `transformers`, or `custom` |
+| `usecase` | string | `generate`, `embed`, `transcription`, `translation`, `tts`, or `image` |
+| `loader` | string | `vllm`, `transformers`, `diffusers`, or `custom` |
 | `plugin` | string | Plugin module name (required when `loader: custom`); must be installed via `uv sync --extra <plugin>` |
 | `num_gpus` | float | Fraction of a GPU to allocate (0.0–1.0); also sets vLLM `gpu_memory_utilization` |
 | `num_cpus` | float | CPU units to allocate (default `0.1`) |
 | `use_gpu` | int \| string | Pin to a specific GPU (see below) |
 | `vllm_engine_kwargs` | object | Passed directly to the vLLM engine — see [vLLM engine args](https://docs.vllm.ai/en/latest/configuration/engine_args.html) |
+| `diffusers_config` | object | Diffusers pipeline options (see below) |
 | `plugin_config` | object | Plugin-specific options passed through to the plugin |
 
 ## GPU Pinning
@@ -28,6 +29,32 @@ Models are configured in `config/models.yaml`. Each entry defines one deployment
   ```
   The name is arbitrary — it must match the value in `use_gpu`. The `models.example.2x16GB.yaml` preset uses `"dual_16gb"` for a TP=2 LLM deployment.
 - **omit** — Ray schedules the deployment freely across available GPUs
+
+## Diffusers Config
+
+Options for `loader: diffusers` models (image generation via HuggingFace Diffusers):
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `torch_dtype` | string | `float16` | Torch dtype (`float16`, `bfloat16`, `float32`) |
+| `num_inference_steps` | int | `30` | Default denoising steps (can be overridden per request) |
+| `guidance_scale` | float | `7.5` | Default classifier-free guidance scale (can be overridden per request) |
+
+Any model supported by `AutoPipelineForText2Image` works out of the box — Stable Diffusion 1.5/2.x/XL/3.x, SDXL Turbo, Flux, PixArt, Kandinsky, etc.
+
+Example:
+
+```yaml
+- name: "sdxl-turbo"
+  model: "stabilityai/sdxl-turbo"
+  usecase: "image"
+  loader: "diffusers"
+  num_gpus: 0.35
+  diffusers_config:
+    torch_dtype: "float16"
+    num_inference_steps: 4
+    guidance_scale: 0.0
+```
 
 ## Environment Variables
 
