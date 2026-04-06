@@ -42,7 +42,9 @@ class DiffusersInfer:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:
-            pass
+            from yasha.metrics import RESOURCE_CLEANUP_ERRORS_TOTAL
+
+            RESOURCE_CLEANUP_ERRORS_TOTAL.inc(tags={"model": self.model_config.name, "component": "diffusers_pipeline"})
 
     async def start(self):
         from diffusers.pipelines.auto_pipeline import AutoPipelineForText2Image
