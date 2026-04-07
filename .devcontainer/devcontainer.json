@@ -1,7 +1,8 @@
 {
   "name": "yasha",
   "build": {
-    "dockerfile": "../Dockerfile.dev",
+    "dockerfile": "../Dockerfile",
+    "target": "dev",
     "context": ".."
   },
   "features": {

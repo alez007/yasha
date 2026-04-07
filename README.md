@@ -44,6 +44,7 @@ Each model runs as an isolated Ray Serve deployment with its own lifecycle, heal
 - **Plugin system** — opt-in TTS backends installed as isolated uv workspace packages
 - **Multi-GPU support** — assign models to specific GPUs by index or named Ray resource, with full tensor parallelism support
 - **Client disconnect detection** — cancels in-flight inference when the client disconnects, freeing GPU resources immediately
+- **Prometheus metrics & Grafana dashboard** — built-in observability with custom `yasha:*` metrics, vLLM engine stats, and Ray cluster metrics on a single scrape endpoint; pre-built Grafana dashboard included
 - **Ray dashboard** — monitor deployments, resources, and request logs
 
 ## Supported OpenAI Endpoints
@@ -80,7 +81,7 @@ docker run --rm --shm-size=8g --gpus all \
   -e YASHA_PLUGINS=kokoro \
   -v ./models.yaml:/yasha/config/models.yaml \
   -v ./models-cache:/yasha/.cache/models \
-  -p 8265:8265 -p 8000:8000 ghcr.io/alez007/yasha:latest
+  -p 8265:8265 -p 8000:8000 -p 8079:8079 ghcr.io/alez007/yasha:latest
 ```
 
 Try it out:
@@ -95,6 +96,7 @@ curl http://localhost:8000/v1/chat/completions \
 ```
 
 - API: `http://localhost:8000`
+- Prometheus metrics: `http://localhost:8079`
 - Ray dashboard: `http://localhost:8265`
 
 Example configs are included for 8 GB, 16 GB, 24 GB, and 2×16 GB GPU setups.
@@ -129,7 +131,7 @@ For a full guide on writing your own plugin, see [Plugin Development](docs/plugi
 
 ## Monitoring
 
-Yasha exposes Prometheus metrics (Ray cluster, Ray Serve, vLLM, and custom `yasha:*` metrics) through a single port. Enable with `YASHA_METRICS=true` and scrape port 8079. A pre-built Grafana dashboard is included. See [Monitoring](docs/monitoring.md) for setup details.
+Yasha exposes Prometheus metrics (Ray cluster, Ray Serve, vLLM, and custom `yasha:*` metrics) through a single scrape endpoint on port 8079. Metrics are **enabled by default** — set `YASHA_METRICS=false` to disable. A pre-built Grafana dashboard is included. See [Monitoring](docs/monitoring.md) for setup details.
 
 ## Future Work
 
