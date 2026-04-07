@@ -42,7 +42,7 @@ The recommended way to develop Yasha is with VS Code Dev Containers. The configu
 > **Why the extra steps?** The Dev Container overrides the image's default `CMD` (which normally runs `start.sh` to sync deps and start Ray). Inside a Dev Container you need to run these steps manually.
 
 The Dev Container automatically:
-- Builds the dev image from `Dockerfile.dev`
+- Builds the dev image from `Dockerfile` (target: `dev`)
 - Bind-mounts the repo to `/yasha` for live editing
 - Forwards ports `8000` (API) and `8265` (Ray Dashboard)
 - Installs extensions: Ruff, Python, Pyright, and Claude Code
@@ -76,7 +76,7 @@ If you prefer not to use Dev Containers, you can build and run the dev image dir
 ### Building the dev image
 
 ```bash
-docker build -t yasha_dev -f Dockerfile.dev .
+docker build -t yasha_dev --target dev .
 ```
 
 ### Running with live source mounting
