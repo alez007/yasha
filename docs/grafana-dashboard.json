@@ -59,7 +59,7 @@
     {
       "title": "In-Flight Requests",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 4, "x": 16, "y": 1 },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
       "id": 3,
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
@@ -80,6 +80,22 @@
           "expr": "ray_yasha_models_loaded"
         }
       ]
+    },
+    {
+      "title": "Auth Failures",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 5 },
+      "id": 6,
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "sum(rate(ray_yasha_auth_failures_total[5m])) by (reason)",
+          "legendFormat": "{{ reason }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      }
     },
     {
       "title": "Client Disconnects",
