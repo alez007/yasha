@@ -20,6 +20,9 @@ class BasePluginVllm(ABC):
     ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         pass
 
+    def max_context_length(self) -> int | None:
+        return None
+
 
 class BasePluginTransformers(ABC):
     @abstractmethod
@@ -31,6 +34,9 @@ class BasePluginTransformers(ABC):
         self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]
     ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         pass
+
+    def max_context_length(self) -> int | None:
+        return None
 
 
 class BasePlugin(ABC):
@@ -47,6 +53,9 @@ class BasePlugin(ABC):
         self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]
     ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         pass
+
+    def max_context_length(self) -> int | None:
+        return None
 
 
 class PluginProtoVllm(Protocol):

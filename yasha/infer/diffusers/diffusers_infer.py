@@ -4,18 +4,13 @@ from typing import cast
 import torch
 from starlette.requests import Request
 
+from yasha.infer.base_infer import BaseInfer
 from yasha.infer.diffusers.openai.serving_image import OpenAIServingImage
 from yasha.infer.infer_config import DiffusersConfig, DisconnectProxy, ModelUsecase, YashaModelConfig
 from yasha.openai.protocol import (
-    ChatCompletionRequest,
-    EmbeddingRequest,
-    ErrorInfo,
     ErrorResponse,
     ImageGenerationRequest,
     ImageGenerationResponse,
-    SpeechRequest,
-    TranscriptionRequest,
-    TranslationRequest,
 )
 
 logger = logging.getLogger("ray")
@@ -27,9 +22,9 @@ _TORCH_DTYPES = {
 }
 
 
-class DiffusersInfer:
+class DiffusersInfer(BaseInfer):
     def __init__(self, model_config: YashaModelConfig):
-        self.model_config = model_config
+        super().__init__(model_config)
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
         if torch.cuda.is_available() and model_config.num_gpus < 1.0:
@@ -63,48 +58,19 @@ class DiffusersInfer:
             torch_dtype=dtype,
         ).to(self.device)
 
+        tokenizer = getattr(self._pipeline, "tokenizer", None)
+        if tokenizer is not None:
+            self._set_max_context_length(getattr(tokenizer, "model_max_length", None))
+
         self.serving_image: OpenAIServingImage | None = (
             OpenAIServingImage(pipeline=self._pipeline, config=config)
             if self.model_config.usecase is ModelUsecase.image
             else None
         )
 
-    async def create_chat_completion(
-        self, _request: ChatCompletionRequest, _raw_request: DisconnectProxy
-    ) -> ErrorResponse:
-        return ErrorResponse(
-            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
-        )
-
-    async def create_embedding(self, _request: EmbeddingRequest, _raw_request: DisconnectProxy) -> ErrorResponse:
-        return ErrorResponse(
-            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
-        )
-
-    async def create_transcription(
-        self, _audio_data: bytes, _request: TranscriptionRequest, _raw_request: DisconnectProxy
-    ) -> ErrorResponse:
-        return ErrorResponse(
-            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
-        )
-
-    async def create_translation(
-        self, _audio_data: bytes, _request: TranslationRequest, _raw_request: DisconnectProxy
-    ) -> ErrorResponse:
-        return ErrorResponse(
-            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
-        )
-
-    async def create_speech(self, _request: SpeechRequest, _raw_request: DisconnectProxy) -> ErrorResponse:
-        return ErrorResponse(
-            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
-        )
-
     async def create_image_generation(
         self, request: ImageGenerationRequest, raw_request: DisconnectProxy
     ) -> ErrorResponse | ImageGenerationResponse:
         if self.serving_image is None:
-            return ErrorResponse(
-                error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
-            )
+            return await super().create_image_generation(request, raw_request)
         return await self.serving_image.create_image_generation(request, cast("Request", raw_request))
