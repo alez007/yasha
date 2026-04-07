@@ -41,7 +41,9 @@ class TransformersInfer:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:
-            pass
+            from yasha.metrics import RESOURCE_CLEANUP_ERRORS_TOTAL
+
+            RESOURCE_CLEANUP_ERRORS_TOTAL.inc(tags={"model": self.model_config.name, "component": "transformers_model"})
 
     async def start(self):
         self.serving_chat = None

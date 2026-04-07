@@ -54,6 +54,8 @@ ENV RAY_CLUSTER_ADDRESS=0.0.0.0
 ENV RAY_HEAD_CPU_NUM=2
 ENV RAY_HEAD_GPU_NUM=1
 ENV YASHA_USE_EXISTING_RAY_CLUSTER=false
+ENV YASHA_METRICS=true
+ENV RAY_METRICS_EXPORT_PORT=8079
 RUN uv venv
 
 ARG PYTHON_VERSION
@@ -77,7 +79,11 @@ fi
 uv sync --project /yasha --locked \$EXTRAS
 
 if [ "\${YASHA_USE_EXISTING_RAY_CLUSTER}" != "true" ]; then
-    cd /yasha && ray start --head --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=\${RAY_HEAD_CPU_NUM} --num-gpus=\${RAY_HEAD_GPU_NUM} --disable-usage-stats
+    METRICS_FLAG=""
+    if [ "\${YASHA_METRICS}" = "true" ]; then
+        METRICS_FLAG="--metrics-export-port=\${RAY_METRICS_EXPORT_PORT}"
+    fi
+    cd /yasha && ray start --head --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=\${RAY_HEAD_CPU_NUM} --num-gpus=\${RAY_HEAD_GPU_NUM} --disable-usage-stats \${METRICS_FLAG}
     if ! ray status --address=\${RAY_CLUSTER_ADDRESS}:\${RAY_REDIS_PORT}; then
         echo "ray cluster failed to start"
         exit 1

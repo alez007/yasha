@@ -125,6 +125,11 @@ For a full guide on writing your own plugin, see [Plugin Development](docs/plugi
 - [Architecture](docs/architecture.md) — system design, request lifecycle, plugin loading
 - [Plugin Development](docs/plugins.md) — writing custom TTS backends
 - [Home Assistant Integration](docs/home-assistant.md) — Wyoming protocol setup for voice automation
+- [Monitoring](docs/monitoring.md) — Prometheus metrics, Grafana dashboard, health checks
+
+## Monitoring
+
+Yasha exposes Prometheus metrics (Ray cluster, Ray Serve, vLLM, and custom `yasha:*` metrics) through a single port. Enable with `YASHA_METRICS=true` and scrape port 8079. A pre-built Grafana dashboard is included. See [Monitoring](docs/monitoring.md) for setup details.
 
 ## Future Work
 
