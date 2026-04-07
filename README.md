@@ -133,9 +133,30 @@ For a full guide on writing your own plugin, see [Plugin Development](docs/plugi
 
 Yasha exposes Prometheus metrics (Ray cluster, Ray Serve, vLLM, and custom `yasha:*` metrics) through a single scrape endpoint on port 8079. Metrics are **enabled by default** — set `YASHA_METRICS=false` to disable. A pre-built Grafana dashboard is included. See [Monitoring](docs/monitoring.md) for setup details.
 
-## Future Work
+## Production Readiness
 
-- [ ] Automated test suite (unit tests for config parsing, API serialization; integration tests)
+See the full [Production Readiness Plan](docs/production-readiness.md) for details. Summary of current status:
+
+| Area                         | Score | Key Gaps |
+|------------------------------|-------|----------|
+| Architecture & Design        | 8/10  | Add K8s manifests, improve health checks |
+| Monitoring (metrics)         | 9/10  | Excellent — Prometheus + Grafana ready |
+| Monitoring (alerting + logs) | 4/10  | No alerting rules, no structured logging |
+| Security                     | 3/10  | No auth, no rate limiting, open CORS |
+| Resilience                   | 5/10  | Good shutdown, weak self-healing |
+| Testing                      | 3/10  | Config tests only, no integration/API tests |
+| DevOps Experience            | 5/10  | Good docs, no K8s/Helm, no runbooks |
+| Update/Deploy Strategy       | 3/10  | No rolling updates, no hot-reload |
+
+### Critical items before production
+
+- API authentication layer (API keys or OAuth)
+- Rate limiting per user/model
+- Input size limits at the gateway
+- Detailed readiness/liveness probes (current `/health` is a no-op)
+- Integration and API test coverage
+- Kubernetes manifests and Helm chart
+- Prometheus alerting rules and SLO definitions
 
 ## Contributing
 
