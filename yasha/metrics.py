@@ -71,6 +71,7 @@ def _build_metrics():
             "embedding_duration_seconds": _NoOpHistogram(),
             # Resource cleanup
             "resource_cleanup_errors_total": _NoOpCounter(),
+            "auth_failures_total": _NoOpCounter(),
         }
 
     from ray.serve.metrics import Counter, Gauge, Histogram
@@ -157,6 +158,12 @@ def _build_metrics():
             boundaries=_REQUEST_LATENCY_BOUNDARIES,
             tag_keys=("model",),
         ),
+        # -- Authentication --
+        "auth_failures_total": Counter(
+            "yasha_auth_failures_total",
+            description="Total rejected requests due to invalid/missing API key.",
+            tag_keys=("reason",),
+        ),
         # -- Resource cleanup --
         "resource_cleanup_errors_total": Counter(
             "yasha_resource_cleanup_errors_total",
@@ -187,6 +194,9 @@ TTS_GENERATION_DURATION_SECONDS = _metrics["tts_generation_duration_seconds"]
 IMAGE_GENERATION_DURATION_SECONDS = _metrics["image_generation_duration_seconds"]
 TRANSCRIPTION_DURATION_SECONDS = _metrics["transcription_duration_seconds"]
 EMBEDDING_DURATION_SECONDS = _metrics["embedding_duration_seconds"]
+
+# -- Authentication --
+AUTH_FAILURES_TOTAL = _metrics["auth_failures_total"]
 
 # -- Resource cleanup --
 RESOURCE_CLEANUP_ERRORS_TOTAL = _metrics["resource_cleanup_errors_total"]
