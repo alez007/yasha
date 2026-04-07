@@ -15,9 +15,10 @@
     "--shm-size=8g",
     "--gpus=all",
     "-p", "0.0.0.0:8000:8000",
-    "-p", "0.0.0.0:8265:8265"
+    "-p", "0.0.0.0:8265:8265",
+    "-p", "0.0.0.0:8079:8079"
   ],
-  "forwardPorts": [8000, 8265],
+  "forwardPorts": [8000, 8265, 8079],
   "portsAttributes": {
     "8000": { "label": "API" },
     "8265": { "label": "Ray Dashboard" }
@@ -31,7 +32,8 @@
   },
   "remoteEnv": {
     "HF_TOKEN": "${localEnv:HF_TOKEN}",
-    "YASHA_PLUGINS": "${localEnv:YASHA_PLUGINS}"
+    "YASHA_PLUGINS": "${localEnv:YASHA_PLUGINS}",
+    "YASHA_METRICS": "true"
   },
   "customizations": {
     "vscode": {

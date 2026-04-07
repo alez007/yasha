@@ -19,6 +19,7 @@ from vllm.v1.engine.async_llm import AsyncLLM
 
 from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, VllmEngineConfig, YashaModelConfig
 from yasha.infer.vllm.openai.serving_speech import OpenAIServingSpeech
+from yasha.metrics import _ENABLED as _METRICS_ENABLED
 from yasha.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -103,11 +104,18 @@ class VllmInfer:
         # GPU pinning is handled by CUDA_VISIBLE_DEVICES set in ray_actor_options runtime_env.
         # The GPU is always visible as cuda:0 inside the actor — no device_config override needed.
 
+        stat_loggers: list | None = None
+        if _METRICS_ENABLED:
+            from vllm.v1.metrics.ray_wrappers import RayPrometheusStatLogger
+
+            stat_loggers = [RayPrometheusStatLogger]
+
         self.engine = AsyncLLM.from_vllm_config(
             vllm_config=vllm_config,
             usage_context=usage_context,
             enable_log_requests=engine_args.enable_log_requests,
             disable_log_stats=engine_args.disable_log_stats,
+            stat_loggers=stat_loggers,
         )
 
     def __del__(self):
