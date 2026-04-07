@@ -21,8 +21,8 @@ RUN apt-get update -y && \
     git
 
 RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && CUDA_MAJOR_VERSION=$(echo $CUDA_VERSION | cut -d. -f1) && \
-    apt update -y && \
-    apt install -y --no-install-recommends \
+    apt-get update -y && \
+    apt-get install -y --no-install-recommends \
         build-essential \
         cuda-nvcc-${CUDA_VERSION_DASH} \
         cuda-cudart-${CUDA_VERSION_DASH} \
@@ -38,9 +38,6 @@ ENV UV_LINK_MODE=copy
 
 WORKDIR /yasha
 
-# Copy dependency manifests and workspace members so uv can resolve and
-# pre-install packages during the image build.  At runtime the dev container
-# bind-mounts the full host repo over /yasha, shadowing everything below.
 ADD ./pyproject.toml pyproject.toml
 ADD ./README.md README.md
 ADD ./uv.lock uv.lock
@@ -63,37 +60,32 @@ RUN uv python install ${PYTHON_VERSION}
 
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
 
+# ---------------------------------------------------------------------------
+# Development target
+# ---------------------------------------------------------------------------
+FROM base AS dev
+
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --extra dev
 
-WORKDIR /
-COPY <<EOF start.sh
-#!/bin/bash
+ADD ./scripts/start_ray.sh /yasha/scripts/start_ray.sh
+RUN chmod +x /yasha/scripts/start_ray.sh
 
-EXTRAS=""
-if [ -n "\${YASHA_PLUGINS}" ]; then
-    for plugin in \$(echo "\${YASHA_PLUGINS}" | tr ',' ' '); do
-        EXTRAS="\$EXTRAS --extra \$plugin"
-    done
-fi
-uv sync --project /yasha --locked \$EXTRAS
-cd /yasha && uv run pre-commit install
+CMD ["/bin/bash"]
 
-if [ "\${YASHA_USE_EXISTING_RAY_CLUSTER}" != "true" ]; then
-    METRICS_FLAG=""
-    if [ "\${YASHA_METRICS}" = "true" ]; then
-        METRICS_FLAG="--metrics-export-port=\${RAY_METRICS_EXPORT_PORT}"
-    fi
-    cd /yasha && ray start --head --port=\${RAY_REDIS_PORT} --dashboard-host=0.0.0.0 --num-cpus=\${RAY_HEAD_CPU_NUM} --num-gpus=\${RAY_HEAD_GPU_NUM} --disable-usage-stats \${METRICS_FLAG}
-    if ! ray status --address=\${RAY_CLUSTER_ADDRESS}:\${RAY_REDIS_PORT}; then
-        echo "ray cluster failed to start"
-        exit 1
-    fi
-fi
-/bin/bash
+# ---------------------------------------------------------------------------
+# Production target
+# ---------------------------------------------------------------------------
+FROM base AS prod
 
-EOF
-RUN chmod +x start.sh
+ADD ./start.py start.py
+ADD ./yasha yasha
+ADD ./config config
+ADD ./scripts scripts
 
-WORKDIR /
-CMD ["uv", "run", "--active", "bash", "start.sh"]
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-install-project
+
+RUN chmod +x /yasha/scripts/start_ray.sh /yasha/scripts/start.sh
+
+CMD ["uv", "run", "--active", "bash", "/yasha/scripts/start.sh"]
