@@ -6,7 +6,7 @@ Future development priorities for making Yasha production-ready, organized by se
 
 ### Security
 
-- [ ] **API authentication layer** — API key or OAuth/JWT-based auth at the gateway level (currently zero auth, relies on network isolation)
+- [x] **API authentication layer** — API key auth at the gateway level via `YASHA_API_KEYS` env var; OpenAI-compatible `Authorization: Bearer <key>` header
 - [ ] **Rate limiting** — per-user/IP/model throttling to prevent GPU resource monopolization
 - [ ] **Input size limits** — max prompt length and max_tokens enforcement at the gateway to prevent GPU OOM
 - [ ] **Lock down CORS** — replace wildcard `*` origins with environment-specific allowed origins

@@ -19,6 +19,7 @@ from yasha.metrics import (
     REQUEST_TOTAL,
     STREAM_CHUNKS_TOTAL,
 )
+from yasha.openai.auth import ApiKeyMiddleware, get_api_keys
 from yasha.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -47,6 +48,13 @@ def build_app():
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    api_keys = get_api_keys()
+    if api_keys:
+        app.add_middleware(ApiKeyMiddleware, api_keys=api_keys)
+        logger.info("API key authentication enabled (%d key(s))", len(api_keys))
+    else:
+        logger.warning("API key authentication disabled (YASHA_API_KEYS not set)")
 
     @app.exception_handler(HTTPException)
     async def log_http_exception(request: Request, exc: HTTPException):
