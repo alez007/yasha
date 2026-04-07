@@ -63,6 +63,7 @@ Example:
 | `HF_TOKEN` | HuggingFace access token | — |
 | `YASHA_PLUGINS` | Comma-separated list of plugins to install at startup (e.g. `kokoro,orpheus`) | — |
 | `YASHA_CACHE_DIR` | Model cache directory (HuggingFace + plugins) | `/yasha/.cache/models` |
+| `YASHA_MAX_REQUEST_BODY_BYTES` | Maximum allowed request body size in bytes | `52428800` (50 MB) |
 | `RAY_REDIS_PORT` | Ray GCS server port | `6379` |
 | `RAY_DASHBOARD_PORT` | Ray dashboard port | `8265` |
 | `RAY_HEAD_CPU_NUM` | CPUs allocated to Ray head | `2` |

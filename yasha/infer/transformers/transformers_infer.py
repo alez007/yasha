@@ -6,29 +6,24 @@ from typing import ClassVar, cast
 import torch
 from starlette.requests import Request
 
+from yasha.infer.base_infer import BaseInfer
 from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, YashaModelConfig
 from yasha.infer.transformers.openai.serving_speech import OpenAIServingSpeech
 from yasha.openai.protocol import (
-    ChatCompletionRequest,
-    EmbeddingRequest,
-    ErrorInfo,
     ErrorResponse,
-    ImageGenerationRequest,
     RawSpeechResponse,
     SpeechRequest,
-    TranscriptionRequest,
-    TranslationRequest,
 )
 from yasha.plugins.base_plugin import BasePluginTransformers, PluginProtoTransformers
 
 logger = logging.getLogger("ray")
 
 
-class TransformersInfer:
+class TransformersInfer(BaseInfer):
     _transformers_usecases: ClassVar[list[ModelUsecase]] = [ModelUsecase.tts]
 
     def __init__(self, model_config: YashaModelConfig):
-        self.model_config = model_config
+        super().__init__(model_config)
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
         if torch.cuda.is_available() and model_config.num_gpus < 1.0:
@@ -46,11 +41,9 @@ class TransformersInfer:
             RESOURCE_CLEANUP_ERRORS_TOTAL.inc(tags={"model": self.model_config.name, "component": "transformers_model"})
 
     async def start(self):
-        self.serving_chat = None
-        self.serving_embedding = None
-        self.serving_transcription = None
-        self.serving_translation = None
         self.serving_speech = await self.init_serving_speech()
+        if self.serving_speech and self.serving_speech.speech_model:
+            self._set_max_context_length(self.serving_speech.speech_model.max_context_length())
 
     async def init_serving_speech(self) -> OpenAIServingSpeech | None:
         logger.info("init serving speech with model: %s", self.model_config.name)
@@ -65,44 +58,9 @@ class TransformersInfer:
 
         return OpenAIServingSpeech(speech_model=speech_model) if self.model_config.usecase is ModelUsecase.tts else None
 
-    async def create_chat_completion(
-        self, _request: ChatCompletionRequest, _raw_request: DisconnectProxy
-    ) -> ErrorResponse:
-        return ErrorResponse(
-            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
-        )
-
-    async def create_embedding(self, _request: EmbeddingRequest, _raw_request: DisconnectProxy) -> ErrorResponse:
-        return ErrorResponse(
-            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
-        )
-
-    async def create_transcription(
-        self, _audio_data: bytes, _request: TranscriptionRequest, _raw_request: DisconnectProxy
-    ) -> ErrorResponse:
-        return ErrorResponse(
-            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
-        )
-
-    async def create_translation(
-        self, _audio_data: bytes, _request: TranslationRequest, _raw_request: DisconnectProxy
-    ) -> ErrorResponse:
-        return ErrorResponse(
-            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
-        )
-
     async def create_speech(
         self, request: SpeechRequest, raw_request: DisconnectProxy
     ) -> ErrorResponse | RawSpeechResponse | AsyncGenerator[str, None]:
         if self.serving_speech is None:
-            return ErrorResponse(
-                error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
-            )
+            return await super().create_speech(request, raw_request)
         return await self.serving_speech.create_speech(request, cast("Request", raw_request))
-
-    async def create_image_generation(
-        self, _request: ImageGenerationRequest, _raw_request: DisconnectProxy
-    ) -> ErrorResponse:
-        return ErrorResponse(
-            error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
-        )

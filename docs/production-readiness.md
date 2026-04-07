@@ -8,7 +8,7 @@ Future development priorities for making Yasha production-ready, organized by se
 
 - [x] **API authentication layer** — API key auth at the gateway level via `YASHA_API_KEYS` env var; OpenAI-compatible `Authorization: Bearer <key>` header
 - [ ] **Rate limiting** — per-user/IP/model throttling to prevent GPU resource monopolization
-- [ ] **Input size limits** — max prompt length and max_tokens enforcement at the gateway to prevent GPU OOM
+- [x] **Input size limits** — coarse payload size limit at the gateway (`YASHA_MAX_REQUEST_BODY_BYTES`, default 50 MB); per-model `max_context_length` validation in every loader before inference
 - [ ] **Lock down CORS** — replace wildcard `*` origins with environment-specific allowed origins
 - [ ] **Plugin sandboxing** — plugins run with full server privileges; add signature verification or sandboxing
 
@@ -96,7 +96,7 @@ Future development priorities for making Yasha production-ready, organized by se
 | Architecture & Design        | 8/10    | 9/10   |
 | Monitoring (metrics)         | 9/10    | 9/10   |
 | Monitoring (alerting + logs) | 4/10    | 8/10   |
-| Security                     | 3/10    | 8/10   |
+| Security                     | 4/10    | 8/10   |
 | Resilience                   | 5/10    | 8/10   |
 | Testing                      | 3/10    | 7/10   |
 | DevOps Experience            | 5/10    | 8/10   |
