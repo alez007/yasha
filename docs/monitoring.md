@@ -7,15 +7,17 @@ Yasha exposes Prometheus metrics through a single port via Ray's metrics agent. 
 ```
 Prometheus  ──scrape──>  Ray Metrics Agent (:8079)
                               |
-                              |-- ray_*          Ray cluster: GPU, CPU, memory, actors
-                              |-- serve_*        Ray Serve: HTTP requests, latency, replicas
-                              |-- vllm:*         vLLM engine: KV cache, TTFT, tokens, queue
-                              |-- yasha:*        Custom: per-model latency, errors, load time
+                              |-- ray_node_*          Ray cluster: GPU, CPU, memory
+                              |-- ray_serve_*         Ray Serve: HTTP requests, latency, replicas
+                              |-- ray_vllm_*          vLLM engine: KV cache, TTFT, tokens, queue
+                              |-- ray_yasha_*         Custom: per-model latency, errors, load time
 ```
+
+> **Note:** All metrics are prefixed with `ray_` by Ray's metrics agent. vLLM metric names are also sanitized (`:` → `_`), so e.g. the vLLM-native `vllm:kv_cache_usage_perc` becomes `ray_vllm_kv_cache_usage_perc`.
 
 ## Enabling Metrics
 
-Metrics are disabled by default. Set `YASHA_METRICS=true` to enable:
+Metrics are enabled by default. Set `YASHA_METRICS=false` to disable:
 
 ```bash
 docker run --rm --shm-size=8g --gpus all \
@@ -28,10 +30,10 @@ docker run --rm --shm-size=8g --gpus all \
 
 | Env Var | Default | Description |
 |---|---|---|
-| `YASHA_METRICS` | `false` | Master toggle. Enables all metrics and the Ray metrics export port. |
+| `YASHA_METRICS` | `true` | Master toggle. Enables all metrics and the Ray metrics export port. |
 | `RAY_METRICS_EXPORT_PORT` | `8079` | Port for the Ray metrics agent (only active when `YASHA_METRICS=true`). |
 
-When `YASHA_METRICS=false`, no metrics are collected and port 8079 is not exposed. Zero overhead.
+Set `YASHA_METRICS=false` to disable all metrics collection. When disabled, port 8079 is not exposed and there is zero overhead.
 
 ## Connecting to Prometheus
 
@@ -68,12 +70,12 @@ The dashboard has 6 rows:
 
 | Row | What it shows | Metric sources |
 |---|---|---|
-| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `yasha:*` |
-| **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed) | `yasha:*` |
-| **vLLM Engine** | KV cache usage, TTFT, inter-token latency, token throughput, queue depth, preemptions, prefix cache hit rate | `vllm:*` |
+| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_yasha_*` |
+| **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed) | `ray_yasha_*` |
+| **vLLM Engine** | KV cache usage, TTFT, inter-token latency, token throughput, queue depth, preemptions, prefix cache hit rate | `ray_vllm_*` |
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory | `ray_node_*` |
-| **Ray Serve** | Replica health, processing queries, deployment latency, health check failures | `serve_*` |
-| **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `yasha:*` |
+| **Ray Serve** | Health check latency, request count, deployment processing latency, HTTP request latency | `ray_serve_*` |
+| **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_yasha_*` |
 
 ## Health Check
 
@@ -86,70 +88,70 @@ curl http://localhost:8000/health
 
 ## Yasha Metrics Reference
 
-All custom metrics use the `yasha:` prefix and are exported via `ray.serve.metrics`.
+All custom metrics are defined via `ray.serve.metrics` and exported through Ray's metrics agent with a `ray_` prefix.
 
 ### Gateway
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
-| `yasha:request_total` | Counter | `model`, `endpoint`, `status` | Total requests by model and API method |
-| `yasha:request_duration_seconds` | Histogram | `model`, `endpoint` | End-to-end request latency |
-| `yasha:request_errors_total` | Counter | `model`, `endpoint`, `error_type` | Errors: `inference_error`, `stream_error`, `unhandled` |
-| `yasha:request_in_progress` | Gauge | `model`, `endpoint` | Currently processing requests |
-| `yasha:client_disconnects_total` | Counter | `model`, `endpoint` | Client disconnected before response completed |
-| `yasha:stream_chunks_total` | Counter | `model` | Streaming chunks emitted |
+| `ray_yasha_request_total` | Counter | `model`, `endpoint`, `status` | Total requests by model and API method |
+| `ray_yasha_request_duration_seconds` | Histogram | `model`, `endpoint` | End-to-end request latency |
+| `ray_yasha_request_errors_total` | Counter | `model`, `endpoint`, `error_type` | Errors: `inference_error`, `stream_error`, `unhandled` |
+| `ray_yasha_request_in_progress` | Gauge | `model`, `endpoint` | Currently processing requests |
+| `ray_yasha_client_disconnects_total` | Counter | `model`, `endpoint` | Client disconnected before response completed |
+| `ray_yasha_stream_chunks_total` | Counter | `model` | Streaming chunks emitted |
 
 ### Model Deployment
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
-| `yasha:model_load_duration_seconds` | Histogram | `model`, `loader` | Time to initialize a model |
-| `yasha:model_load_failures_total` | Counter | `model`, `loader` | Failed model initializations |
-| `yasha:models_loaded` | Gauge | | Number of loaded and ready models |
+| `ray_yasha_model_load_duration_seconds` | Histogram | `model`, `loader` | Time to initialize a model |
+| `ray_yasha_model_load_failures_total` | Counter | `model`, `loader` | Failed model initializations |
+| `ray_yasha_models_loaded` | Gauge | | Number of loaded and ready models |
 
 ### Inference Timing
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
-| `yasha:generation_duration_seconds` | Histogram | `model` | Chat/text generation latency |
-| `yasha:tts_generation_duration_seconds` | Histogram | `model` | Text-to-speech latency |
-| `yasha:image_generation_duration_seconds` | Histogram | `model` | Image generation latency |
-| `yasha:transcription_duration_seconds` | Histogram | `model` | Speech-to-text latency |
-| `yasha:embedding_duration_seconds` | Histogram | `model` | Embedding latency |
+| `ray_yasha_generation_duration_seconds` | Histogram | `model` | Chat/text generation latency |
+| `ray_yasha_tts_generation_duration_seconds` | Histogram | `model` | Text-to-speech latency |
+| `ray_yasha_image_generation_duration_seconds` | Histogram | `model` | Image generation latency |
+| `ray_yasha_transcription_duration_seconds` | Histogram | `model` | Speech-to-text latency |
+| `ray_yasha_embedding_duration_seconds` | Histogram | `model` | Embedding latency |
 
 ### Resource Cleanup
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
-| `yasha:resource_cleanup_errors_total` | Counter | `model`, `component` | Errors during engine/model cleanup |
+| `ray_yasha_resource_cleanup_errors_total` | Counter | `model`, `component` | Errors during engine/model cleanup |
 
 ## Built-in Metrics from vLLM and Ray
 
 These are automatically available when `YASHA_METRICS=true` — no additional configuration needed.
 
-### vLLM (`vllm:*`)
+### vLLM (`ray_vllm_*`)
 
-Key metrics for LLM inference monitoring:
+vLLM metrics are routed through Ray's metrics agent via `RayPrometheusStatLogger`. The native `vllm:` prefix is sanitized to `ray_vllm_`.
 
-- `vllm:num_requests_running` / `vllm:num_requests_waiting` — queue depth
-- `vllm:kv_cache_usage_perc` — KV cache utilization (0-1)
-- `vllm:time_to_first_token_seconds` — TTFT histogram
-- `vllm:inter_token_latency_seconds` — ITL histogram
-- `vllm:e2e_request_latency_seconds` — end-to-end latency histogram
-- `vllm:request_queue_time_seconds` — time spent waiting in queue
-- `vllm:prompt_tokens` / `vllm:generation_tokens` — token throughput counters
-- `vllm:num_preemptions` — memory pressure signal
-- `vllm:prefix_cache_hits` / `vllm:prefix_cache_queries` — cache efficiency
+- `ray_vllm_num_requests_running` / `ray_vllm_num_requests_waiting` — queue depth
+- `ray_vllm_kv_cache_usage_perc` — KV cache utilization (0-1)
+- `ray_vllm_time_to_first_token_seconds` — TTFT histogram
+- `ray_vllm_inter_token_latency_seconds` — ITL histogram
+- `ray_vllm_e2e_request_latency_seconds` — end-to-end latency histogram
+- `ray_vllm_request_queue_time_seconds` — time spent waiting in queue
+- `ray_vllm_prompt_tokens_total` / `ray_vllm_generation_tokens_total` — token throughput counters
+- `ray_vllm_num_preemptions_total` — memory pressure signal
+- `ray_vllm_prefix_cache_hits_total` / `ray_vllm_prefix_cache_queries_total` — cache efficiency
 
 Full reference: [vLLM Metrics Documentation](https://docs.vllm.ai/en/stable/design/metrics/)
 
-### Ray Serve (`serve_*`)
+### Ray Serve (`ray_serve_*`)
 
-- `serve_num_http_requests` — request count by route, method, status
-- `serve_http_request_latency_ms` — request latency histogram
-- `serve_num_ongoing_http_requests` — in-flight requests
-- `serve_deployment_processing_latency_ms` — per-replica processing time
-- `serve_deployment_replica_health_check` — replica health status
+- `ray_serve_num_http_requests_total` — request count by route, method, status
+- `ray_serve_http_request_latency_ms` — request latency histogram
+- `ray_serve_handle_request_counter_total` — request count by deployment
+- `ray_serve_deployment_processing_latency_ms` — per-replica processing time
+- `ray_serve_health_check_latency_ms` — health check latency histogram
 
 Full reference: [Ray Serve Monitoring](https://docs.ray.io/en/latest/serve/monitoring.html)
 

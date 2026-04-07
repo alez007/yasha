@@ -8,7 +8,7 @@ conditional logic.
 
 import os
 
-_ENABLED = os.environ.get("YASHA_METRICS", "false").lower() == "true"
+_ENABLED = os.environ.get("YASHA_METRICS", "true").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # No-op metric stubs (used when metrics are disabled)
@@ -80,86 +80,86 @@ def _build_metrics():
     return {
         # -- Gateway layer --
         "request_total": Counter(
-            "yasha:request_total",
+            "yasha_request_total",
             description="Total inference requests by model and endpoint.",
             tag_keys=("model", "endpoint", "status"),  # type: ignore[arg-type]
         ),
         "request_duration_seconds": Histogram(
-            "yasha:request_duration_seconds",
+            "yasha_request_duration_seconds",
             description="End-to-end request latency (gateway to response) in seconds.",
             boundaries=_REQUEST_LATENCY_BOUNDARIES,
             tag_keys=("model", "endpoint"),  # type: ignore[arg-type]
         ),
         "request_errors_total": Counter(
-            "yasha:request_errors_total",
+            "yasha_request_errors_total",
             description="Total inference errors by model, endpoint, and error type.",
             tag_keys=("model", "endpoint", "error_type"),  # type: ignore[arg-type]
         ),
         "request_in_progress": Gauge(
-            "yasha:request_in_progress",
+            "yasha_request_in_progress",
             description="Number of requests currently being processed per model.",
             tag_keys=("model", "endpoint"),  # type: ignore[arg-type]
         ),
         "client_disconnects_total": Counter(
-            "yasha:client_disconnects_total",
+            "yasha_client_disconnects_total",
             description="Total client disconnects during inference.",
             tag_keys=("model", "endpoint"),  # type: ignore[arg-type]
         ),
         "stream_chunks_total": Counter(
-            "yasha:stream_chunks_total",
+            "yasha_stream_chunks_total",
             description="Total streaming chunks emitted.",
             tag_keys=("model",),
         ),
         # -- Model deployment layer --
         "model_load_duration_seconds": Histogram(
-            "yasha:model_load_duration_seconds",
+            "yasha_model_load_duration_seconds",
             description="Model initialization time in seconds.",
             boundaries=_MODEL_LOAD_BOUNDARIES,
             tag_keys=("model", "loader"),  # type: ignore[arg-type]
         ),
         "model_load_failures_total": Counter(
-            "yasha:model_load_failures_total",
+            "yasha_model_load_failures_total",
             description="Total failed model deployments.",
             tag_keys=("model", "loader"),  # type: ignore[arg-type]
         ),
         "models_loaded": Gauge(
-            "yasha:models_loaded",
+            "yasha_models_loaded",
             description="Number of models currently loaded.",
         ),
         # -- Inference timing --
         "generation_duration_seconds": Histogram(
-            "yasha:generation_duration_seconds",
+            "yasha_generation_duration_seconds",
             description="Chat/text generation latency in seconds.",
             boundaries=_REQUEST_LATENCY_BOUNDARIES,
             tag_keys=("model",),
         ),
         "tts_generation_duration_seconds": Histogram(
-            "yasha:tts_generation_duration_seconds",
+            "yasha_tts_generation_duration_seconds",
             description="TTS inference latency in seconds.",
             boundaries=_REQUEST_LATENCY_BOUNDARIES,
             tag_keys=("model",),
         ),
         "image_generation_duration_seconds": Histogram(
-            "yasha:image_generation_duration_seconds",
+            "yasha_image_generation_duration_seconds",
             description="Image generation latency in seconds.",
             boundaries=_REQUEST_LATENCY_BOUNDARIES,
             tag_keys=("model",),
         ),
         "transcription_duration_seconds": Histogram(
-            "yasha:transcription_duration_seconds",
+            "yasha_transcription_duration_seconds",
             description="Speech-to-text latency in seconds.",
             boundaries=_REQUEST_LATENCY_BOUNDARIES,
             tag_keys=("model",),
         ),
         "embedding_duration_seconds": Histogram(
-            "yasha:embedding_duration_seconds",
+            "yasha_embedding_duration_seconds",
             description="Embedding inference latency in seconds.",
             boundaries=_REQUEST_LATENCY_BOUNDARIES,
             tag_keys=("model",),
         ),
         # -- Resource cleanup --
         "resource_cleanup_errors_total": Counter(
-            "yasha:resource_cleanup_errors_total",
+            "yasha_resource_cleanup_errors_total",
             description="Errors during resource cleanup (engine shutdown, memory release).",
             tag_keys=("model", "component"),  # type: ignore[arg-type]
         ),
