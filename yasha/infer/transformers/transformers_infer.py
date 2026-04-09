@@ -59,6 +59,17 @@ class TransformersInfer(BaseInfer):
 
         return OpenAIServingSpeech(speech_model=speech_model) if self.model_config.usecase is ModelUsecase.tts else None
 
+    async def warmup(self) -> None:
+        if self.serving_speech is None:
+            return
+        logger.info("Warming up transformers TTS model: %s", self.model_config.name)
+        request = SpeechRequest(model=self.model_config.name, input="warmup", voice="default")
+        result = await self.create_speech(request, DisconnectProxy(None, {}))
+        if isinstance(result, AsyncGenerator):
+            async for _ in result:
+                pass
+        logger.info("Warmup TTS done for %s", self.model_config.name)
+
     async def create_speech(
         self, request: SpeechRequest, raw_request: DisconnectProxy
     ) -> ErrorResponse | RawSpeechResponse | AsyncGenerator[str, None]:

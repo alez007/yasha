@@ -1,4 +1,5 @@
 import logging
+import struct
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 
@@ -27,6 +28,25 @@ _NOT_SUPPORTED = ErrorResponse(
     error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
 )
 
+# 44-byte WAV header + 2 bytes of silence (one 16-bit sample at 16 kHz mono)
+_MINIMAL_WAV_HEADER = struct.pack(
+    "<4sI4s4sIHHIIHH4sI",
+    b"RIFF",
+    36 + 2,
+    b"WAVE",  # RIFF chunk
+    b"fmt ",
+    16,
+    1,
+    1,
+    16000,
+    32000,
+    2,
+    16,  # fmt sub-chunk: PCM, mono, 16 kHz, 16-bit
+    b"data",
+    2,  # data sub-chunk: 2 bytes
+)
+MINIMAL_WAV = _MINIMAL_WAV_HEADER + b"\x00\x00"
+
 
 class BaseInfer(ABC):
     def __init__(self, model_config: YashaModelConfig):
@@ -45,6 +65,15 @@ class BaseInfer(ABC):
 
     @abstractmethod
     async def start(self) -> None: ...
+
+    @abstractmethod
+    async def warmup(self) -> None:
+        """Run a minimal inference pass to warm up the model (CUDA kernels, caches, etc.).
+
+        Subclasses should override this to send a tiny dummy request through
+        their actual inference path. The default is a no-op for loaders that
+        don't need warmup.
+        """
 
     async def create_chat_completion(
         self, request: ChatCompletionRequest, raw_request: DisconnectProxy

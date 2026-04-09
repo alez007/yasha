@@ -1,7 +1,9 @@
+import io
 import logging
 from collections.abc import AsyncGenerator
 from typing import ClassVar, cast
 
+from fastapi import UploadFile
 from starlette.requests import Request
 from starlette.responses import Response
 from vllm.config.model import ModelDType
@@ -17,12 +19,13 @@ from vllm.entrypoints.serve.render.serving import OpenAIServingRender
 from vllm.usage.usage_lib import UsageContext
 from vllm.v1.engine.async_llm import AsyncLLM
 
-from yasha.infer.base_infer import BaseInfer
+from yasha.infer.base_infer import MINIMAL_WAV, BaseInfer
 from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, VllmEngineConfig, YashaModelConfig
 from yasha.metrics import _ENABLED as _METRICS_ENABLED
 from yasha.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
+    EmbeddingCompletionRequest,
     EmbeddingRequest,
     ErrorResponse,
     TranscriptionRequest,
@@ -111,6 +114,50 @@ class VllmInfer(BaseInfer):
         self.serving_embedding = await self.init_serving_embeding()
         self.serving_transcription = await self.init_serving_transcription()
         self.serving_translation = await self.init_serving_translation()
+
+    async def warmup(self) -> None:
+        logger.info("Warming up vllm model: %s", self.model_config.name)
+        dummy_proxy = DisconnectProxy(None, {})
+
+        if self.serving_chat is not None:
+            request = ChatCompletionRequest(
+                model=self.model_config.name, messages=[{"role": "user", "content": "warmup"}], max_tokens=1, seed=-1
+            )
+            result = await self.create_chat_completion(request, dummy_proxy)
+            if isinstance(result, AsyncGenerator):
+                async for _ in result:
+                    pass
+            logger.info("Warmup chat completion done for %s", self.model_config.name)
+
+        elif self.serving_embedding is not None:
+            request = EmbeddingCompletionRequest(
+                model=self.model_config.name,
+                input="warmup",
+            )
+            await self.create_embedding(request, dummy_proxy)
+            logger.info("Warmup embedding done for %s", self.model_config.name)
+
+        elif self.serving_transcription is not None:
+            request = TranscriptionRequest(
+                model=self.model_config.name, file=UploadFile(file=io.BytesIO(MINIMAL_WAV)), seed=-1
+            )
+            audio_data = MINIMAL_WAV
+            result = await self.create_transcription(audio_data, request, dummy_proxy)
+            if isinstance(result, AsyncGenerator):
+                async for _ in result:
+                    pass
+            logger.info("Warmup transcription done for %s", self.model_config.name)
+
+        elif self.serving_translation is not None:
+            request = TranslationRequest(
+                model=self.model_config.name, file=UploadFile(file=io.BytesIO(MINIMAL_WAV)), seed=-1
+            )
+            audio_data = MINIMAL_WAV
+            result = await self.create_translation(audio_data, request, dummy_proxy)
+            if isinstance(result, AsyncGenerator):
+                async for _ in result:
+                    pass
+            logger.info("Warmup translation done for %s", self.model_config.name)
 
     async def init_serving_chat(self) -> OpenAIServingChat | None:
         logger.info("init_serving_chat: %s, %s", self.supported_tasks, self.model_config.usecase)
