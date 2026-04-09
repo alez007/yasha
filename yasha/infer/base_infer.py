@@ -33,6 +33,12 @@ class BaseInfer(ABC):
         self.model_config = model_config
         self.max_context_length: int | None = None
 
+    def _get_memory_fraction(self) -> float | None:
+        """Return the GPU memory fraction if explicitly set and < 1.0, otherwise None."""
+        if self.model_config.num_gpus > 0 and self.model_config.num_gpus < 1.0:
+            return self.model_config.num_gpus
+        return None
+
     def _set_max_context_length(self, length: int | None) -> None:
         self.max_context_length = length
         logger.info("max_context_length for %s: %s", self.model_config.name, self.max_context_length)
