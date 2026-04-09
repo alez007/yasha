@@ -49,6 +49,7 @@ class ModelDeployment:
                 self.infer = CustomInfer(config)
 
             await self.infer.start()
+            await self.infer.warmup()
         except Exception:
             MODEL_LOAD_FAILURES_TOTAL.inc(tags={"model": config.name, "loader": config.loader.value})
             raise
