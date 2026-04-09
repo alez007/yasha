@@ -42,6 +42,12 @@ class YashaTextFormatter(logging.Formatter):
         return base
 
 
+TRACE = 5
+logging.addLevelName(TRACE, "TRACE")
+
+_LIB_LOGGERS = ("ray", "ray.serve", "vllm", "transformers", "diffusers")
+
+
 def configure_logging() -> None:
     global _configured
     if _configured:
@@ -51,17 +57,19 @@ def configure_logging() -> None:
     level_name = os.environ.get("YASHA_LOG_LEVEL", "INFO").upper()
     log_format = os.environ.get("YASHA_LOG_FORMAT", "text").lower()
 
-    level = getattr(logging, level_name, logging.INFO)
+    trace_mode = level_name == "TRACE"
+    app_level = logging.DEBUG if trace_mode else getattr(logging, level_name, logging.INFO)
+    lib_level = logging.DEBUG if trace_mode else logging.WARNING
 
     root_logger = logging.getLogger("yasha")
-    root_logger.setLevel(level)
+    root_logger.setLevel(app_level)
     root_logger.propagate = False
 
     if root_logger.handlers:
         return
 
     handler = logging.StreamHandler()
-    handler.setLevel(level)
+    handler.setLevel(app_level)
 
     if log_format == "json":
         handler.setFormatter(YashaJsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S"))
@@ -70,6 +78,9 @@ def configure_logging() -> None:
 
     handler.addFilter(RequestIdFilter())
     root_logger.addHandler(handler)
+
+    for name in _LIB_LOGGERS:
+        logging.getLogger(name).setLevel(lib_level)
 
 
 def get_logger(name: str) -> logging.Logger:
