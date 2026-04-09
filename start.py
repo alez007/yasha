@@ -31,10 +31,6 @@ def build_actor_options(config: YashaModelConfig) -> dict:
 
     if config.num_gpus == 0:
         num_gpus = 0
-    elif isinstance(config.use_gpu, str):
-        # Named resource provides scheduling exclusivity — no GPU units needed on the
-        # main actor. TP worker placement is handled by VLLM_RAY_PER_WORKER_GPUS.
-        num_gpus = 0
     elif tp > 1 and tp_backend == "mp":
         # mp backend: the main actor forks TP worker subprocesses, each owning one
         # physical GPU. Allocate tp whole units so Ray exposes all devices via
@@ -50,10 +46,10 @@ def build_actor_options(config: YashaModelConfig) -> dict:
             )
         num_gpus = float(tp)
     elif tp > 1:
-        # ray backend without named resource: vLLM spawns tp worker Ray actors that
-        # each claim their own fractional GPU. The outer actor is a coordinator only
-        # and needs no GPU units. VLLM_RAY_PER_WORKER_GPUS tells vLLM what fraction
-        # each worker actor should request.
+        # ray backend: vLLM spawns tp worker Ray actors that each claim their own
+        # fractional GPU. The outer actor is a coordinator only and needs no GPU
+        # units. VLLM_RAY_PER_WORKER_GPUS tells vLLM what fraction each worker
+        # actor should request.
         num_gpus = 0
     else:
         num_gpus = config.num_gpus
@@ -61,15 +57,11 @@ def build_actor_options(config: YashaModelConfig) -> dict:
     options: dict = {"num_gpus": num_gpus, "num_cpus": config.num_cpus}
 
     env_vars = dict(_cache_env_vars)
-    if isinstance(config.use_gpu, int):
-        env_vars["CUDA_VISIBLE_DEVICES"] = str(config.use_gpu)
-    elif isinstance(config.use_gpu, str):
-        options["resources"] = {config.use_gpu: 1}
 
     if tp > 1 and tp_backend != "mp" and config.num_gpus > 0:
-        # ray backend (named resource or plain): set per-worker GPU fraction so vLLM
-        # worker actors claim the right amount. Only override when num_gpus is
-        # explicitly set; otherwise let vLLM use its built-in default (0.9/worker).
+        # ray backend: set per-worker GPU fraction so vLLM worker actors claim the
+        # right amount. Only override when num_gpus is explicitly set; otherwise
+        # let vLLM use its built-in default (0.9/worker).
         env_vars["VLLM_RAY_PER_WORKER_GPUS"] = str(config.num_gpus)
 
     options["runtime_env"] = {"env_vars": env_vars}
@@ -112,7 +104,7 @@ def main():
             ensure_plugin(config.plugin)
 
     # Schedule TP>1 models first so they claim whole GPU units before fractional
-    # models consume the pool (relevant when use_gpu is not a named resource).
+    # models consume the pool.
     sorted_models = sorted(
         yml_conf.models,
         key=lambda c: c.vllm_engine_kwargs.tensor_parallel_size if c.vllm_engine_kwargs else 1,
