@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from http import HTTPStatus
 from typing import Annotated
@@ -9,6 +10,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from ray import serve
 from ray.serve.handle import DeploymentHandle
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 
 from yasha.infer.infer_config import ModelUsecase, RequestWatcher
 from yasha.metrics import (
@@ -38,6 +41,23 @@ from yasha.openai.protocol import (
 
 logger = logging.getLogger("ray.serve")
 
+_DEFAULT_MAX_BODY_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+class PayloadSizeLimitMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app: ASGIApp, max_bytes: int = _DEFAULT_MAX_BODY_BYTES):
+        super().__init__(app)
+        self.max_bytes = max_bytes
+
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length is not None and int(content_length) > self.max_bytes:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"Request body too large (limit: {self.max_bytes} bytes)"},
+            )
+        return await call_next(request)
+
 
 def build_app():
     app = FastAPI()
@@ -48,6 +68,10 @@ def build_app():
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    max_body_bytes = int(os.environ.get("YASHA_MAX_REQUEST_BODY_BYTES", _DEFAULT_MAX_BODY_BYTES))
+    app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=max_body_bytes)
+    logger.info("Payload size limit: %d bytes", max_body_bytes)
 
     api_keys = get_api_keys()
     if api_keys:

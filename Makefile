@@ -3,7 +3,7 @@ MAJOR   := $(shell echo $(VERSION) | cut -d. -f1)
 MINOR   := $(shell echo $(VERSION) | cut -d. -f2)
 PATCH   := $(shell echo $(VERSION) | cut -d. -f3)
 
-.PHONY: test lint release-patch release-minor release-major _release
+.PHONY: test lint lint-fix release-patch release-minor release-major _release
 
 test:
 	uv run pytest tests/ -v
@@ -12,6 +12,10 @@ lint:
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run pyright
+
+lint-fix:
+	uv run ruff check --fix .
+	uv run ruff format .
 
 release-patch:
 	$(eval NEW_VERSION := $(MAJOR).$(MINOR).$(shell echo $$(($(PATCH)+1))))

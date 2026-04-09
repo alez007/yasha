@@ -5,6 +5,7 @@ from typing import Any
 
 from ray import serve
 
+from yasha.infer.base_infer import BaseInfer
 from yasha.infer.custom.custom_infer import CustomInfer
 from yasha.infer.diffusers.diffusers_infer import DiffusersInfer
 from yasha.infer.infer_config import DisconnectProxy, ModelLoader, YashaModelConfig
@@ -36,6 +37,7 @@ class ModelDeployment:
     async def __init__(self, config: YashaModelConfig):
         self.config = config
         start = time.monotonic()
+        self.infer: BaseInfer
         try:
             if config.loader == ModelLoader.vllm:
                 self.infer = VllmInfer(config)

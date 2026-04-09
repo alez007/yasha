@@ -142,7 +142,7 @@ See the full [Production Readiness Plan](docs/production-readiness.md) for detai
 | Architecture & Design        | 8/10  | Add K8s manifests, improve health checks |
 | Monitoring (metrics)         | 9/10  | Excellent — Prometheus + Grafana ready |
 | Monitoring (alerting + logs) | 4/10  | No alerting rules, no structured logging |
-| Security                     | 3/10  | No auth, no rate limiting, open CORS |
+| Security                     | 4/10  | No rate limiting, open CORS, no plugin sandboxing |
 | Resilience                   | 5/10  | Good shutdown, weak self-healing |
 | Testing                      | 3/10  | Config tests only, no integration/API tests |
 | DevOps Experience            | 5/10  | Good docs, no K8s/Helm, no runbooks |
@@ -150,9 +150,7 @@ See the full [Production Readiness Plan](docs/production-readiness.md) for detai
 
 ### Critical items before production
 
-- API authentication layer (API keys or OAuth)
 - Rate limiting per user/model
-- Input size limits at the gateway
 - Detailed readiness/liveness probes (current `/health` is a no-op)
 - Integration and API test coverage
 - Kubernetes manifests and Helm chart
