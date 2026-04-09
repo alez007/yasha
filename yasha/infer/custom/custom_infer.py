@@ -1,5 +1,4 @@
 import importlib
-import logging
 from collections.abc import AsyncGenerator
 from typing import cast
 
@@ -8,6 +7,7 @@ from starlette.requests import Request
 from yasha.infer.base_infer import BaseInfer
 from yasha.infer.custom.openai.serving_speech import OpenAIServingSpeech
 from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, YashaModelConfig
+from yasha.logging import get_logger
 from yasha.openai.protocol import (
     ErrorResponse,
     RawSpeechResponse,
@@ -15,7 +15,7 @@ from yasha.openai.protocol import (
 )
 from yasha.plugins.base_plugin import BasePlugin, PluginProto
 
-logger = logging.getLogger("ray")
+logger = get_logger("infer.custom")
 
 
 class CustomInfer(BaseInfer):

@@ -1,13 +1,13 @@
-import logging
 from collections.abc import AsyncGenerator
 
 from fastapi import Request
 
+from yasha.logging import get_logger
 from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechRequest, create_error_response
 from yasha.plugins.base_plugin import BasePluginTransformers
 from yasha.utils import base_request_id
 
-logger = logging.getLogger("ray")
+logger = get_logger("infer.transformers.speech")
 
 
 class OpenAIServingSpeech:
