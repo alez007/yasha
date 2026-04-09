@@ -1,13 +1,13 @@
 import asyncio
 import base64
 import io
-import logging
 import time
 
 from diffusers.pipelines.auto_pipeline import AutoPipelineForText2Image
 from fastapi import Request
 
 from yasha.infer.infer_config import DiffusersConfig
+from yasha.logging import get_logger
 from yasha.openai.protocol import (
     ErrorResponse,
     ImageGenerationRequest,
@@ -17,7 +17,7 @@ from yasha.openai.protocol import (
 )
 from yasha.utils import base_request_id
 
-logger = logging.getLogger("ray")
+logger = get_logger("infer.diffusers.image")
 
 
 class OpenAIServingImage:

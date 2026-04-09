@@ -1,14 +1,14 @@
 import hmac
-import logging
 import os
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from yasha.logging import get_logger
 from yasha.metrics import AUTH_FAILURES_TOTAL
 
-logger = logging.getLogger("ray.serve")
+logger = get_logger("api.auth")
 
 _PUBLIC_PATHS = {"/health"}
 

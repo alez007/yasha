@@ -1,4 +1,3 @@
-import logging
 import os
 import time
 from http import HTTPStatus
@@ -14,6 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from yasha.infer.infer_config import ModelUsecase, RequestWatcher
+from yasha.logging import get_logger
 from yasha.metrics import (
     MODELS_LOADED,
     REQUEST_DURATION_SECONDS,
@@ -38,8 +38,9 @@ from yasha.openai.protocol import (
     TranslationRequest,
     TranslationResponse,
 )
+from yasha.utils import random_uuid
 
-logger = logging.getLogger("ray.serve")
+logger = get_logger("api")
 
 _DEFAULT_MAX_BODY_BYTES = 50 * 1024 * 1024  # 50 MB
 
@@ -119,6 +120,12 @@ class YashaAPI:
         self.models = {name: handle for name, (handle, _) in model_handles.items()}
         self.model_list = [OpenAiModelCard(id=name) for name in model_handles]
         MODELS_LOADED.set(len(self.models))  # all models are RUNNING by this point
+
+    @staticmethod
+    def _set_request_id(request_id: str) -> None:
+        from yasha.logging import request_id_var
+
+        request_id_var.set(request_id)
 
     def _get_handle(self, model_name: str | None) -> DeploymentHandle:
         if model_name is None or model_name not in self.models:
@@ -202,6 +209,8 @@ class YashaAPI:
 
     @app.post("/v1/chat/completions")
     async def create_chat_completion(self, request: ChatCompletionRequest, raw_request: Request):
+        req_id = random_uuid()
+        self._set_request_id(req_id)
         model = request.model or ""
         handle = self._get_handle(request.model)
         watcher = RequestWatcher(raw_request, model=model, endpoint="create_chat_completion")
@@ -215,69 +224,88 @@ class YashaAPI:
                 tc = msg["tool_calls"]
                 if not isinstance(tc, list):
                     msg["tool_calls"] = list(tc)  # type: ignore[arg-type]
-        logger.info("chat_completion actor input: %s", request.model_dump_json())
-        response_gen = handle.generate.options(stream=True).remote(request, headers, watcher.event)
-
-        async def _logged_gen():
-            async for chunk in response_gen:  # type: ignore[union-attr]
-                logger.info("chat_completion actor output: %s", chunk)
-                yield chunk
-
-        return await self._handle_response(_logged_gen(), watcher, model, "create_chat_completion")
+        logger.info(
+            "chat_completion model=%s messages=%d stream=%s max_tokens=%s",
+            model,
+            len(request.messages),
+            request.stream,
+            request.max_tokens,
+        )
+        logger.debug("chat_completion full request: %s", request.model_dump_json())
+        response_gen = handle.generate.options(stream=True).remote(request, headers, watcher.event, req_id)
+        return await self._handle_response(response_gen, watcher, model, "create_chat_completion")
 
     @app.post("/v1/embeddings")
     async def create_embeddings(self, request: EmbeddingRequest, raw_request: Request):
+        req_id = random_uuid()
+        self._set_request_id(req_id)
         model = request.model or ""
         handle = self._get_handle(request.model)
         watcher = RequestWatcher(raw_request, model=model, endpoint="create_embeddings")
         headers = dict(raw_request.headers)
+        logger.info("embeddings model=%s", model)
         # EmbeddingRequest is a UnionType — force resolution before Ray pickle boundary.
         request = type(request).model_validate_json(request.model_dump_json())
-        response_gen = handle.embed.options(stream=True).remote(request, headers, watcher.event)
+        response_gen = handle.embed.options(stream=True).remote(request, headers, watcher.event, req_id)
         return await self._handle_response(response_gen, watcher, model, "create_embeddings")
 
     @app.post("/v1/audio/transcriptions")
     async def create_transcriptions(self, request: Annotated[TranscriptionRequest, Form()], raw_request: Request):
+        req_id = random_uuid()
+        self._set_request_id(req_id)
         model = request.model or ""
         handle = self._get_handle(request.model)
         watcher = RequestWatcher(raw_request, model=model, endpoint="create_transcriptions")
         headers = dict(raw_request.headers)
+        logger.info("transcription model=%s", model)
         # Read audio bytes before crossing process boundary — UploadFile is not serializable.
         # The bytes are passed separately; the request is reconstructed without the file field.
         audio_data = await request.file.read()
         request_no_file = TranscriptionRequest.model_construct(**request.model_dump(exclude={"file"}))
         response_gen = handle.transcribe.options(stream=True).remote(
-            audio_data, request_no_file, headers, watcher.event
+            audio_data, request_no_file, headers, watcher.event, req_id
         )
         return await self._handle_response(response_gen, watcher, model, "create_transcriptions")
 
     @app.post("/v1/audio/translations")
     async def create_translations(self, request: Annotated[TranslationRequest, Form()], raw_request: Request):
+        req_id = random_uuid()
+        self._set_request_id(req_id)
         model = request.model or ""
         handle = self._get_handle(request.model)
         watcher = RequestWatcher(raw_request, model=model, endpoint="create_translations")
         headers = dict(raw_request.headers)
+        logger.info("translation model=%s", model)
         # Read audio bytes before crossing process boundary — UploadFile is not serializable.
         # The bytes are passed separately; the request is reconstructed without the file field.
         audio_data = await request.file.read()
         request_no_file = TranslationRequest.model_construct(**request.model_dump(exclude={"file"}))
-        response_gen = handle.translate.options(stream=True).remote(audio_data, request_no_file, headers, watcher.event)
+        response_gen = handle.translate.options(stream=True).remote(
+            audio_data, request_no_file, headers, watcher.event, req_id
+        )
         return await self._handle_response(response_gen, watcher, model, "create_translations")
 
     @app.post("/v1/audio/speech")
     async def create_speech(self, request: SpeechRequest, raw_request: Request):
-        logger.info("speech request headers: %s", dict(raw_request.headers))
-        logger.info("speech request body: %s", request.model_dump_json())
+        req_id = random_uuid()
+        self._set_request_id(req_id)
+        logger.info("speech model=%s voice=%s format=%s", request.model, request.voice, request.response_format)
+        logger.debug("speech full request: %s", request.model_dump_json())
         handle = self._get_handle(request.model)
         watcher = RequestWatcher(raw_request, model=request.model, endpoint="create_speech")
         headers = dict(raw_request.headers)
-        response_gen = handle.speak.options(stream=True).remote(request, headers, watcher.event)
+        response_gen = handle.speak.options(stream=True).remote(request, headers, watcher.event, req_id)
         return await self._handle_response(response_gen, watcher, request.model, "create_speech")
 
     @app.post("/v1/images/generations")
     async def create_image(self, request: ImageGenerationRequest, raw_request: Request):
+        req_id = random_uuid()
+        self._set_request_id(req_id)
+        logger.info(
+            "image_generation model=%s prompt=%r n=%d size=%s", request.model, request.prompt, request.n, request.size
+        )
         handle = self._get_handle(request.model)
         watcher = RequestWatcher(raw_request, model=request.model, endpoint="create_image")
         headers = dict(raw_request.headers)
-        response_gen = handle.imagine.options(stream=True).remote(request, headers, watcher.event)
+        response_gen = handle.imagine.options(stream=True).remote(request, headers, watcher.event, req_id)
         return await self._handle_response(response_gen, watcher, request.model, "create_image")

@@ -1,4 +1,3 @@
-import logging
 from typing import cast
 
 import torch
@@ -7,13 +6,14 @@ from starlette.requests import Request
 from yasha.infer.base_infer import BaseInfer
 from yasha.infer.diffusers.openai.serving_image import OpenAIServingImage
 from yasha.infer.infer_config import DiffusersConfig, DisconnectProxy, ModelUsecase, YashaModelConfig
+from yasha.logging import get_logger
 from yasha.openai.protocol import (
     ErrorResponse,
     ImageGenerationRequest,
     ImageGenerationResponse,
 )
 
-logger = logging.getLogger("ray")
+logger = get_logger("infer.diffusers")
 
 _TORCH_DTYPES = {
     "float16": torch.float16,

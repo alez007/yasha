@@ -26,7 +26,6 @@ Example request:
 """
 
 import io
-import logging
 from collections.abc import AsyncGenerator
 from typing import Literal
 
@@ -35,10 +34,11 @@ from scipy.io.wavfile import write as write_wav
 from transformers import BarkModel, BarkProcessor
 
 from yasha.infer.infer_config import YashaModelConfig
+from yasha.logging import get_logger
 from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, create_error_response
 from yasha.plugins.base_plugin import BasePlugin
 
-logger = logging.getLogger("ray")
+logger = get_logger("plugin.bark")
 
 
 class ModelPlugin(BasePlugin):
