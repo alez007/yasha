@@ -69,6 +69,21 @@ class DiffusersInfer(BaseInfer):
             else None
         )
 
+    async def warmup(self) -> None:
+        if self.serving_image is None:
+            return
+        logger.info("Warming up diffusers model: %s", self.model_config.name)
+        request = ImageGenerationRequest(
+            model=self.model_config.name,
+            prompt="warmup",
+            n=1,
+            size="64x64",
+            num_inference_steps=1,
+            guidance_scale=0.0,
+        )
+        await self.create_image_generation(request, DisconnectProxy(None, {}))
+        logger.info("Warmup image generation done for %s", self.model_config.name)
+
     async def create_image_generation(
         self, request: ImageGenerationRequest, raw_request: DisconnectProxy
     ) -> ErrorResponse | ImageGenerationResponse:

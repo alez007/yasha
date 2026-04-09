@@ -37,6 +37,7 @@ from vllm.entrypoints.openai.speech_to_text.protocol import (
 
 # -- embeddings -------------------------------------------------------------
 from vllm.entrypoints.pooling.embed.protocol import (
+    EmbeddingCompletionRequest,
     EmbeddingRequest,
     EmbeddingResponse,
 )
@@ -112,6 +113,7 @@ class ImageGenerationResponse(OpenAIBaseModel):
 __all__ = [
     "ChatCompletionRequest",
     "ChatCompletionResponse",
+    "EmbeddingCompletionRequest",
     "EmbeddingRequest",
     "EmbeddingResponse",
     "ErrorInfo",
