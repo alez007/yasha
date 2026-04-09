@@ -26,8 +26,9 @@ class TransformersInfer(BaseInfer):
         super().__init__(model_config)
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-        if torch.cuda.is_available() and model_config.num_gpus < 1.0:
-            torch.cuda.set_per_process_memory_fraction(model_config.num_gpus)
+        mem_frac = self._get_memory_fraction()
+        if torch.cuda.is_available() and mem_frac is not None:
+            torch.cuda.set_per_process_memory_fraction(mem_frac)
 
     def __del__(self):
         try:

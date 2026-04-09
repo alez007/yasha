@@ -70,39 +70,6 @@ class TestYashaModelConfig:
                 usecase=ModelUsecase.generate,
             )
 
-    def test_gpu_index_with_tensor_parallelism_fails(self):
-        with pytest.raises(ValidationError, match="incompatible with tensor_parallel_size"):
-            YashaModelConfig(
-                name="test-llm",
-                model="some-model",
-                usecase=ModelUsecase.generate,
-                loader=ModelLoader.vllm,
-                use_gpu=0,
-                vllm_engine_kwargs=VllmEngineConfig(tensor_parallel_size=2),
-            )
-
-    def test_gpu_index_with_tp1_ok(self):
-        config = YashaModelConfig(
-            name="test-llm",
-            model="some-model",
-            usecase=ModelUsecase.generate,
-            loader=ModelLoader.vllm,
-            use_gpu=0,
-            vllm_engine_kwargs=VllmEngineConfig(tensor_parallel_size=1),
-        )
-        assert config.use_gpu == 0
-
-    def test_named_gpu_resource_with_tp(self):
-        config = YashaModelConfig(
-            name="test-llm",
-            model="some-model",
-            usecase=ModelUsecase.generate,
-            loader=ModelLoader.vllm,
-            use_gpu="dual_16gb",
-            vllm_engine_kwargs=VllmEngineConfig(tensor_parallel_size=2),
-        )
-        assert config.use_gpu == "dual_16gb"
-
     def test_gpu_allocation_fraction(self):
         config = YashaModelConfig(
             name="test-llm",

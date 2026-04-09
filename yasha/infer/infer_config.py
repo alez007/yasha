@@ -63,7 +63,6 @@ class YashaModelConfig(BaseModel):
     plugin: str | None = None  # only meaningful for loader='custom', silently ignored otherwise
     num_gpus: float = 0
     num_cpus: float = 0.1
-    use_gpu: int | str | None = None
     vllm_engine_kwargs: VllmEngineConfig = Field(default_factory=VllmEngineConfig)
     transformers_config: TransformersConfig | None = None
     diffusers_config: DiffusersConfig | None = None
@@ -73,18 +72,6 @@ class YashaModelConfig(BaseModel):
     def check_custom_requires_plugin(self):
         if self.loader == ModelLoader.custom and self.plugin is None:
             raise ValueError("loader='custom' requires plugin to be set")
-        return self
-
-    @model_validator(mode="after")
-    def check_use_gpu_int_incompatible_with_tp(self):
-        if isinstance(self.use_gpu, int):
-            tp = self.vllm_engine_kwargs.tensor_parallel_size if self.vllm_engine_kwargs else 1
-            if tp > 1:
-                raise ValueError(
-                    "use_gpu: int pins to a single GPU via CUDA_VISIBLE_DEVICES — "
-                    "incompatible with tensor_parallel_size > 1. "
-                    "Use use_gpu: str (Ray custom resource) or omit use_gpu."
-                )
         return self
 
 

@@ -39,13 +39,7 @@ Each deployment uses one of three loaders:
 
 ## GPU Allocation
 
-Models can be assigned to GPUs in three ways:
-
-| Config | Behavior |
-|--------|----------|
-| `use_gpu: 0` | Pinned to GPU index 0 via `CUDA_VISIBLE_DEVICES` (TP=1 only) |
-| `use_gpu: "dual_16gb"` | Assigned via named Ray resource (supports TP > 1) |
-| *(omitted)* | Ray schedules freely across available GPUs |
+Ray automatically schedules model deployments across available GPUs based on the `num_gpus` fraction each model requests. For example, two models each requesting `num_gpus: 0.9` will be placed on separate GPUs.
 
 ## Plugin System
 
