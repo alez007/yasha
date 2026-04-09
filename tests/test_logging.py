@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from yasha.logging import (
+    _LIB_LOGGERS,
     RequestIdFilter,
     YashaJsonFormatter,
     YashaTextFormatter,
@@ -27,11 +28,14 @@ def _reset_logging():
     root.handlers.clear()
     root.setLevel(logging.WARNING)
     root.propagate = True
+    saved_lib_levels = {name: logging.getLogger(name).level for name in _LIB_LOGGERS}
     token = request_id_var.set(None)
     yield
     request_id_var.reset(token)
     yl._configured = False
     root.handlers.clear()
+    for name, lvl in saved_lib_levels.items():
+        logging.getLogger(name).setLevel(lvl)
 
 
 class TestGetLogger:
@@ -63,6 +67,25 @@ class TestConfigureLogging:
         configure_logging()
         root = logging.getLogger("yasha")
         assert root.level == logging.DEBUG
+
+    def test_lib_loggers_default_to_warning(self):
+        configure_logging()
+        for name in _LIB_LOGGERS:
+            assert logging.getLogger(name).level == logging.WARNING
+
+    @patch.dict(os.environ, {"YASHA_LOG_LEVEL": "DEBUG"})
+    def test_lib_loggers_stay_warning_at_debug(self):
+        configure_logging()
+        assert logging.getLogger("yasha").level == logging.DEBUG
+        for name in _LIB_LOGGERS:
+            assert logging.getLogger(name).level == logging.WARNING
+
+    @patch.dict(os.environ, {"YASHA_LOG_LEVEL": "TRACE"})
+    def test_trace_mode_enables_all_debug(self):
+        configure_logging()
+        assert logging.getLogger("yasha").level == logging.DEBUG
+        for name in _LIB_LOGGERS:
+            assert logging.getLogger(name).level == logging.DEBUG
 
     @patch.dict(os.environ, {"YASHA_LOG_FORMAT": "json"})
     def test_json_format(self):
