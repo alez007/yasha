@@ -116,8 +116,9 @@ def _error_response(result: ErrorResponse) -> JSONResponse:
 @serve.deployment
 @serve.ingress(app)
 class YashaAPI:
-    def __init__(self, model_handles: dict[str, tuple[DeploymentHandle, ModelUsecase]]):
-        self.models = {name: handle for name, (handle, _) in model_handles.items()}
+    def __init__(self, model_handles: dict[str, tuple[list[DeploymentHandle], ModelUsecase]]):
+        self.models: dict[str, list[DeploymentHandle]] = {name: handles for name, (handles, _) in model_handles.items()}
+        self._counters: dict[str, int] = {name: 0 for name in self.models}
         self.model_list = [OpenAiModelCard(id=name) for name in model_handles]
         MODELS_LOADED.set(len(self.models))  # all models are RUNNING by this point
 
@@ -130,7 +131,10 @@ class YashaAPI:
     def _get_handle(self, model_name: str | None) -> DeploymentHandle:
         if model_name is None or model_name not in self.models:
             raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
-        return self.models[model_name]
+        handles = self.models[model_name]
+        idx = self._counters[model_name] % len(handles)
+        self._counters[model_name] += 1
+        return handles[idx]
 
     async def _handle_response(
         self,

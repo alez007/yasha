@@ -13,6 +13,7 @@ Models are configured in `config/models.yaml`. Each entry defines one deployment
 | `plugin` | string | Plugin module name (required when `loader: custom`); must be installed via `uv sync --extra <plugin>` |
 | `num_gpus` | float | Fraction of a GPU to allocate (0.0–1.0); also sets vLLM `gpu_memory_utilization` |
 | `num_cpus` | float | CPU units to allocate (default `0.1`) |
+| `num_replicas` | int | Number of identical Ray Serve replicas for this deployment (default `1`) |
 | `vllm_engine_kwargs` | object | Passed directly to the vLLM engine — see [vLLM engine args](https://docs.vllm.ai/en/latest/configuration/engine_args.html) |
 | `diffusers_config` | object | Diffusers pipeline options (see below) |
 | `plugin_config` | object | Plugin-specific options passed through to the plugin |
@@ -42,6 +43,38 @@ Example:
     num_inference_steps: 4
     guidance_scale: 0.0
 ```
+
+## Multi-Deployment Routing
+
+You can run the same model on different hardware (e.g. GPU and CPU) by repeating the same `name` with different settings. The API exposes the model once under `/v1/models`, and round-robins requests across all deployments sharing that name.
+
+Use `num_replicas` to scale identical copies of a single deployment (Ray Serve handles load balancing between replicas automatically).
+
+```yaml
+models:
+  # GPU instance with 2 replicas
+  - name: "kokoro"
+    model: "hexgrad/Kokoro-82M"
+    usecase: "tts"
+    loader: "custom"
+    plugin: "kokoro"
+    num_gpus: 0.07
+    num_replicas: 2
+    plugin_config:
+      onnx_provider: "CUDAExecutionProvider"
+
+  # CPU fallback
+  - name: "kokoro"
+    model: "hexgrad/Kokoro-82M"
+    usecase: "tts"
+    loader: "custom"
+    plugin: "kokoro"
+    num_gpus: 0
+    plugin_config:
+      onnx_provider: "CPUExecutionProvider"
+```
+
+In this example, requests to model `kokoro` are distributed across three backends: two GPU replicas and one CPU instance.
 
 ## Environment Variables
 

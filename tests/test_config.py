@@ -148,3 +148,48 @@ class TestYashaConfig:
     def test_empty_models_list(self):
         config = YashaConfig(models=[])
         assert len(config.models) == 0
+
+    def test_duplicate_names_allowed(self):
+        config = YashaConfig(
+            models=[
+                YashaModelConfig(
+                    name="kokoro",
+                    model="hexgrad/Kokoro-82M",
+                    usecase=ModelUsecase.tts,
+                    loader=ModelLoader.custom,
+                    plugin="kokoro",
+                    num_gpus=0.07,
+                ),
+                YashaModelConfig(
+                    name="kokoro",
+                    model="hexgrad/Kokoro-82M",
+                    usecase=ModelUsecase.tts,
+                    loader=ModelLoader.custom,
+                    plugin="kokoro",
+                    num_gpus=0,
+                ),
+            ]
+        )
+        assert len(config.models) == 2
+        assert config.models[0].name == config.models[1].name == "kokoro"
+
+
+class TestNumReplicas:
+    def test_default_num_replicas(self):
+        config = YashaModelConfig(
+            name="test",
+            model="some-model",
+            usecase=ModelUsecase.generate,
+            loader=ModelLoader.vllm,
+        )
+        assert config.num_replicas == 1
+
+    def test_custom_num_replicas(self):
+        config = YashaModelConfig(
+            name="test",
+            model="some-model",
+            usecase=ModelUsecase.generate,
+            loader=ModelLoader.vllm,
+            num_replicas=3,
+        )
+        assert config.num_replicas == 3

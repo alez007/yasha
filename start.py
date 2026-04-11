@@ -8,7 +8,7 @@ from pydantic_yaml import parse_yaml_raw_as
 from ray import serve
 from ray.serve.config import HTTPOptions
 
-from yasha.infer.infer_config import ModelLoader, YashaConfig, YashaModelConfig
+from yasha.infer.infer_config import ModelLoader, ModelUsecase, YashaConfig, YashaModelConfig
 from yasha.infer.model_deployment import ModelDeployment
 from yasha.logging import configure_logging, get_logger
 from yasha.openai.api import YashaAPI
@@ -116,19 +116,34 @@ def main():
         # Deploy models one at a time. serve.run() blocks until the deployment reaches
         # RUNNING, ensuring each model fully initialises (and releases its load-time
         # memory spike) before the next one starts.
-        model_handles = {}
+        #
+        # Multiple config entries may share the same `name` (e.g. one on GPU, one on
+        # CPU). Each gets a unique Ray deployment name (`name-1`, `name-2`, …) and
+        # their handles are grouped under the shared API-facing name for round-robin
+        # routing in the gateway.
+        model_handles: dict[str, tuple[list, ModelUsecase]] = {}
+        name_counters: dict[str, int] = {}
         for config in sorted_models:
-            logger.info("Deploying model: %s", config.name)
+            count = name_counters.get(config.name, 0) + 1
+            name_counters[config.name] = count
+            deployment_name = f"{config.name}-{count}"
+
+            logger.info("Deploying model: %s (deployment: %s)", config.name, deployment_name)
             handle = serve.run(
                 ModelDeployment.options(
-                    name=config.name,
+                    name=deployment_name,
+                    num_replicas=config.num_replicas,
                     ray_actor_options=build_actor_options(config),
                 ).bind(config),
-                name=config.name,
+                name=deployment_name,
                 route_prefix=None,  # not exposed via HTTP — accessed only via handle
             )
-            logger.info("Model ready: %s", config.name)
-            model_handles[config.name] = (handle, config.usecase)
+            logger.info("Model ready: %s (deployment: %s)", config.name, deployment_name)
+
+            if config.name in model_handles:
+                model_handles[config.name][0].append(handle)
+            else:
+                model_handles[config.name] = ([handle], config.usecase)
 
         logger.info("All models ready, starting API gateway...")
         serve.run(
