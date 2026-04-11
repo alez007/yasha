@@ -5,16 +5,16 @@ from typing import ClassVar, cast
 import torch
 from starlette.requests import Request
 
-from yasha.infer.base_infer import BaseInfer
-from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, YashaModelConfig
-from yasha.infer.transformers.openai.serving_speech import OpenAIServingSpeech
-from yasha.logging import get_logger
-from yasha.openai.protocol import (
+from modelship.infer.base_infer import BaseInfer
+from modelship.infer.infer_config import DisconnectProxy, ModelshipModelConfig, ModelUsecase
+from modelship.infer.transformers.openai.serving_speech import OpenAIServingSpeech
+from modelship.logging import get_logger
+from modelship.openai.protocol import (
     ErrorResponse,
     RawSpeechResponse,
     SpeechRequest,
 )
-from yasha.plugins.base_plugin import BasePluginTransformers, PluginProtoTransformers
+from modelship.plugins.base_plugin import BasePluginTransformers, PluginProtoTransformers
 
 logger = get_logger("infer.transformers")
 
@@ -22,7 +22,7 @@ logger = get_logger("infer.transformers")
 class TransformersInfer(BaseInfer):
     _transformers_usecases: ClassVar[list[ModelUsecase]] = [ModelUsecase.tts]
 
-    def __init__(self, model_config: YashaModelConfig):
+    def __init__(self, model_config: ModelshipModelConfig):
         super().__init__(model_config)
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -37,7 +37,7 @@ class TransformersInfer(BaseInfer):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:
-            from yasha.metrics import RESOURCE_CLEANUP_ERRORS_TOTAL
+            from modelship.metrics import RESOURCE_CLEANUP_ERRORS_TOTAL
 
             RESOURCE_CLEANUP_ERRORS_TOTAL.inc(tags={"model": self.model_config.name, "component": "transformers_model"})
 

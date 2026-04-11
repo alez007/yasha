@@ -1,5 +1,5 @@
 """
-Bark TTS plugin for Yasha.
+Bark TTS plugin for Modelship.
 
 Voice presets follow the pattern: v2/<lang>_speaker_<0-9>
 
@@ -33,16 +33,16 @@ import torch
 from scipy.io.wavfile import write as write_wav
 from transformers import BarkModel, BarkProcessor
 
-from yasha.infer.infer_config import YashaModelConfig
-from yasha.logging import get_logger
-from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, create_error_response
-from yasha.plugins.base_plugin import BasePlugin
+from modelship.infer.infer_config import ModelshipModelConfig
+from modelship.logging import get_logger
+from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, create_error_response
+from modelship.plugins.base_plugin import BasePlugin
 
 logger = get_logger("plugin.bark")
 
 
 class ModelPlugin(BasePlugin):
-    def __init__(self, model_config: YashaModelConfig):
+    def __init__(self, model_config: ModelshipModelConfig):
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
         self.model = BarkModel.from_pretrained(pretrained_model_name_or_path=model_config.model).to(self.device)  # type: ignore[arg-type]
         self.processor = BarkProcessor.from_pretrained(model_config.model)

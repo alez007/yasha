@@ -1,5 +1,5 @@
 """
-Kokoro ONNX TTS plugin for Yasha.
+Kokoro ONNX TTS plugin for Modelship.
 
 Selected voices (full list in voices-v1.0.bin):
 
@@ -35,17 +35,17 @@ from kokoro_onnx import Kokoro  # type: ignore[import-unresolved]
 from scipy.io.wavfile import write as write_wav
 from scipy.signal import resample_poly
 
-from yasha.infer.infer_config import YashaModelConfig
-from yasha.logging import get_logger
-from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechResponse
-from yasha.plugins.base_plugin import BasePlugin
-from yasha.utils import cache_dir, download
+from modelship.infer.infer_config import ModelshipModelConfig
+from modelship.logging import get_logger
+from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechResponse
+from modelship.plugins.base_plugin import BasePlugin
+from modelship.utils import cache_dir, download
 
 logger = get_logger("plugin.kokoro")
 
 
 class ModelPlugin(BasePlugin):
-    def __init__(self, model_config: YashaModelConfig):
+    def __init__(self, model_config: ModelshipModelConfig):
         if not shutil.which("espeak-ng") and not shutil.which("espeak"):
             raise RuntimeError(
                 "espeak/espeak-ng is required by kokoro but not found on this system. "

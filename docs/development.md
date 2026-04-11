@@ -7,13 +7,13 @@
 
 ## Quick start (Dev Container)
 
-The recommended way to develop Yasha is with VS Code Dev Containers. The configuration in `.devcontainer/` builds the dev image, mounts the repo, forwards ports, and installs all required extensions automatically.
+The recommended way to develop Modelship is with VS Code Dev Containers. The configuration in `.devcontainer/` builds the dev image, mounts the repo, forwards ports, and installs all required extensions automatically.
 
 1. Set required environment variables on your host:
 
    ```bash
    export HF_TOKEN=your_token_here
-   export YASHA_PLUGINS=kokoro  # optional — comma-separated list of plugins to install
+   export MSHIP_PLUGINS=kokoro  # optional — comma-separated list of plugins to install
    ```
 
 2. Open the repo in VS Code and run **Dev Containers: Reopen in Container** from the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
@@ -43,7 +43,7 @@ The recommended way to develop Yasha is with VS Code Dev Containers. The configu
 
 The Dev Container automatically:
 - Builds the dev image from `Dockerfile` (target: `dev`)
-- Bind-mounts the repo to `/yasha` for live editing
+- Bind-mounts the repo to `/modelship` for live editing
 - Forwards ports `8000` (API) and `8265` (Ray Dashboard)
 - Installs extensions: Ruff, Python, Pyright, and Claude Code
 - Configures the Python interpreter and linting to use the container's venv at `/.venv`
@@ -58,8 +58,8 @@ The following environment variables are set in the dev image with sensible defau
 | `RAY_CLUSTER_ADDRESS` | `ray://0.0.0.0` | Ray cluster address |
 | `RAY_HEAD_CPU_NUM` | `2` | CPUs allocated to Ray head |
 | `RAY_HEAD_GPU_NUM` | `1` | GPUs allocated to Ray head |
-| `YASHA_CACHE_DIR` | `/yasha/.cache/models` | Model cache directory |
-| `YASHA_USE_EXISTING_RAY_CLUSTER` | `false` | Set to `true` to skip starting a Ray head node |
+| `MSHIP_CACHE_DIR` | `/modelship/.cache/models` | Model cache directory |
+| `MSHIP_USE_EXISTING_RAY_CLUSTER` | `false` | Set to `true` to skip starting a Ray head node |
 
 ### Installing plugin dependencies for IntelliSense
 
@@ -76,7 +76,7 @@ If you prefer not to use Dev Containers, you can build and run the dev image dir
 ### Building the dev image
 
 ```bash
-docker build -t yasha_dev --target dev .
+docker build -t modelship_dev --target dev .
 ```
 
 ### Running with live source mounting
@@ -86,12 +86,12 @@ The dev image does not bake in source files. Mount the repo root so changes take
 ```bash
 docker run -it --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token_here \
-  -e YASHA_PLUGINS=kokoro \
-  --mount type=bind,src=./,dst=/yasha \
-  -p 8265:8265 -p 8000:8000 yasha_dev
+  -e MSHIP_PLUGINS=kokoro \
+  --mount type=bind,src=./,dst=/modelship \
+  -p 8265:8265 -p 8000:8000 modelship_dev
 ```
 
-The container's entrypoint (`start.sh`) automatically syncs dependencies (including any plugins listed in `YASHA_PLUGINS`), starts the Ray head node, and drops into a shell. Then start the server:
+The container's entrypoint (`start.sh`) automatically syncs dependencies (including any plugins listed in `MSHIP_PLUGINS`), starts the Ray head node, and drops into a shell. Then start the server:
 
 ```bash
 uv run start.py

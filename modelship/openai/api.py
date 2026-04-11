@@ -12,9 +12,9 @@ from ray.serve.handle import DeploymentHandle
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from yasha.infer.infer_config import ModelUsecase, RequestWatcher
-from yasha.logging import get_logger
-from yasha.metrics import (
+from modelship.infer.infer_config import ModelUsecase, RequestWatcher
+from modelship.logging import get_logger
+from modelship.metrics import (
     MODELS_LOADED,
     REQUEST_DURATION_SECONDS,
     REQUEST_ERRORS_TOTAL,
@@ -22,8 +22,8 @@ from yasha.metrics import (
     REQUEST_TOTAL,
     STREAM_CHUNKS_TOTAL,
 )
-from yasha.openai.auth import ApiKeyMiddleware, get_api_keys
-from yasha.openai.protocol import (
+from modelship.openai.auth import ApiKeyMiddleware, get_api_keys
+from modelship.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     EmbeddingRequest,
@@ -38,7 +38,7 @@ from yasha.openai.protocol import (
     TranslationRequest,
     TranslationResponse,
 )
-from yasha.utils import random_uuid
+from modelship.utils import random_uuid
 
 logger = get_logger("api")
 
@@ -70,7 +70,7 @@ def build_app():
         allow_headers=["*"],
     )
 
-    max_body_bytes = int(os.environ.get("YASHA_MAX_REQUEST_BODY_BYTES", _DEFAULT_MAX_BODY_BYTES))
+    max_body_bytes = int(os.environ.get("MSHIP_MAX_REQUEST_BODY_BYTES", _DEFAULT_MAX_BODY_BYTES))
     app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=max_body_bytes)
     logger.info("Payload size limit: %d bytes", max_body_bytes)
 
@@ -79,7 +79,7 @@ def build_app():
         app.add_middleware(ApiKeyMiddleware, api_keys=api_keys)
         logger.info("API key authentication enabled (%d key(s))", len(api_keys))
     else:
-        logger.warning("API key authentication disabled (YASHA_API_KEYS not set)")
+        logger.warning("API key authentication disabled (MSHIP_API_KEYS not set)")
 
     @app.exception_handler(HTTPException)
     async def log_http_exception(request: Request, exc: HTTPException):
@@ -101,7 +101,7 @@ class OpenAiModelCard(BaseModel):
     id: str
     object: str = "model"
     created: int = Field(default_factory=lambda: int(time.time()))
-    owned_by: str = "yasha"
+    owned_by: str = "modelship"
 
 
 class OpenaiModelList(BaseModel):
@@ -115,7 +115,7 @@ def _error_response(result: ErrorResponse) -> JSONResponse:
 
 @serve.deployment
 @serve.ingress(app)
-class YashaAPI:
+class ModelshipAPI:
     def __init__(self, model_handles: dict[str, tuple[list[DeploymentHandle], ModelUsecase]]):
         self.models: dict[str, list[DeploymentHandle]] = {name: handles for name, (handles, _) in model_handles.items()}
         self._counters: dict[str, int] = {name: 0 for name in self.models}
@@ -124,7 +124,7 @@ class YashaAPI:
 
     @staticmethod
     def _set_request_id(request_id: str) -> None:
-        from yasha.logging import request_id_var
+        from modelship.logging import request_id_var
 
         request_id_var.set(request_id)
 

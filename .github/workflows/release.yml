@@ -74,4 +74,4 @@ jobs:
 
             ## Configuration
 
-            Create a `models.yaml` file and mount it at `/yasha/config/models.yaml`. Example configs for various GPU sizes are included in the image under `/yasha/config/` — use them as a reference for structure and available options, then tailor the models and GPU fractions to your hardware.
+            Create a `models.yaml` file and mount it at `/modelship/config/models.yaml`. Example configs for various GPU sizes are included in the image under `/modelship/config/` — use them as a reference for structure and available options, then tailor the models and GPU fractions to your hardware.

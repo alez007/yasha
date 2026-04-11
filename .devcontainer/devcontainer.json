@@ -1,5 +1,5 @@
 {
-  "name": "yasha",
+  "name": "modelship",
   "build": {
     "dockerfile": "../Dockerfile",
     "target": "dev",
@@ -10,8 +10,8 @@
       "version": "20"
     }
   },
-  "workspaceFolder": "/yasha",
-  "workspaceMount": "source=${localWorkspaceFolder},target=/yasha,type=bind",
+  "workspaceFolder": "/modelship",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/modelship,type=bind",
   "runArgs": [
     "--shm-size=8g",
     "--gpus=all",
@@ -33,8 +33,8 @@
   },
   "remoteEnv": {
     "HF_TOKEN": "${localEnv:HF_TOKEN}",
-    "YASHA_PLUGINS": "${localEnv:YASHA_PLUGINS}",
-    "YASHA_METRICS": "true"
+    "MSHIP_PLUGINS": "${localEnv:MSHIP_PLUGINS}",
+    "MSHIP_METRICS": "true"
   },
   "customizations": {
     "vscode": {

@@ -3,7 +3,7 @@
     {
       "name": "DS_PROMETHEUS",
       "label": "Prometheus",
-      "description": "Prometheus datasource for Yasha metrics",
+      "description": "Prometheus datasource for Modelship metrics",
       "type": "datasource",
       "pluginId": "prometheus",
       "pluginName": "Prometheus"
@@ -32,7 +32,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "sum(rate(ray_yasha_request_total[5m])) by (endpoint)",
+          "expr": "sum(rate(ray_modelship_request_total[5m])) by (endpoint)",
           "legendFormat": "{{ endpoint }}"
         }
       ],
@@ -48,7 +48,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "sum(rate(ray_yasha_request_errors_total[5m])) by (model, error_type)",
+          "expr": "sum(rate(ray_modelship_request_errors_total[5m])) by (model, error_type)",
           "legendFormat": "{{ model }} - {{ error_type }}"
         }
       ],
@@ -64,7 +64,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "ray_yasha_request_in_progress",
+          "expr": "ray_modelship_request_in_progress",
           "legendFormat": "{{ model }}"
         }
       ]
@@ -77,7 +77,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "ray_yasha_models_loaded"
+          "expr": "ray_modelship_models_loaded"
         }
       ]
     },
@@ -89,7 +89,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "sum(rate(ray_yasha_auth_failures_total[5m])) by (reason)",
+          "expr": "sum(rate(ray_modelship_auth_failures_total[5m])) by (reason)",
           "legendFormat": "{{ reason }}"
         }
       ],
@@ -105,7 +105,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "sum(rate(ray_yasha_client_disconnects_total[5m])) by (model)",
+          "expr": "sum(rate(ray_modelship_client_disconnects_total[5m])) by (model)",
           "legendFormat": "{{ model }}"
         }
       ],
@@ -128,15 +128,15 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_yasha_request_duration_seconds_bucket[5m])) by (le, endpoint))",
+          "expr": "histogram_quantile(0.50, sum(rate(ray_modelship_request_duration_seconds_bucket[5m])) by (le, endpoint))",
           "legendFormat": "p50 {{ endpoint }}"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_yasha_request_duration_seconds_bucket[5m])) by (le, endpoint))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_request_duration_seconds_bucket[5m])) by (le, endpoint))",
           "legendFormat": "p95 {{ endpoint }}"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_yasha_request_duration_seconds_bucket[5m])) by (le, endpoint))",
+          "expr": "histogram_quantile(0.99, sum(rate(ray_modelship_request_duration_seconds_bucket[5m])) by (le, endpoint))",
           "legendFormat": "p99 {{ endpoint }}"
         }
       ],
@@ -152,7 +152,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_yasha_request_duration_seconds_bucket[5m])) by (le, model))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_request_duration_seconds_bucket[5m])) by (le, model))",
           "legendFormat": "p95 {{ model }}"
         }
       ],
@@ -168,23 +168,23 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_yasha_generation_duration_seconds_bucket[5m])) by (le, model))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_generation_duration_seconds_bucket[5m])) by (le, model))",
           "legendFormat": "generate {{ model }}"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_yasha_tts_generation_duration_seconds_bucket[5m])) by (le, model))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_tts_generation_duration_seconds_bucket[5m])) by (le, model))",
           "legendFormat": "tts {{ model }}"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_yasha_image_generation_duration_seconds_bucket[5m])) by (le, model))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_image_generation_duration_seconds_bucket[5m])) by (le, model))",
           "legendFormat": "image {{ model }}"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_yasha_transcription_duration_seconds_bucket[5m])) by (le, model))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_transcription_duration_seconds_bucket[5m])) by (le, model))",
           "legendFormat": "transcription {{ model }}"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_yasha_embedding_duration_seconds_bucket[5m])) by (le, model))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_embedding_duration_seconds_bucket[5m])) by (le, model))",
           "legendFormat": "embedding {{ model }}"
         }
       ],
@@ -529,7 +529,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "ray_yasha_model_load_duration_seconds_sum / clamp_min(ray_yasha_model_load_duration_seconds_count, 1)",
+          "expr": "ray_modelship_model_load_duration_seconds_sum / clamp_min(ray_modelship_model_load_duration_seconds_count, 1)",
           "legendFormat": "avg {{ model }}"
         }
       ],
@@ -545,7 +545,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "sum(ray_yasha_model_load_failures_total) by (model)",
+          "expr": "sum(ray_modelship_model_load_failures_total) by (model)",
           "legendFormat": "{{ model }}"
         }
       ],
@@ -568,7 +568,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "sum(ray_yasha_resource_cleanup_errors_total) by (model, component)",
+          "expr": "sum(ray_modelship_resource_cleanup_errors_total) by (model, component)",
           "legendFormat": "{{ model }} ({{ component }})"
         }
       ],
@@ -591,7 +591,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "sum(rate(ray_yasha_stream_chunks_total[5m])) by (model)",
+          "expr": "sum(rate(ray_modelship_stream_chunks_total[5m])) by (model)",
           "legendFormat": "{{ model }}"
         }
       ],
@@ -601,7 +601,7 @@
     }
   ],
   "schemaVersion": 39,
-  "tags": ["yasha", "inference", "gpu", "llm"],
+  "tags": ["modelship", "inference", "gpu", "llm"],
   "templating": {
     "list": []
   },
@@ -611,7 +611,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Yasha Inference Server",
-  "uid": "yasha-overview",
+  "title": "Modelship Inference Server",
+  "uid": "modelship-overview",
   "version": 1
 }
