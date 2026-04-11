@@ -8,25 +8,30 @@ Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized mo
 graph TD
     Client["Client (OpenAI SDK / curl)"]
     API["FastAPI Gateway<br/>OpenAI-compatible API<br/>:8000"]
-    Ray["Ray Serve"]
 
     Client -->|HTTP| API
-    API --> Ray
+    API -->|round-robin| LLM_GPU
+    API -->|round-robin| LLM_CPU
+    API -->|round-robin| TTS
+    API -->|round-robin| STT
+    API -->|round-robin| EMB
 
-    Ray --> LLM["LLM Deployment<br/>e.g. Llama 3.1 8B<br/>70% GPU"]
-    Ray --> TTS["TTS Deployment<br/>e.g. Kokoro 82M<br/>5% GPU"]
-    Ray --> STT["STT Deployment<br/>e.g. Whisper<br/>10% GPU"]
-    Ray --> EMB["Embedding Deployment<br/>e.g. Nomic Embed<br/>5% GPU"]
+    subgraph GPU0["GPU 0"]
+        LLM_GPU["LLM Deployment<br/>e.g. Llama 3.1 8B<br/>70% GPU"]
+        TTS["TTS Deployment<br/>e.g. Kokoro 82M<br/>5% GPU"]
+    end
 
-    subgraph GPU["Single GPU"]
-        LLM
-        TTS
-        STT
-        EMB
+    subgraph GPU1["GPU 1"]
+        STT["STT Deployment<br/>e.g. Whisper<br/>50% GPU"]
+        EMB["Embedding Deployment<br/>e.g. Nomic Embed<br/>50% GPU"]
+    end
+
+    subgraph CPU["CPU-only"]
+        LLM_CPU["LLM Deployment<br/>e.g. Llama 3.1 8B<br/>CPU-only replica"]
     end
 ```
 
-Each model runs as an isolated Ray Serve deployment with its own lifecycle, health checks, and GPU memory budget.
+Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Models can be deployed across multiple GPUs, run on CPU-only, or both — multiple deployments of the same model (e.g. one on GPU, one on CPU) are load-balanced with round-robin routing. Each deployment can also scale horizontally with `num_replicas`.
 
 ## Requirements
 
@@ -36,13 +41,13 @@ Each model runs as an isolated Ray Serve deployment with its own lifecycle, heal
 
 ## Features
 
-- **Multi-model on a single GPU** — run chat, embedding, STT, TTS, and image generation models simultaneously with tunable per-model GPU memory allocation
-- **Per-model isolated deployments** — each model runs in its own Ray Serve deployment with independent lifecycle, health checks, and failure isolation
+- **Multi-model, multi-GPU** — run chat, embedding, STT, TTS, and image generation models simultaneously across one or more GPUs with tunable per-model GPU memory allocation; models can also run on CPU-only
+- **Per-model isolated deployments** — each model runs in its own Ray Serve deployment with independent lifecycle, health checks, failure isolation, and configurable replica count
 - **OpenAI-compatible API** — drop-in replacement for any OpenAI SDK client
 - **Streaming** — SSE streaming for chat completions and TTS audio
 - **Tool/function calling** — auto tool choice with configurable parsers
 - **Plugin system** — opt-in TTS backends installed as isolated uv workspace packages
-- **Multi-GPU support** — assign models to specific GPUs by index or named Ray resource, with full tensor parallelism support
+- **Multi-GPU & hybrid routing** — assign models to specific GPUs or run them on CPU-only; deploy the same model on both GPU and CPU and requests are load-balanced via round-robin; full tensor parallelism support for large models spanning multiple GPUs
 - **Client disconnect detection** — cancels in-flight inference when the client disconnects, freeing GPU resources immediately
 - **Prometheus metrics & Grafana dashboard** — built-in observability with custom `modelship:*` metrics, vLLM engine stats, and Ray cluster metrics on a single scrape endpoint; pre-built Grafana dashboard included
 - **Ray dashboard** — monitor deployments, resources, and request logs
