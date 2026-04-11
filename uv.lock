@@ -11,8 +11,8 @@ resolution-markers = [
 members = [
     "bark",
     "kokoro",
-    "orpheus",
     "modelship",
+    "orpheus",
 ]
 
 [[package]]
@@ -243,20 +243,20 @@ name = "bark"
 version = "0.1.0"
 source = { editable = "plugins/bark" }
 dependencies = [
+    { name = "modelship" },
     { name = "numpy" },
     { name = "scipy" },
     { name = "torch" },
     { name = "transformers" },
-    { name = "modelship" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "modelship", editable = "." },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "scipy", specifier = ">=1.16.1" },
     { name = "torch", specifier = ">=2.10.0" },
     { name = "transformers", specifier = ">=4.57.5" },
-    { name = "modelship", editable = "." },
 ]
 
 [[package]]
@@ -1174,19 +1174,19 @@ version = "0.1.0"
 source = { editable = "plugins/kokoro" }
 dependencies = [
     { name = "kokoro-onnx", extra = ["gpu"] },
+    { name = "modelship" },
     { name = "numpy" },
     { name = "onnxruntime-gpu" },
     { name = "scipy" },
-    { name = "modelship" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "kokoro-onnx", extras = ["gpu"], specifier = ">=0.4.9" },
+    { name = "modelship", editable = "." },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "onnxruntime-gpu", specifier = ">=1.20.1" },
     { name = "scipy", specifier = ">=1.16.1" },
-    { name = "modelship", editable = "." },
 ]
 
 [[package]]
@@ -1428,6 +1428,81 @@ sdist = { url = "https://files.pythonhosted.org/packages/c6/3d/cf5c6029648cb0a11
 wheels = [
     { url = "https://files.pythonhosted.org/packages/48/94/052452842d39c562237a70345c57ec213a9db22bd25bba998fd2b32d70a7/model_hosting_container_standards-0.1.14-py3-none-any.whl", hash = "sha256:d678be6745899b8ba1e8246c96b101e7802a6a4ea3fb5d90ae8d6eb4204e84c6", size = 121406, upload-time = "2026-03-18T21:25:12.932Z" },
 ]
+
+[[package]]
+name = "modelship"
+version = "0.1.19"
+source = { editable = "." }
+dependencies = [
+    { name = "accelerate" },
+    { name = "argparse" },
+    { name = "asyncio" },
+    { name = "diffusers" },
+    { name = "fastapi" },
+    { name = "flashinfer-python" },
+    { name = "httpx" },
+    { name = "numpy" },
+    { name = "pydantic" },
+    { name = "pydantic-yaml" },
+    { name = "python-multipart" },
+    { name = "ray", extra = ["data", "default", "serve-grpc"] },
+    { name = "requests" },
+    { name = "scipy" },
+    { name = "torch" },
+    { name = "torchvision" },
+    { name = "transformers" },
+    { name = "vllm", extra = ["audio"] },
+]
+
+[package.optional-dependencies]
+bark = [
+    { name = "bark" },
+]
+dev = [
+    { name = "pre-commit" },
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+kokoro = [
+    { name = "kokoro" },
+]
+orpheus = [
+    { name = "orpheus" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", specifier = ">=1.6.0" },
+    { name = "argparse", specifier = ">=1.4.0" },
+    { name = "asyncio", specifier = ">=4.0.0" },
+    { name = "bark", marker = "extra == 'bark'", editable = "plugins/bark" },
+    { name = "diffusers", specifier = ">=0.31.0" },
+    { name = "fastapi", specifier = ">=0.116.1" },
+    { name = "flashinfer-python", specifier = ">=0.6.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "kokoro", marker = "extra == 'kokoro'", editable = "plugins/kokoro" },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "orpheus", marker = "extra == 'orpheus'", editable = "plugins/orpheus" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
+    { name = "pydantic", specifier = ">=2.12.0" },
+    { name = "pydantic-yaml", specifier = ">=1.6.0" },
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.400" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25.0" },
+    { name = "python-multipart", specifier = ">=0.0.20" },
+    { name = "ray", extras = ["data", "default", "serve-grpc"], specifier = ">=2.51.1" },
+    { name = "requests", specifier = ">=2.32.5" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
+    { name = "scipy", specifier = ">=1.16.1" },
+    { name = "torch", specifier = ">=2.10.0" },
+    { name = "torchvision", specifier = ">=0.25.0" },
+    { name = "transformers", specifier = ">=4.57.5" },
+    { name = "vllm", specifier = "==0.18.0" },
+    { name = "vllm", extras = ["audio"], specifier = "==0.18.0" },
+]
+provides-extras = ["kokoro", "bark", "orpheus", "dev"]
 
 [[package]]
 name = "mpmath"
@@ -2018,18 +2093,18 @@ name = "orpheus"
 version = "0.1.0"
 source = { editable = "plugins/orpheus" }
 dependencies = [
+    { name = "modelship" },
     { name = "numpy" },
     { name = "snac" },
     { name = "transformers" },
-    { name = "modelship" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "modelship", editable = "." },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "snac" },
     { name = "transformers", specifier = ">=4.57.5" },
-    { name = "modelship", editable = "." },
 ]
 
 [[package]]
@@ -3707,81 +3782,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/35/aeab955d6c425b227d5b7247eafb24f2653fedc32f95373a001af5dfeb9e/yarl-1.23.0-cp312-cp312-win_arm64.whl", hash = "sha256:6e87a6e8735b44816e7db0b2fbc9686932df473c826b0d9743148432e10bb9b9", size = 81879, upload-time = "2026-03-01T22:05:40.006Z" },
     { url = "https://files.pythonhosted.org/packages/69/68/c8739671f5699c7dc470580a4f821ef37c32c4cb0b047ce223a7f115757f/yarl-1.23.0-py3-none-any.whl", hash = "sha256:a2df6afe50dea8ae15fa34c9f824a3ee958d785fd5d089063d960bae1daa0a3f", size = 48288, upload-time = "2026-03-01T22:07:51.388Z" },
 ]
-
-[[package]]
-name = "modelship"
-version = "0.1.18"
-source = { editable = "." }
-dependencies = [
-    { name = "accelerate" },
-    { name = "argparse" },
-    { name = "asyncio" },
-    { name = "diffusers" },
-    { name = "fastapi" },
-    { name = "flashinfer-python" },
-    { name = "httpx" },
-    { name = "numpy" },
-    { name = "pydantic" },
-    { name = "pydantic-yaml" },
-    { name = "python-multipart" },
-    { name = "ray", extra = ["data", "default", "serve-grpc"] },
-    { name = "requests" },
-    { name = "scipy" },
-    { name = "torch" },
-    { name = "torchvision" },
-    { name = "transformers" },
-    { name = "vllm", extra = ["audio"] },
-]
-
-[package.optional-dependencies]
-bark = [
-    { name = "bark" },
-]
-dev = [
-    { name = "pre-commit" },
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-kokoro = [
-    { name = "kokoro" },
-]
-orpheus = [
-    { name = "orpheus" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "accelerate", specifier = ">=1.6.0" },
-    { name = "argparse", specifier = ">=1.4.0" },
-    { name = "asyncio", specifier = ">=4.0.0" },
-    { name = "bark", marker = "extra == 'bark'", editable = "plugins/bark" },
-    { name = "diffusers", specifier = ">=0.31.0" },
-    { name = "fastapi", specifier = ">=0.116.1" },
-    { name = "flashinfer-python", specifier = ">=0.6.1" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "kokoro", marker = "extra == 'kokoro'", editable = "plugins/kokoro" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "orpheus", marker = "extra == 'orpheus'", editable = "plugins/orpheus" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
-    { name = "pydantic", specifier = ">=2.12.0" },
-    { name = "pydantic-yaml", specifier = ">=1.6.0" },
-    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.400" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25.0" },
-    { name = "python-multipart", specifier = ">=0.0.20" },
-    { name = "ray", extras = ["data", "default", "serve-grpc"], specifier = ">=2.51.1" },
-    { name = "requests", specifier = ">=2.32.5" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
-    { name = "scipy", specifier = ">=1.16.1" },
-    { name = "torch", specifier = ">=2.10.0" },
-    { name = "torchvision", specifier = ">=0.25.0" },
-    { name = "transformers", specifier = ">=4.57.5" },
-    { name = "vllm", specifier = "==0.18.0" },
-    { name = "vllm", extras = ["audio"], specifier = "==0.18.0" },
-]
-provides-extras = ["kokoro", "bark", "orpheus", "dev"]
 
 [[package]]
 name = "zipp"
