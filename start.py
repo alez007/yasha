@@ -1,3 +1,4 @@
+import argparse
 import importlib
 import os
 import signal
@@ -13,15 +14,68 @@ from modelship.infer.model_deployment import ModelDeployment
 from modelship.logging import configure_logging, get_logger
 from modelship.openai.api import ModelshipAPI
 
-_cache_dir = os.environ.get("MSHIP_CACHE_DIR", "/modelship/.cache/models")
-_cache_root = os.path.dirname(_cache_dir)
-_cache_env_vars = {
-    "HF_HOME": os.environ.get("HF_HOME", f"{_cache_root}/huggingface"),
-    "VLLM_CACHE_ROOT": os.environ.get("VLLM_CACHE_ROOT", f"{_cache_root}/vllm"),
-    "FLASHINFER_CACHE_DIR": os.environ.get("FLASHINFER_CACHE_DIR", f"{_cache_root}/flashinfer"),
-}
-
 logger = get_logger("startup")
+
+
+def _build_cache_env_vars() -> dict[str, str]:
+    cache_dir = os.environ.get("MSHIP_CACHE_DIR", "/modelship/.cache/models")
+    cache_root = os.path.dirname(cache_dir)
+    return {
+        "HF_HOME": os.environ.get("HF_HOME", f"{cache_root}/huggingface"),
+        "VLLM_CACHE_ROOT": os.environ.get("VLLM_CACHE_ROOT", f"{cache_root}/vllm"),
+        "FLASHINFER_CACHE_DIR": os.environ.get("FLASHINFER_CACHE_DIR", f"{cache_root}/flashinfer"),
+    }
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Modelship — serve LLMs with Ray Serve")
+    parser.add_argument("--ray-cluster-address", help="Ray cluster address (env: RAY_CLUSTER_ADDRESS)")
+    parser.add_argument("--ray-redis-port", help="Ray Redis port (env: RAY_REDIS_PORT)")
+    parser.add_argument("--config", help="Path to models.yaml config file (default: config/models.yaml)")
+    parser.add_argument("--cache-dir", help="Model cache directory (env: MSHIP_CACHE_DIR)")
+    parser.add_argument(
+        "--use-existing-ray-cluster",
+        action="store_true",
+        default=None,
+        help="Connect to an existing Ray cluster (env: MSHIP_USE_EXISTING_RAY_CLUSTER)",
+    )
+    parser.add_argument(
+        "--log-level",
+        choices=["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Log level (env: MSHIP_LOG_LEVEL)",
+    )
+    parser.add_argument("--log-format", choices=["text", "json"], help="Log format (env: MSHIP_LOG_FORMAT)")
+    parser.add_argument("--no-metrics", action="store_true", default=None, help="Disable metrics (env: MSHIP_METRICS)")
+    parser.add_argument("--api-keys", help="Comma-separated API keys (env: MSHIP_API_KEYS)")
+    parser.add_argument(
+        "--max-request-body-bytes", type=int, help="Max request body size in bytes (env: MSHIP_MAX_REQUEST_BODY_BYTES)"
+    )
+    return parser.parse_args(argv)
+
+
+def _apply_args_to_env(args: argparse.Namespace) -> None:
+    """Set environment variables from CLI args. CLI args take precedence over env vars."""
+    _arg_to_env = {
+        "ray_cluster_address": "RAY_CLUSTER_ADDRESS",
+        "ray_redis_port": "RAY_REDIS_PORT",
+        "cache_dir": "MSHIP_CACHE_DIR",
+        "log_level": "MSHIP_LOG_LEVEL",
+        "log_format": "MSHIP_LOG_FORMAT",
+        "api_keys": "MSHIP_API_KEYS",
+    }
+    for attr, env_var in _arg_to_env.items():
+        val = getattr(args, attr, None)
+        if val is not None:
+            os.environ[env_var] = val
+
+    if args.use_existing_ray_cluster is True:
+        os.environ["MSHIP_USE_EXISTING_RAY_CLUSTER"] = "true"
+
+    if args.no_metrics is True:
+        os.environ["MSHIP_METRICS"] = "false"
+
+    if args.max_request_body_bytes is not None:
+        os.environ["MSHIP_MAX_REQUEST_BODY_BYTES"] = str(args.max_request_body_bytes)
 
 
 def build_actor_options(config: ModelshipModelConfig) -> dict:
@@ -56,7 +110,7 @@ def build_actor_options(config: ModelshipModelConfig) -> dict:
 
     options: dict = {"num_gpus": num_gpus, "num_cpus": config.num_cpus}
 
-    env_vars = dict(_cache_env_vars)
+    env_vars = _build_cache_env_vars()
 
     if tp > 1 and tp_backend != "mp" and config.num_gpus > 0:
         # ray backend: set per-worker GPU fraction so vLLM worker actors claim the
@@ -76,7 +130,10 @@ def ensure_plugin(module_name: str):
         raise RuntimeError(f"Plugin '{module_name}' is not installed. Run: uv sync --extra {module_name}") from err
 
 
-def main():
+def main(argv: list[str] | None = None):
+    args = parse_args(argv)
+    _apply_args_to_env(args)
+
     configure_logging()
     ray_cluster_address = os.environ["RAY_CLUSTER_ADDRESS"]
     ray_redis_port = os.environ["RAY_REDIS_PORT"]
@@ -88,8 +145,11 @@ def main():
     ray.init(address=ray_address)
     serve.start(http_options=HTTPOptions(host="0.0.0.0"))
 
-    _config_dir = os.path.dirname(os.path.abspath(__file__)) + "/config"
-    _config_file = _config_dir + "/models.yaml"
+    if args.config:
+        _config_file = args.config
+    else:
+        _config_dir = os.path.dirname(os.path.abspath(__file__)) + "/config"
+        _config_file = _config_dir + "/models.yaml"
     if not os.path.exists(_config_file):
         raise FileNotFoundError(
             f"{_config_file} not found. Copy one of the example configs from config/ to config/models.yaml."
