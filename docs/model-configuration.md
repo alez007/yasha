@@ -81,9 +81,9 @@ In this example, requests to model `kokoro` are distributed across three backend
 | Variable | Description | Default |
 |---|---|---|
 | `HF_TOKEN` | HuggingFace access token | — |
-| `YASHA_PLUGINS` | Comma-separated list of plugins to install at startup (e.g. `kokoro,orpheus`) | — |
-| `YASHA_CACHE_DIR` | Model cache directory (HuggingFace + plugins) | `/yasha/.cache/models` |
-| `YASHA_MAX_REQUEST_BODY_BYTES` | Maximum allowed request body size in bytes | `52428800` (50 MB) |
+| `MSHIP_PLUGINS` | Comma-separated list of plugins to install at startup (e.g. `kokoro,orpheus`) | — |
+| `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace + plugins) | `/modelship/.cache/models` |
+| `MSHIP_MAX_REQUEST_BODY_BYTES` | Maximum allowed request body size in bytes | `52428800` (50 MB) |
 | `CUDA_DEVICE_ORDER` | GPU enumeration order; set to `PCI_BUS_ID` for deterministic ordering in multi-GPU systems | `PCI_BUS_ID` |
 | `RAY_REDIS_PORT` | Ray GCS server port | `6379` |
 | `RAY_DASHBOARD_PORT` | Ray dashboard port | `8265` |

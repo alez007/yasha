@@ -36,7 +36,7 @@ RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && CUDA
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV UV_LINK_MODE=copy
 
-WORKDIR /yasha
+WORKDIR /modelship
 
 ADD ./pyproject.toml pyproject.toml
 ADD ./README.md README.md
@@ -46,16 +46,16 @@ ADD ./plugins plugins
 ENV UV_PROJECT_ENVIRONMENT=/.venv
 ENV VIRTUAL_ENV=/.venv
 ENV CUDA_DEVICE_ORDER=PCI_BUS_ID
-ENV YASHA_CACHE_DIR=/yasha/.cache/models
+ENV MSHIP_CACHE_DIR=/modelship/.cache/models
 ENV RAY_REDIS_PORT=6379
 ENV RAY_CLUSTER_ADDRESS=0.0.0.0
 ENV RAY_HEAD_CPU_NUM=2
 ENV RAY_HEAD_GPU_NUM=1
-ENV YASHA_USE_EXISTING_RAY_CLUSTER=false
-ENV YASHA_METRICS=true
+ENV MSHIP_USE_EXISTING_RAY_CLUSTER=false
+ENV MSHIP_METRICS=true
 ENV RAY_METRICS_EXPORT_PORT=8079
-ENV YASHA_LOG_LEVEL=INFO
-ENV YASHA_LOG_FORMAT=text
+ENV MSHIP_LOG_LEVEL=INFO
+ENV MSHIP_LOG_FORMAT=text
 RUN uv venv
 
 ARG PYTHON_VERSION
@@ -71,8 +71,8 @@ FROM base AS dev
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --extra dev
 
-ADD ./scripts/start_ray.sh /yasha/scripts/start_ray.sh
-RUN chmod +x /yasha/scripts/start_ray.sh
+ADD ./scripts/start_ray.sh /modelship/scripts/start_ray.sh
+RUN chmod +x /modelship/scripts/start_ray.sh
 
 CMD ["/bin/bash"]
 
@@ -82,13 +82,13 @@ CMD ["/bin/bash"]
 FROM base AS prod
 
 ADD ./start.py start.py
-ADD ./yasha yasha
+ADD ./modelship modelship
 ADD ./config config
 ADD ./scripts scripts
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project
 
-RUN chmod +x /yasha/scripts/start_ray.sh /yasha/scripts/start.sh
+RUN chmod +x /modelship/scripts/start_ray.sh /modelship/scripts/start.sh
 
-CMD ["uv", "run", "--active", "bash", "/yasha/scripts/start.sh"]
+CMD ["uv", "run", "--active", "bash", "/modelship/scripts/start.sh"]

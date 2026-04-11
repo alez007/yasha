@@ -2,10 +2,10 @@ from collections.abc import AsyncGenerator
 
 from fastapi import Request
 
-from yasha.logging import get_logger
-from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechRequest, create_error_response
-from yasha.plugins.base_plugin import BasePluginTransformers
-from yasha.utils import base_request_id
+from modelship.logging import get_logger
+from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechRequest, create_error_response
+from modelship.plugins.base_plugin import BasePluginTransformers
+from modelship.utils import base_request_id
 
 logger = get_logger("infer.transformers.speech")
 

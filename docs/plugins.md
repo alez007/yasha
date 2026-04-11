@@ -1,16 +1,16 @@
 # Plugin Development
 
-Plugins are Python packages that extend Yasha with new TTS backends. Each plugin is a self-contained uv workspace package with its own dependencies, installed on demand.
+Plugins are Python packages that extend Modelship with new TTS backends. Each plugin is a self-contained uv workspace package with its own dependencies, installed on demand.
 
 ## How plugins work
 
-When `loader: custom` is set in `models.yaml`, Yasha imports the module named by `plugin` and expects it to expose a `ModelPlugin` class extending `BasePlugin`.
+When `loader: custom` is set in `models.yaml`, Modelship imports the module named by `plugin` and expects it to expose a `ModelPlugin` class extending `BasePlugin`.
 
 `BasePlugin` requires three methods:
 
 | Method | Description |
 |---|---|
-| `__init__(model_config: YashaModelConfig)` | Initialize the plugin; store config and set up state |
+| `__init__(model_config: ModelshipModelConfig)` | Initialize the plugin; store config and set up state |
 | `async start()` | Load models into memory; called once before the first request |
 | `async generate(input, voice, request_id, stream_format)` | Generate audio; return a `RawSpeechResponse` or an SSE `AsyncGenerator[str, None]` |
 
@@ -34,7 +34,7 @@ plugins/
 name = "myplugin"
 version = "0.1.0"
 dependencies = [
-    "yasha",
+    "modelship",
     # your plugin's dependencies
 ]
 ```
@@ -46,13 +46,13 @@ dependencies = [
 from collections.abc import AsyncGenerator
 from typing import Literal
 
-from yasha.plugins.base_plugin import BasePlugin
-from yasha.infer.infer_config import YashaModelConfig
-from yasha.openai.protocol import ErrorResponse, RawSpeechResponse
+from modelship.plugins.base_plugin import BasePlugin
+from modelship.infer.infer_config import ModelshipModelConfig
+from modelship.openai.protocol import ErrorResponse, RawSpeechResponse
 
 
 class ModelPlugin(BasePlugin):
-    def __init__(self, model_config: YashaModelConfig):
+    def __init__(self, model_config: ModelshipModelConfig):
         self.model_name = model_config.model
         self.config = model_config.plugin_config or {}
 

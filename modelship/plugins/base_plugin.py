@@ -5,8 +5,8 @@ from typing import Literal, Protocol
 from vllm.config.model import ModelConfig
 from vllm.engine.protocol import EngineClient
 
-from yasha.infer.infer_config import YashaModelConfig
-from yasha.openai.protocol import ErrorResponse, RawSpeechResponse
+from modelship.infer.infer_config import ModelshipModelConfig
+from modelship.openai.protocol import ErrorResponse, RawSpeechResponse
 
 
 class BasePluginVllm(ABC):
@@ -41,7 +41,7 @@ class BasePluginTransformers(ABC):
 
 class BasePlugin(ABC):
     @abstractmethod
-    def __init__(self, model_config: YashaModelConfig):
+    def __init__(self, model_config: ModelshipModelConfig):
         pass
 
     @abstractmethod

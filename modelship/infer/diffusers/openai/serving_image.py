@@ -6,16 +6,16 @@ import time
 from diffusers.pipelines.auto_pipeline import AutoPipelineForText2Image
 from fastapi import Request
 
-from yasha.infer.infer_config import DiffusersConfig
-from yasha.logging import get_logger
-from yasha.openai.protocol import (
+from modelship.infer.infer_config import DiffusersConfig
+from modelship.logging import get_logger
+from modelship.openai.protocol import (
     ErrorResponse,
     ImageGenerationRequest,
     ImageGenerationResponse,
     ImageObject,
     create_error_response,
 )
-from yasha.utils import base_request_id
+from modelship.utils import base_request_id
 
 logger = get_logger("infer.diffusers.image")
 

@@ -1,5 +1,5 @@
 """
-Orpheus TTS plugin for Yasha.
+Orpheus TTS plugin for Modelship.
 
 Voices:
 
@@ -45,10 +45,10 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.usage.usage_lib import UsageContext
 from vllm.v1.engine.async_llm import AsyncLLM
 
-from yasha.infer.infer_config import YashaModelConfig
-from yasha.logging import get_logger
-from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechResponse
-from yasha.plugins.base_plugin import BasePlugin
+from modelship.infer.infer_config import ModelshipModelConfig
+from modelship.logging import get_logger
+from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechResponse
+from modelship.plugins.base_plugin import BasePlugin
 
 logger = get_logger("plugin.orpheus")
 
@@ -151,7 +151,7 @@ async def _tokens_decoder(token_gen: AsyncGenerator[str, None]) -> AsyncGenerato
 
 
 class ModelPlugin(BasePlugin):
-    def __init__(self, model_config: YashaModelConfig):
+    def __init__(self, model_config: ModelshipModelConfig):
         self.model_config = model_config
 
         plugin_config = model_config.plugin_config or {}

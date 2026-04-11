@@ -55,7 +55,7 @@ class DiffusersConfig(BaseModel):
     guidance_scale: float = 7.5
 
 
-class YashaModelConfig(BaseModel):
+class ModelshipModelConfig(BaseModel):
     name: str
     model: str
     usecase: ModelUsecase
@@ -76,8 +76,8 @@ class YashaModelConfig(BaseModel):
         return self
 
 
-class YashaConfig(BaseModel):
-    models: list[YashaModelConfig]
+class ModelshipConfig(BaseModel):
+    models: list[ModelshipModelConfig]
 
 
 @ray.remote(num_cpus=0)
@@ -105,7 +105,7 @@ class RequestWatcher:
         self._task = asyncio.create_task(self._watch())
 
     async def _watch(self):
-        from yasha.metrics import CLIENT_DISCONNECTS_TOTAL
+        from modelship.metrics import CLIENT_DISCONNECTS_TOTAL
 
         while True:
             if await self._request.is_disconnected():
