@@ -31,7 +31,6 @@ Example request:
 
 import base64
 import io
-import logging
 import os
 import wave
 from collections.abc import AsyncGenerator
@@ -47,10 +46,11 @@ from vllm.usage.usage_lib import UsageContext
 from vllm.v1.engine.async_llm import AsyncLLM
 
 from yasha.infer.infer_config import YashaModelConfig
+from yasha.logging import get_logger
 from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechResponse
 from yasha.plugins.base_plugin import BasePlugin
 
-logger = logging.getLogger("ray")
+logger = get_logger("plugin.orpheus")
 
 _snac_device = os.environ.get("SNAC_DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
 _snac_model: SNAC | None = None
@@ -222,7 +222,7 @@ class ModelPlugin(BasePlugin):
                 wf.setframerate(24000)
                 total_frames = 0
                 async for audio_bytes in self.generate_audio_bytes_async(input, voice, request_id):
-                    logger.info("got some audio bytes for wav: %s", audio_bytes)
+                    logger.debug("audio chunk bytes=%d", len(audio_bytes))
                     frame_count = len(audio_bytes) // (wf.getsampwidth() * wf.getnchannels())
                     total_frames += frame_count
                     wf.writeframes(audio_bytes)
@@ -233,7 +233,7 @@ class ModelPlugin(BasePlugin):
 
     async def generate_sse(self, input: str, voice: str, request_id: str) -> AsyncGenerator[str, None]:
         async for audio_bytes in self.generate_audio_bytes_async(input, voice, request_id):
-            logger.info("got some audio bytes: %s", audio_bytes)
+            logger.debug("audio chunk bytes=%d", len(audio_bytes))
             encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
             event_data = SpeechResponse(audio=encoded_audio, type="speech.audio.delta")
             yield f"data: {event_data.model_dump_json()}\n\n"

@@ -1,5 +1,4 @@
 import io
-import logging
 from collections.abc import AsyncGenerator
 from typing import ClassVar, cast
 
@@ -21,6 +20,7 @@ from vllm.v1.engine.async_llm import AsyncLLM
 
 from yasha.infer.base_infer import MINIMAL_WAV, BaseInfer
 from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, VllmEngineConfig, YashaModelConfig
+from yasha.logging import get_logger
 from yasha.metrics import _ENABLED as _METRICS_ENABLED
 from yasha.openai.protocol import (
     ChatCompletionRequest,
@@ -36,7 +36,7 @@ from yasha.openai.protocol import (
     TranslationResponseVerbose,
 )
 
-logger = logging.getLogger("ray")
+logger = get_logger("infer.vllm")
 
 
 class VllmInfer(BaseInfer):

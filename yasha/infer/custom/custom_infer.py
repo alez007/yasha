@@ -1,5 +1,4 @@
 import importlib
-import logging
 from collections.abc import AsyncGenerator
 from typing import cast
 
@@ -8,6 +7,7 @@ from starlette.requests import Request
 from yasha.infer.base_infer import BaseInfer
 from yasha.infer.custom.openai.serving_speech import OpenAIServingSpeech
 from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, YashaModelConfig
+from yasha.logging import get_logger
 from yasha.openai.protocol import (
     ErrorResponse,
     RawSpeechResponse,
@@ -15,7 +15,7 @@ from yasha.openai.protocol import (
 )
 from yasha.plugins.base_plugin import BasePlugin, PluginProto
 
-logger = logging.getLogger("ray")
+logger = get_logger("infer.custom")
 
 
 class CustomInfer(BaseInfer):
@@ -35,15 +35,7 @@ class CustomInfer(BaseInfer):
         self.serving_speech = await self.init_serving_speech()
 
     async def warmup(self) -> None:
-        if self.serving_speech is None:
-            return
-        logger.info("Warming up custom TTS model: %s", self.model_config.name)
-        request = SpeechRequest(model=self.model_config.name, input="warmup", voice="default")
-        result = await self.create_speech(request, DisconnectProxy(None, {}))
-        if isinstance(result, AsyncGenerator):
-            async for _ in result:
-                pass
-        logger.info("Warmup TTS done for %s", self.model_config.name)
+        pass
 
     async def init_serving_speech(self) -> OpenAIServingSpeech | None:
         logger.info("init serving speech with model: %s", self.model_config.name)

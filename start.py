@@ -1,5 +1,4 @@
 import importlib
-import logging
 import os
 import signal
 import sys
@@ -11,6 +10,7 @@ from ray.serve.config import HTTPOptions
 
 from yasha.infer.infer_config import ModelLoader, YashaConfig, YashaModelConfig
 from yasha.infer.model_deployment import ModelDeployment
+from yasha.logging import configure_logging, get_logger
 from yasha.openai.api import YashaAPI
 
 _cache_dir = os.environ.get("YASHA_CACHE_DIR", "/yasha/.cache/models")
@@ -21,7 +21,7 @@ _cache_env_vars = {
     "FLASHINFER_CACHE_DIR": os.environ.get("FLASHINFER_CACHE_DIR", f"{_cache_root}/flashinfer"),
 }
 
-logger = logging.getLogger("ray")
+logger = get_logger("startup")
 
 
 def build_actor_options(config: YashaModelConfig) -> dict:
@@ -77,6 +77,7 @@ def ensure_plugin(module_name: str):
 
 
 def main():
+    configure_logging()
     ray_cluster_address = os.environ["RAY_CLUSTER_ADDRESS"]
     ray_redis_port = os.environ["RAY_REDIS_PORT"]
     use_existing_cluster = os.environ.get("YASHA_USE_EXISTING_RAY_CLUSTER", "false").lower() == "true"

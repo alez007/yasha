@@ -1,9 +1,9 @@
-import logging
 import struct
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 
 from yasha.infer.infer_config import DisconnectProxy, YashaModelConfig
+from yasha.logging import get_logger
 from yasha.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -22,7 +22,7 @@ from yasha.openai.protocol import (
     TranslationResponseVerbose,
 )
 
-logger = logging.getLogger("ray")
+logger = get_logger("infer")
 
 _NOT_SUPPORTED = ErrorResponse(
     error=ErrorInfo(message="model does not support this action", type="invalid_request_error", code=404)
