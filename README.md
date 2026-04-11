@@ -127,11 +127,15 @@ For a full guide on writing your own plugin, see [Plugin Development](docs/plugi
 - [Architecture](docs/architecture.md) — system design, request lifecycle, plugin loading
 - [Plugin Development](docs/plugins.md) — writing custom TTS backends
 - [Home Assistant Integration](docs/home-assistant.md) — Wyoming protocol setup for voice automation
-- [Monitoring](docs/monitoring.md) — Prometheus metrics, Grafana dashboard, health checks
+- [Monitoring & Logging](docs/monitoring.md) — Prometheus metrics, Grafana dashboard, structured logging, health checks
 
 ## Monitoring
 
-Yasha exposes Prometheus metrics (Ray cluster, Ray Serve, vLLM, and custom `yasha:*` metrics) through a single scrape endpoint on port 8079. Metrics are **enabled by default** — set `YASHA_METRICS=false` to disable. A pre-built Grafana dashboard is included. See [Monitoring](docs/monitoring.md) for setup details.
+Yasha exposes Prometheus metrics (Ray cluster, Ray Serve, vLLM, and custom `yasha:*` metrics) through a single scrape endpoint on port 8079. Metrics are **enabled by default** — set `YASHA_METRICS=false` to disable. A pre-built Grafana dashboard is included.
+
+Logging supports structured JSON output (`YASHA_LOG_FORMAT=json`) and request ID correlation across Ray actor boundaries. Set `YASHA_LOG_LEVEL` to `DEBUG` for request bodies or `TRACE` to include library internals.
+
+See [Monitoring & Logging](docs/monitoring.md) for full details.
 
 ## Production Readiness
 
@@ -141,7 +145,7 @@ See the full [Production Readiness Plan](docs/production-readiness.md) for detai
 |------------------------------|-------|----------|
 | Architecture & Design        | 8/10  | Add K8s manifests, improve health checks |
 | Monitoring (metrics)         | 9/10  | Excellent — Prometheus + Grafana ready |
-| Monitoring (alerting + logs) | 4/10  | No alerting rules, no structured logging |
+| Monitoring (alerting + logs) | 7/10  | Structured logging + request correlation done; alerting rules still needed |
 | Security                     | 4/10  | No rate limiting, open CORS, no plugin sandboxing |
 | Resilience                   | 5/10  | Good shutdown, weak self-healing |
 | Testing                      | 3/10  | Config tests only, no integration/API tests |
