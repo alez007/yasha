@@ -41,9 +41,9 @@ Future development priorities for making Yasha production-ready, organized by se
 
 - [ ] **Prometheus alerting rules** — error rate thresholds, latency P99 breaches, model load failures, GPU memory pressure, Ray actor crashes
 - [ ] **SLO/SLI definitions** — define target availability and latency for each endpoint type
-- [ ] **Structured logging (JSON)** — for log aggregation (ELK/Loki/Splunk)
-- [ ] **Request-ID correlation** — trace a request from gateway through Ray actor boundaries
-- [ ] **Log level configuration** — via environment variable
+- [x] **Structured logging (JSON)** — `YASHA_LOG_FORMAT=json` for log aggregation (ELK/Loki/Splunk)
+- [x] **Request-ID correlation** — trace a request from gateway through Ray actor boundaries via `contextvars`
+- [x] **Log level configuration** — `YASHA_LOG_LEVEL` controls app logs; `TRACE` enables library debug logs
 
 ### Resilience
 
@@ -95,7 +95,7 @@ Future development priorities for making Yasha production-ready, organized by se
 |------------------------------|---------|--------|
 | Architecture & Design        | 8/10    | 9/10   |
 | Monitoring (metrics)         | 9/10    | 9/10   |
-| Monitoring (alerting + logs) | 4/10    | 8/10   |
+| Monitoring (alerting + logs) | 7/10    | 8/10   |
 | Security                     | 4/10    | 8/10   |
 | Resilience                   | 5/10    | 8/10   |
 | Testing                      | 3/10    | 7/10   |

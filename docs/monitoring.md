@@ -1,6 +1,54 @@
-# Monitoring
+# Monitoring & Logging
 
 Yasha exposes Prometheus metrics through a single port via Ray's metrics agent. When enabled, all metrics — Ray cluster, Ray Serve, vLLM engine, and custom Yasha metrics — are available on one scrape endpoint.
+
+## Logging
+
+Yasha uses a centralized logging system with structured output and request correlation. All application logs go through the `yasha.*` logger hierarchy, separate from library logs (Ray, vLLM, etc.).
+
+### Configuration
+
+| Env Var | Default | Description |
+|---|---|---|
+| `YASHA_LOG_LEVEL` | `INFO` | App log level. Set to `DEBUG` for full request/response bodies. Set to `TRACE` to also enable library debug logs. |
+| `YASHA_LOG_FORMAT` | `text` | `text` for human-readable output, `json` for structured JSON lines (for log aggregation with ELK/Loki/Splunk). |
+
+### Log Levels
+
+| Level | App logs (`yasha.*`) | Library logs (Ray, vLLM, transformers) |
+|---|---|---|
+| `INFO` (default) | Startup, deployment, request summaries | `WARNING` only |
+| `DEBUG` | Full request/response bodies, per-chunk details | `WARNING` only |
+| `TRACE` | Same as `DEBUG` | `DEBUG` — all library internals |
+
+### Request Correlation
+
+Every API request is assigned a unique request ID that appears in all log lines for that request — both in the API gateway process and in the model deployment actor. This allows tracing a request end-to-end across Ray actor boundaries.
+
+Text format example:
+```
+[2025-04-09 14:06:54] INFO     yasha.api [a1b2c3d4] | chat_completion model=llama messages=3 stream=True max_tokens=512
+```
+
+JSON format example:
+```json
+{"timestamp": "2025-04-09T14:06:54", "level": "INFO", "logger": "yasha.api", "message": "chat_completion model=llama messages=3 stream=True max_tokens=512", "request_id": "a1b2c3d4", "pid": 12345}
+```
+
+### Logger Names
+
+| Logger | Scope |
+|---|---|
+| `yasha.startup` | Application initialization and shutdown |
+| `yasha.api` | API gateway endpoints |
+| `yasha.api.auth` | Authentication middleware |
+| `yasha.infer` | Base inference layer |
+| `yasha.infer.deployment` | Ray Serve model deployment actor |
+| `yasha.infer.vllm` | vLLM inference backend |
+| `yasha.infer.transformers` | Transformers inference backend |
+| `yasha.infer.diffusers` | Diffusers inference backend |
+| `yasha.infer.custom` | Custom/plugin inference backend |
+| `yasha.plugin.<name>` | Individual plugins (kokoro, bark, orpheus) |
 
 ## Architecture
 
