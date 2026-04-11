@@ -1,21 +1,21 @@
 # Monitoring & Logging
 
-Yasha exposes Prometheus metrics through a single port via Ray's metrics agent. When enabled, all metrics — Ray cluster, Ray Serve, vLLM engine, and custom Yasha metrics — are available on one scrape endpoint.
+Modelship exposes Prometheus metrics through a single port via Ray's metrics agent. When enabled, all metrics — Ray cluster, Ray Serve, vLLM engine, and custom Modelship metrics — are available on one scrape endpoint.
 
 ## Logging
 
-Yasha uses a centralized logging system with structured output and request correlation. All application logs go through the `yasha.*` logger hierarchy, separate from library logs (Ray, vLLM, etc.).
+Modelship uses a centralized logging system with structured output and request correlation. All application logs go through the `modelship.*` logger hierarchy, separate from library logs (Ray, vLLM, etc.).
 
 ### Configuration
 
 | Env Var | Default | Description |
 |---|---|---|
-| `YASHA_LOG_LEVEL` | `INFO` | App log level. Set to `DEBUG` for full request/response bodies. Set to `TRACE` to also enable library debug logs. |
-| `YASHA_LOG_FORMAT` | `text` | `text` for human-readable output, `json` for structured JSON lines (for log aggregation with ELK/Loki/Splunk). |
+| `MSHIP_LOG_LEVEL` | `INFO` | App log level. Set to `DEBUG` for full request/response bodies. Set to `TRACE` to also enable library debug logs. |
+| `MSHIP_LOG_FORMAT` | `text` | `text` for human-readable output, `json` for structured JSON lines (for log aggregation with ELK/Loki/Splunk). |
 
 ### Log Levels
 
-| Level | App logs (`yasha.*`) | Library logs (Ray, vLLM, transformers) |
+| Level | App logs (`modelship.*`) | Library logs (Ray, vLLM, transformers) |
 |---|---|---|
 | `INFO` (default) | Startup, deployment, request summaries | `WARNING` only |
 | `DEBUG` | Full request/response bodies, per-chunk details | `WARNING` only |
@@ -27,28 +27,28 @@ Every API request is assigned a unique request ID that appears in all log lines 
 
 Text format example:
 ```
-[2025-04-09 14:06:54] INFO     yasha.api [a1b2c3d4] | chat_completion model=llama messages=3 stream=True max_tokens=512
+[2025-04-09 14:06:54] INFO     modelship.api [a1b2c3d4] | chat_completion model=llama messages=3 stream=True max_tokens=512
 ```
 
 JSON format example:
 ```json
-{"timestamp": "2025-04-09T14:06:54", "level": "INFO", "logger": "yasha.api", "message": "chat_completion model=llama messages=3 stream=True max_tokens=512", "request_id": "a1b2c3d4", "pid": 12345}
+{"timestamp": "2025-04-09T14:06:54", "level": "INFO", "logger": "modelship.api", "message": "chat_completion model=llama messages=3 stream=True max_tokens=512", "request_id": "a1b2c3d4", "pid": 12345}
 ```
 
 ### Logger Names
 
 | Logger | Scope |
 |---|---|
-| `yasha.startup` | Application initialization and shutdown |
-| `yasha.api` | API gateway endpoints |
-| `yasha.api.auth` | Authentication middleware |
-| `yasha.infer` | Base inference layer |
-| `yasha.infer.deployment` | Ray Serve model deployment actor |
-| `yasha.infer.vllm` | vLLM inference backend |
-| `yasha.infer.transformers` | Transformers inference backend |
-| `yasha.infer.diffusers` | Diffusers inference backend |
-| `yasha.infer.custom` | Custom/plugin inference backend |
-| `yasha.plugin.<name>` | Individual plugins (kokoro, bark, orpheus) |
+| `modelship.startup` | Application initialization and shutdown |
+| `modelship.api` | API gateway endpoints |
+| `modelship.api.auth` | Authentication middleware |
+| `modelship.infer` | Base inference layer |
+| `modelship.infer.deployment` | Ray Serve model deployment actor |
+| `modelship.infer.vllm` | vLLM inference backend |
+| `modelship.infer.transformers` | Transformers inference backend |
+| `modelship.infer.diffusers` | Diffusers inference backend |
+| `modelship.infer.custom` | Custom/plugin inference backend |
+| `modelship.plugin.<name>` | Individual plugins (kokoro, bark, orpheus) |
 
 ## Architecture
 
@@ -58,48 +58,48 @@ Prometheus  ──scrape──>  Ray Metrics Agent (:8079)
                               |-- ray_node_*          Ray cluster: GPU, CPU, memory
                               |-- ray_serve_*         Ray Serve: HTTP requests, latency, replicas
                               |-- ray_vllm_*          vLLM engine: KV cache, TTFT, tokens, queue
-                              |-- ray_yasha_*         Custom: per-model latency, errors, load time
+                              |-- ray_modelship_*         Custom: per-model latency, errors, load time
 ```
 
 > **Note:** All metrics are prefixed with `ray_` by Ray's metrics agent. vLLM metric names are also sanitized (`:` → `_`), so e.g. the vLLM-native `vllm:kv_cache_usage_perc` becomes `ray_vllm_kv_cache_usage_perc`.
 
 ## Enabling Metrics
 
-Metrics are enabled by default. Set `YASHA_METRICS=false` to disable:
+Metrics are enabled by default. Set `MSHIP_METRICS=false` to disable:
 
 ```bash
 docker run --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token \
-  -e YASHA_METRICS=true \
-  -v ./models.yaml:/yasha/config/models.yaml \
+  -e MSHIP_METRICS=true \
+  -v ./models.yaml:/modelship/config/models.yaml \
   -p 8000:8000 -p 8079:8079 -p 8265:8265 \
-  ghcr.io/alez007/yasha:latest
+  ghcr.io/alez007/modelship:latest
 ```
 
 | Env Var | Default | Description |
 |---|---|---|
-| `YASHA_METRICS` | `true` | Master toggle. Enables all metrics and the Ray metrics export port. |
-| `RAY_METRICS_EXPORT_PORT` | `8079` | Port for the Ray metrics agent (only active when `YASHA_METRICS=true`). |
+| `MSHIP_METRICS` | `true` | Master toggle. Enables all metrics and the Ray metrics export port. |
+| `RAY_METRICS_EXPORT_PORT` | `8079` | Port for the Ray metrics agent (only active when `MSHIP_METRICS=true`). |
 
-Set `YASHA_METRICS=false` to disable all metrics collection. When disabled, port 8079 is not exposed and there is zero overhead.
+Set `MSHIP_METRICS=false` to disable all metrics collection. When disabled, port 8079 is not exposed and there is zero overhead.
 
 ## Connecting to Prometheus
 
-Add Yasha as a scrape target in your `prometheus.yml`:
+Add Modelship as a scrape target in your `prometheus.yml`:
 
 ```yaml
 scrape_configs:
-  - job_name: yasha
+  - job_name: modelship
     scrape_interval: 15s
     static_configs:
-      - targets: ["<yasha-host>:8079"]
+      - targets: ["<modelship-host>:8079"]
 ```
 
 For multi-node Ray clusters, use Ray's auto-generated service discovery file instead of static targets:
 
 ```yaml
 scrape_configs:
-  - job_name: yasha
+  - job_name: modelship
     file_sd_configs:
       - files: ["/tmp/ray/prom_metrics_service_discovery.json"]
 ```
@@ -118,12 +118,12 @@ The dashboard has 6 rows:
 
 | Row | What it shows | Metric sources |
 |---|---|---|
-| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_yasha_*` |
-| **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed) | `ray_yasha_*` |
+| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_modelship_*` |
+| **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed) | `ray_modelship_*` |
 | **vLLM Engine** | KV cache usage, TTFT, inter-token latency, token throughput, queue depth, preemptions, prefix cache hit rate | `ray_vllm_*` |
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory | `ray_node_*` |
 | **Ray Serve** | Health check latency, request count, deployment processing latency, HTTP request latency | `ray_serve_*` |
-| **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_yasha_*` |
+| **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_modelship_*` |
 
 ## Health Check
 
@@ -134,7 +134,7 @@ curl http://localhost:8000/health
 # {"status": "ok"}
 ```
 
-## Yasha Metrics Reference
+## Modelship Metrics Reference
 
 All custom metrics are defined via `ray.serve.metrics` and exported through Ray's metrics agent with a `ray_` prefix.
 
@@ -142,40 +142,40 @@ All custom metrics are defined via `ray.serve.metrics` and exported through Ray'
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
-| `ray_yasha_request_total` | Counter | `model`, `endpoint`, `status` | Total requests by model and API method |
-| `ray_yasha_request_duration_seconds` | Histogram | `model`, `endpoint` | End-to-end request latency |
-| `ray_yasha_request_errors_total` | Counter | `model`, `endpoint`, `error_type` | Errors: `inference_error`, `stream_error`, `unhandled` |
-| `ray_yasha_request_in_progress` | Gauge | `model`, `endpoint` | Currently processing requests |
-| `ray_yasha_client_disconnects_total` | Counter | `model`, `endpoint` | Client disconnected before response completed |
-| `ray_yasha_stream_chunks_total` | Counter | `model` | Streaming chunks emitted |
+| `ray_modelship_request_total` | Counter | `model`, `endpoint`, `status` | Total requests by model and API method |
+| `ray_modelship_request_duration_seconds` | Histogram | `model`, `endpoint` | End-to-end request latency |
+| `ray_modelship_request_errors_total` | Counter | `model`, `endpoint`, `error_type` | Errors: `inference_error`, `stream_error`, `unhandled` |
+| `ray_modelship_request_in_progress` | Gauge | `model`, `endpoint` | Currently processing requests |
+| `ray_modelship_client_disconnects_total` | Counter | `model`, `endpoint` | Client disconnected before response completed |
+| `ray_modelship_stream_chunks_total` | Counter | `model` | Streaming chunks emitted |
 
 ### Model Deployment
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
-| `ray_yasha_model_load_duration_seconds` | Histogram | `model`, `loader` | Time to initialize a model |
-| `ray_yasha_model_load_failures_total` | Counter | `model`, `loader` | Failed model initializations |
-| `ray_yasha_models_loaded` | Gauge | | Number of loaded and ready models |
+| `ray_modelship_model_load_duration_seconds` | Histogram | `model`, `loader` | Time to initialize a model |
+| `ray_modelship_model_load_failures_total` | Counter | `model`, `loader` | Failed model initializations |
+| `ray_modelship_models_loaded` | Gauge | | Number of loaded and ready models |
 
 ### Inference Timing
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
-| `ray_yasha_generation_duration_seconds` | Histogram | `model` | Chat/text generation latency |
-| `ray_yasha_tts_generation_duration_seconds` | Histogram | `model` | Text-to-speech latency |
-| `ray_yasha_image_generation_duration_seconds` | Histogram | `model` | Image generation latency |
-| `ray_yasha_transcription_duration_seconds` | Histogram | `model` | Speech-to-text latency |
-| `ray_yasha_embedding_duration_seconds` | Histogram | `model` | Embedding latency |
+| `ray_modelship_generation_duration_seconds` | Histogram | `model` | Chat/text generation latency |
+| `ray_modelship_tts_generation_duration_seconds` | Histogram | `model` | Text-to-speech latency |
+| `ray_modelship_image_generation_duration_seconds` | Histogram | `model` | Image generation latency |
+| `ray_modelship_transcription_duration_seconds` | Histogram | `model` | Speech-to-text latency |
+| `ray_modelship_embedding_duration_seconds` | Histogram | `model` | Embedding latency |
 
 ### Resource Cleanup
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
-| `ray_yasha_resource_cleanup_errors_total` | Counter | `model`, `component` | Errors during engine/model cleanup |
+| `ray_modelship_resource_cleanup_errors_total` | Counter | `model`, `component` | Errors during engine/model cleanup |
 
 ## Built-in Metrics from vLLM and Ray
 
-These are automatically available when `YASHA_METRICS=true` — no additional configuration needed.
+These are automatically available when `MSHIP_METRICS=true` — no additional configuration needed.
 
 ### vLLM (`ray_vllm_*`)
 

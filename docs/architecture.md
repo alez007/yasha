@@ -2,7 +2,7 @@
 
 ## Overview
 
-Yasha is built on two core technologies:
+Modelship is built on two core technologies:
 - **[Ray Serve](https://docs.ray.io/en/latest/serve/)** — manages model deployments as isolated actors with independent scaling and failure handling
 - **[vLLM](https://github.com/vllm-project/vllm)** — high-throughput LLM inference engine with continuous batching and PagedAttention
 
@@ -48,7 +48,7 @@ TTS backends are isolated `uv` workspace packages under `plugins/`. Each plugin:
 
 - Implements `BasePlugin` with `start()` and `generate()` methods
 - Has its own dependencies, isolated from the main project
-- Is opt-in via `uv sync --extra <plugin>` or the `YASHA_PLUGINS` env var
+- Is opt-in via `uv sync --extra <plugin>` or the `MSHIP_PLUGINS` env var
 - Returns audio as a single response or as an SSE async generator
 
 See [Plugin Development](plugins.md) for details.
@@ -58,10 +58,10 @@ See [Plugin Development](plugins.md) for details.
 | File | Purpose |
 |------|---------|
 | `start.py` | Entry point — initializes Ray, deploys models |
-| `yasha/openai/api.py` | FastAPI gateway with OpenAI endpoints |
-| `yasha/infer/model_deployment.py` | Ray Serve deployment actor |
-| `yasha/infer/infer_config.py` | Pydantic config models and protocols |
-| `yasha/infer/vllm/vllm_infer.py` | vLLM engine wrapper |
-| `yasha/infer/diffusers/diffusers_infer.py` | Diffusers pipeline wrapper |
-| `yasha/plugins/base_plugin.py` | Plugin base classes |
+| `modelship/openai/api.py` | FastAPI gateway with OpenAI endpoints |
+| `modelship/infer/model_deployment.py` | Ray Serve deployment actor |
+| `modelship/infer/infer_config.py` | Pydantic config models and protocols |
+| `modelship/infer/vllm/vllm_infer.py` | vLLM engine wrapper |
+| `modelship/infer/diffusers/diffusers_infer.py` | Diffusers pipeline wrapper |
+| `modelship/plugins/base_plugin.py` | Plugin base classes |
 | `config/models.yaml` | Model configuration |

@@ -12,7 +12,7 @@ members = [
     "bark",
     "kokoro",
     "orpheus",
-    "yasha",
+    "modelship",
 ]
 
 [[package]]
@@ -247,7 +247,7 @@ dependencies = [
     { name = "scipy" },
     { name = "torch" },
     { name = "transformers" },
-    { name = "yasha" },
+    { name = "modelship" },
 ]
 
 [package.metadata]
@@ -256,7 +256,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.16.1" },
     { name = "torch", specifier = ">=2.10.0" },
     { name = "transformers", specifier = ">=4.57.5" },
-    { name = "yasha", editable = "." },
+    { name = "modelship", editable = "." },
 ]
 
 [[package]]
@@ -1177,7 +1177,7 @@ dependencies = [
     { name = "numpy" },
     { name = "onnxruntime-gpu" },
     { name = "scipy" },
-    { name = "yasha" },
+    { name = "modelship" },
 ]
 
 [package.metadata]
@@ -1186,7 +1186,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "onnxruntime-gpu", specifier = ">=1.20.1" },
     { name = "scipy", specifier = ">=1.16.1" },
-    { name = "yasha", editable = "." },
+    { name = "modelship", editable = "." },
 ]
 
 [[package]]
@@ -2021,7 +2021,7 @@ dependencies = [
     { name = "numpy" },
     { name = "snac" },
     { name = "transformers" },
-    { name = "yasha" },
+    { name = "modelship" },
 ]
 
 [package.metadata]
@@ -2029,7 +2029,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "snac" },
     { name = "transformers", specifier = ">=4.57.5" },
-    { name = "yasha", editable = "." },
+    { name = "modelship", editable = "." },
 ]
 
 [[package]]
@@ -3709,7 +3709,7 @@ wheels = [
 ]
 
 [[package]]
-name = "yasha"
+name = "modelship"
 version = "0.1.18"
 source = { editable = "." }
 dependencies = [

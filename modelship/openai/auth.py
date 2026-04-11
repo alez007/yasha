@@ -5,8 +5,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from yasha.logging import get_logger
-from yasha.metrics import AUTH_FAILURES_TOTAL
+from modelship.logging import get_logger
+from modelship.metrics import AUTH_FAILURES_TOTAL
 
 logger = get_logger("api.auth")
 
@@ -53,6 +53,6 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
 
 
 def get_api_keys() -> set[str]:
-    """Read allowed API keys from the ``YASHA_API_KEYS`` environment variable (comma-separated)."""
-    raw = os.environ.get("YASHA_API_KEYS", "")
+    """Read allowed API keys from the ``MSHIP_API_KEYS`` environment variable (comma-separated)."""
+    raw = os.environ.get("MSHIP_API_KEYS", "")
     return {k.strip() for k in raw.split(",") if k.strip()}

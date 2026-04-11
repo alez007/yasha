@@ -4,22 +4,22 @@ from typing import cast
 
 from starlette.requests import Request
 
-from yasha.infer.base_infer import BaseInfer
-from yasha.infer.custom.openai.serving_speech import OpenAIServingSpeech
-from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, YashaModelConfig
-from yasha.logging import get_logger
-from yasha.openai.protocol import (
+from modelship.infer.base_infer import BaseInfer
+from modelship.infer.custom.openai.serving_speech import OpenAIServingSpeech
+from modelship.infer.infer_config import DisconnectProxy, ModelshipModelConfig, ModelUsecase
+from modelship.logging import get_logger
+from modelship.openai.protocol import (
     ErrorResponse,
     RawSpeechResponse,
     SpeechRequest,
 )
-from yasha.plugins.base_plugin import BasePlugin, PluginProto
+from modelship.plugins.base_plugin import BasePlugin, PluginProto
 
 logger = get_logger("infer.custom")
 
 
 class CustomInfer(BaseInfer):
-    def __init__(self, model_config: YashaModelConfig):
+    def __init__(self, model_config: ModelshipModelConfig):
         super().__init__(model_config)
         self.custom_engine: BasePlugin | None = None
         self.serving_speech: OpenAIServingSpeech | None = None

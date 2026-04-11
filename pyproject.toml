@@ -1,5 +1,5 @@
 [project]
-name = "yasha"
+name = "modelship"
 version = "0.1.18"
 description = "Self-hosted, multi-model AI inference server. Run LLMs, TTS, STT, embeddings, and image generation with an OpenAI-compatible API."
 authors = [
@@ -51,10 +51,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/alez007/yasha"
-Documentation = "https://github.com/alez007/yasha/tree/main/docs"
-Issues = "https://github.com/alez007/yasha/issues"
-Changelog = "https://github.com/alez007/yasha/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/alez007/modelship"
+Documentation = "https://github.com/alez007/modelship/tree/main/docs"
+Issues = "https://github.com/alez007/modelship/issues"
+Changelog = "https://github.com/alez007/modelship/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["uv_build"]
@@ -69,13 +69,13 @@ bark = { workspace = true }
 orpheus = { workspace = true }
 
 [tool.uv.build-backend]
-module-name = "yasha"
+module-name = "modelship"
 module-root = ""
 
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-src = ["yasha", "plugins"]
+src = ["modelship", "plugins"]
 exclude = [".cache", ".venv"]
 
 [tool.ruff.lint]
@@ -95,12 +95,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["yasha"]
+known-first-party = ["modelship"]
 
 [tool.pyright]
 pythonVersion = "3.12"
 venvPath = "/"
 venv = ".venv"
-include = ["yasha", "plugins", "start.py"]
+include = ["modelship", "plugins", "start.py"]
 exclude = [".cache", ".venv"]
 typeCheckingMode = "basic"

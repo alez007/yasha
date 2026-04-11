@@ -28,7 +28,7 @@ What actually happened. Include error messages or logs if available.
 - **GPU**: (e.g. RTX 3090 24GB)
 - **Docker version**: 
 - **NVIDIA driver version**: 
-- **Yasha version/tag**: 
+- **Modelship version/tag**: 
 - **OS**: 
 
 ## Configuration

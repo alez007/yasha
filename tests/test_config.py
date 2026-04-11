@@ -1,20 +1,20 @@
-"""Tests for Yasha model configuration parsing and validation."""
+"""Tests for Modelship model configuration parsing and validation."""
 
 import pytest
 from pydantic import ValidationError
 
-from yasha.infer.infer_config import (
+from modelship.infer.infer_config import (
     ModelLoader,
+    ModelshipConfig,
+    ModelshipModelConfig,
     ModelUsecase,
     VllmEngineConfig,
-    YashaConfig,
-    YashaModelConfig,
 )
 
 
-class TestYashaModelConfig:
+class TestModelshipModelConfig:
     def test_minimal_vllm_model(self):
-        config = YashaModelConfig(
+        config = ModelshipModelConfig(
             name="test-llm",
             model="some-org/some-model",
             usecase=ModelUsecase.generate,
@@ -27,7 +27,7 @@ class TestYashaModelConfig:
 
     def test_custom_loader_requires_plugin(self):
         with pytest.raises(ValidationError, match="loader='custom' requires plugin"):
-            YashaModelConfig(
+            ModelshipModelConfig(
                 name="test-tts",
                 model="some-model",
                 usecase=ModelUsecase.tts,
@@ -35,7 +35,7 @@ class TestYashaModelConfig:
             )
 
     def test_custom_loader_with_plugin(self):
-        config = YashaModelConfig(
+        config = ModelshipModelConfig(
             name="test-tts",
             model="some-model",
             usecase=ModelUsecase.tts,
@@ -45,7 +45,7 @@ class TestYashaModelConfig:
         assert config.plugin == "kokoro"
 
     def test_custom_loader_plugin_only(self):
-        config = YashaModelConfig(
+        config = ModelshipModelConfig(
             name="test-tts",
             model="some-model",
             usecase=ModelUsecase.tts,
@@ -56,7 +56,7 @@ class TestYashaModelConfig:
 
     def test_model_required(self):
         with pytest.raises(ValidationError, match="Field required"):
-            YashaModelConfig(
+            ModelshipModelConfig(
                 name="test-llm",
                 usecase=ModelUsecase.generate,
                 loader=ModelLoader.vllm,
@@ -64,14 +64,14 @@ class TestYashaModelConfig:
 
     def test_loader_required(self):
         with pytest.raises(ValidationError, match="Field required"):
-            YashaModelConfig(
+            ModelshipModelConfig(
                 name="test-llm",
                 model="some-model",
                 usecase=ModelUsecase.generate,
             )
 
     def test_gpu_allocation_fraction(self):
-        config = YashaModelConfig(
+        config = ModelshipModelConfig(
             name="test-llm",
             model="some-model",
             usecase=ModelUsecase.generate,
@@ -82,7 +82,7 @@ class TestYashaModelConfig:
 
     def test_all_usecases_valid(self):
         for usecase in ModelUsecase:
-            config = YashaModelConfig(
+            config = ModelshipModelConfig(
                 name=f"test-{usecase.value}",
                 model="some-model",
                 usecase=usecase,
@@ -95,7 +95,7 @@ class TestYashaModelConfig:
             kwargs = {"name": "test", "model": "some-model", "usecase": ModelUsecase.generate}
             if loader == ModelLoader.custom:
                 kwargs["plugin"] = "test-plugin"
-            config = YashaModelConfig(loader=loader, **kwargs)
+            config = ModelshipModelConfig(loader=loader, **kwargs)
             assert config.loader == loader
 
 
@@ -120,18 +120,18 @@ class TestVllmEngineConfig:
         assert config.tool_call_parser == "llama3_json"
 
 
-class TestYashaConfig:
+class TestModelshipConfig:
     def test_multi_model_config(self):
-        config = YashaConfig(
+        config = ModelshipConfig(
             models=[
-                YashaModelConfig(
+                ModelshipModelConfig(
                     name="llm",
                     model="some-org/some-llm",
                     usecase=ModelUsecase.generate,
                     loader=ModelLoader.vllm,
                     num_gpus=0.70,
                 ),
-                YashaModelConfig(
+                ModelshipModelConfig(
                     name="tts",
                     model="some-model",
                     usecase=ModelUsecase.tts,
@@ -146,13 +146,13 @@ class TestYashaConfig:
         assert config.models[1].name == "tts"
 
     def test_empty_models_list(self):
-        config = YashaConfig(models=[])
+        config = ModelshipConfig(models=[])
         assert len(config.models) == 0
 
     def test_duplicate_names_allowed(self):
-        config = YashaConfig(
+        config = ModelshipConfig(
             models=[
-                YashaModelConfig(
+                ModelshipModelConfig(
                     name="kokoro",
                     model="hexgrad/Kokoro-82M",
                     usecase=ModelUsecase.tts,
@@ -160,7 +160,7 @@ class TestYashaConfig:
                     plugin="kokoro",
                     num_gpus=0.07,
                 ),
-                YashaModelConfig(
+                ModelshipModelConfig(
                     name="kokoro",
                     model="hexgrad/Kokoro-82M",
                     usecase=ModelUsecase.tts,
@@ -176,7 +176,7 @@ class TestYashaConfig:
 
 class TestNumReplicas:
     def test_default_num_replicas(self):
-        config = YashaModelConfig(
+        config = ModelshipModelConfig(
             name="test",
             model="some-model",
             usecase=ModelUsecase.generate,
@@ -185,7 +185,7 @@ class TestNumReplicas:
         assert config.num_replicas == 1
 
     def test_custom_num_replicas(self):
-        config = YashaModelConfig(
+        config = ModelshipModelConfig(
             name="test",
             model="some-model",
             usecase=ModelUsecase.generate,

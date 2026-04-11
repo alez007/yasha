@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from yasha.openai.auth import ApiKeyMiddleware, get_api_keys
+from modelship.openai.auth import ApiKeyMiddleware, get_api_keys
 
 
 def _make_app(api_keys: set[str]) -> FastAPI:
@@ -101,17 +101,17 @@ class TestApiKeyMiddleware:
 
 class TestGetApiKeys:
     def test_returns_keys_from_env(self):
-        with patch.dict(os.environ, {"YASHA_API_KEYS": "sk-a,sk-b,sk-c"}):
+        with patch.dict(os.environ, {"MSHIP_API_KEYS": "sk-a,sk-b,sk-c"}):
             keys = get_api_keys()
         assert keys == {"sk-a", "sk-b", "sk-c"}
 
     def test_strips_whitespace(self):
-        with patch.dict(os.environ, {"YASHA_API_KEYS": " sk-a , sk-b "}):
+        with patch.dict(os.environ, {"MSHIP_API_KEYS": " sk-a , sk-b "}):
             keys = get_api_keys()
         assert keys == {"sk-a", "sk-b"}
 
     def test_empty_env_returns_empty_set(self):
-        with patch.dict(os.environ, {"YASHA_API_KEYS": ""}):
+        with patch.dict(os.environ, {"MSHIP_API_KEYS": ""}):
             keys = get_api_keys()
         assert keys == set()
 
@@ -121,6 +121,6 @@ class TestGetApiKeys:
         assert keys == set()
 
     def test_ignores_empty_entries(self):
-        with patch.dict(os.environ, {"YASHA_API_KEYS": "sk-a,,,,sk-b,"}):
+        with patch.dict(os.environ, {"MSHIP_API_KEYS": "sk-a,,,,sk-b,"}):
             keys = get_api_keys()
         assert keys == {"sk-a", "sk-b"}

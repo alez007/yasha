@@ -26,6 +26,6 @@ def download(url: str, file_path: str, overwrite: bool = False):
 
 
 def cache_dir() -> str:
-    path = os.environ.get("YASHA_CACHE_DIR", "/yasha/.cache/models")
+    path = os.environ.get("MSHIP_CACHE_DIR", "/modelship/.cache/models")
     os.makedirs(path, exist_ok=True)
     return path

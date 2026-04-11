@@ -15,7 +15,7 @@ Only the latest release receives security fixes.
 
 Use GitHub's private advisory system to report vulnerabilities confidentially:
 
-1. Go to the [Security Advisories](https://github.com/alez007/yasha/security/advisories) page
+1. Go to the [Security Advisories](https://github.com/alez007/modelship/security/advisories) page
 2. Click **Report a vulnerability**
 3. Fill in the details — affected component, reproduction steps, potential impact
 

@@ -1,10 +1,10 @@
 [project]
 name = "bark"
 version = "0.1.0"
-description = "Bark TTS plugin for Yasha"
+description = "Bark TTS plugin for Modelship"
 requires-python = "==3.12.10"
 dependencies = [
-    "yasha",
+    "modelship",
     "transformers>=4.57.5",
     "torch>=2.10.0",
     "scipy>=1.16.1",
@@ -16,7 +16,7 @@ requires = ["uv_build"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
-yasha = { workspace = true }
+modelship = { workspace = true }
 
 [tool.uv.build-backend]
 module-name = "bark"
