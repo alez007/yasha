@@ -24,7 +24,6 @@ Example request:
 
 import base64
 import io
-import logging
 import os
 import shutil
 from collections.abc import AsyncGenerator
@@ -37,11 +36,12 @@ from scipy.io.wavfile import write as write_wav
 from scipy.signal import resample_poly
 
 from yasha.infer.infer_config import YashaModelConfig
+from yasha.logging import get_logger
 from yasha.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechResponse
 from yasha.plugins.base_plugin import BasePlugin
 from yasha.utils import cache_dir, download
 
-logger = logging.getLogger("ray")
+logger = get_logger("plugin.kokoro")
 
 
 class ModelPlugin(BasePlugin):
@@ -121,7 +121,7 @@ class ModelPlugin(BasePlugin):
     async def generate_sse(self, input: str, voice: str, request_id: str) -> AsyncGenerator[str, None]:
         async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):  # type: ignore[union-attr]
             audio_bytes, sample_rate = self._resample(audio_bytes, sample_rate)
-            logger.info("got some audio bytes (sample rate %s) for input: %s", sample_rate, input)
+            logger.debug("audio chunk sample_rate=%s bytes=%d", sample_rate, len(audio_bytes))
             encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
             event_data = SpeechResponse(audio=encoded_audio, type="speech.audio.delta")
             yield f"data: {event_data.model_dump_json()}\n\n"

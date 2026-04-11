@@ -1,4 +1,3 @@
-import logging
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -11,6 +10,7 @@ from yasha.infer.diffusers.diffusers_infer import DiffusersInfer
 from yasha.infer.infer_config import DisconnectProxy, ModelLoader, YashaModelConfig
 from yasha.infer.transformers.transformers_infer import TransformersInfer
 from yasha.infer.vllm.vllm_infer import VllmInfer
+from yasha.logging import configure_logging, get_logger
 from yasha.metrics import (
     EMBEDDING_DURATION_SECONDS,
     GENERATION_DURATION_SECONDS,
@@ -29,12 +29,13 @@ from yasha.openai.protocol import (
     TranslationRequest,
 )
 
-logger = logging.getLogger("ray.serve")
+logger = get_logger("infer.deployment")
 
 
 @serve.deployment
 class ModelDeployment:
     async def __init__(self, config: YashaModelConfig):
+        configure_logging()
         self.config = config
         start = time.monotonic()
         self.infer: BaseInfer
@@ -58,7 +59,20 @@ class ModelDeployment:
                 time.monotonic() - start, tags={"model": config.name, "loader": config.loader.value}
             )
 
-    async def generate(self, request: ChatCompletionRequest, request_headers: dict[str, str], disconnect_event: Any):
+    @staticmethod
+    def _set_request_id(request_id: str | None) -> None:
+        from yasha.logging import request_id_var
+
+        request_id_var.set(request_id)
+
+    async def generate(
+        self,
+        request: ChatCompletionRequest,
+        request_headers: dict[str, str],
+        disconnect_event: Any,
+        request_id: str | None = None,
+    ):
+        self._set_request_id(request_id)
         proxy = DisconnectProxy(disconnect_event, request_headers)
         start = time.monotonic()
         result = await self.infer.create_chat_completion(request, proxy)
@@ -69,7 +83,14 @@ class ModelDeployment:
         else:
             yield result
 
-    async def embed(self, request: EmbeddingRequest, request_headers: dict[str, str], disconnect_event: Any):
+    async def embed(
+        self,
+        request: EmbeddingRequest,
+        request_headers: dict[str, str],
+        disconnect_event: Any,
+        request_id: str | None = None,
+    ):
+        self._set_request_id(request_id)
         proxy = DisconnectProxy(disconnect_event, request_headers)
         start = time.monotonic()
         result = await self.infer.create_embedding(request, proxy)
@@ -81,8 +102,14 @@ class ModelDeployment:
             yield result
 
     async def transcribe(
-        self, audio_data: bytes, request: TranscriptionRequest, request_headers: dict[str, str], disconnect_event: Any
+        self,
+        audio_data: bytes,
+        request: TranscriptionRequest,
+        request_headers: dict[str, str],
+        disconnect_event: Any,
+        request_id: str | None = None,
     ):
+        self._set_request_id(request_id)
         proxy = DisconnectProxy(disconnect_event, request_headers)
         start = time.monotonic()
         result = await self.infer.create_transcription(audio_data, request, proxy)
@@ -94,8 +121,14 @@ class ModelDeployment:
             yield result
 
     async def translate(
-        self, audio_data: bytes, request: TranslationRequest, request_headers: dict[str, str], disconnect_event: Any
+        self,
+        audio_data: bytes,
+        request: TranslationRequest,
+        request_headers: dict[str, str],
+        disconnect_event: Any,
+        request_id: str | None = None,
     ):
+        self._set_request_id(request_id)
         proxy = DisconnectProxy(disconnect_event, request_headers)
         start = time.monotonic()
         result = await self.infer.create_translation(audio_data, request, proxy)
@@ -106,7 +139,14 @@ class ModelDeployment:
         else:
             yield result
 
-    async def speak(self, request: SpeechRequest, request_headers: dict[str, str], disconnect_event: Any):
+    async def speak(
+        self,
+        request: SpeechRequest,
+        request_headers: dict[str, str],
+        disconnect_event: Any,
+        request_id: str | None = None,
+    ):
+        self._set_request_id(request_id)
         proxy = DisconnectProxy(disconnect_event, request_headers)
         start = time.monotonic()
         result = await self.infer.create_speech(request, proxy)
@@ -117,7 +157,14 @@ class ModelDeployment:
         else:
             yield result
 
-    async def imagine(self, request: ImageGenerationRequest, request_headers: dict[str, str], disconnect_event: Any):
+    async def imagine(
+        self,
+        request: ImageGenerationRequest,
+        request_headers: dict[str, str],
+        disconnect_event: Any,
+        request_id: str | None = None,
+    ):
+        self._set_request_id(request_id)
         proxy = DisconnectProxy(disconnect_event, request_headers)
         start = time.monotonic()
         result = await self.infer.create_image_generation(request, proxy)
