@@ -35,15 +35,7 @@ class CustomInfer(BaseInfer):
         self.serving_speech = await self.init_serving_speech()
 
     async def warmup(self) -> None:
-        if self.serving_speech is None:
-            return
-        logger.info("Warming up custom TTS model: %s", self.model_config.name)
-        request = SpeechRequest(model=self.model_config.name, input="warmup", voice="default")
-        result = await self.create_speech(request, DisconnectProxy(None, {}))
-        if isinstance(result, AsyncGenerator):
-            async for _ in result:
-                pass
-        logger.info("Warmup TTS done for %s", self.model_config.name)
+        pass
 
     async def init_serving_speech(self) -> OpenAIServingSpeech | None:
         logger.info("init serving speech with model: %s", self.model_config.name)
