@@ -47,6 +47,15 @@ logging.addLevelName(TRACE, "TRACE")
 
 _LIB_LOGGERS = ("ray", "ray.serve", "vllm", "transformers", "diffusers")
 
+# Env vars that libraries check internally when creating their own loggers.
+# Setting these ensures the level sticks even when a library re-configures
+# its loggers after our configure_logging() call (e.g. vLLM's init_logger).
+_LIB_ENV_VARS = {
+    "RAY_LOG_LEVEL": "ray",
+    "VLLM_LOGGING_LEVEL": "vllm",
+    "TRANSFORMERS_VERBOSITY": "transformers",
+}
+
 
 def configure_logging() -> None:
     global _configured
@@ -60,6 +69,7 @@ def configure_logging() -> None:
     trace_mode = level_name == "TRACE"
     app_level = logging.DEBUG if trace_mode else getattr(logging, level_name, logging.INFO)
     lib_level = logging.DEBUG if trace_mode else logging.WARNING
+    lib_level_name = logging.getLevelName(lib_level)
 
     root_logger = logging.getLogger("yasha")
     root_logger.setLevel(app_level)
@@ -79,8 +89,13 @@ def configure_logging() -> None:
     handler.addFilter(RequestIdFilter())
     root_logger.addHandler(handler)
 
+    # Set library log levels via both the Python logger (immediate effect) and
+    # the library's native env var (so the level sticks when the library
+    # re-configures its own loggers later, e.g. vLLM's init_logger).
     for name in _LIB_LOGGERS:
         logging.getLogger(name).setLevel(lib_level)
+    for env_var in _LIB_ENV_VARS:
+        os.environ.setdefault(env_var, lib_level_name)
 
 
 def get_logger(name: str) -> logging.Logger:
