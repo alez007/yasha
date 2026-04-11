@@ -8,12 +8,12 @@ from pydantic_yaml import parse_yaml_raw_as
 from ray import serve
 from ray.serve.config import HTTPOptions
 
-from yasha.infer.infer_config import ModelLoader, ModelUsecase, YashaConfig, YashaModelConfig
-from yasha.infer.model_deployment import ModelDeployment
-from yasha.logging import configure_logging, get_logger
-from yasha.openai.api import YashaAPI
+from modelship.infer.infer_config import ModelLoader, ModelshipConfig, ModelshipModelConfig, ModelUsecase
+from modelship.infer.model_deployment import ModelDeployment
+from modelship.logging import configure_logging, get_logger
+from modelship.openai.api import ModelshipAPI
 
-_cache_dir = os.environ.get("YASHA_CACHE_DIR", "/yasha/.cache/models")
+_cache_dir = os.environ.get("MSHIP_CACHE_DIR", "/modelship/.cache/models")
 _cache_root = os.path.dirname(_cache_dir)
 _cache_env_vars = {
     "HF_HOME": os.environ.get("HF_HOME", f"{_cache_root}/huggingface"),
@@ -24,7 +24,7 @@ _cache_env_vars = {
 logger = get_logger("startup")
 
 
-def build_actor_options(config: YashaModelConfig) -> dict:
+def build_actor_options(config: ModelshipModelConfig) -> dict:
     tp = config.vllm_engine_kwargs.tensor_parallel_size if config.vllm_engine_kwargs else 1
 
     tp_backend = config.vllm_engine_kwargs.distributed_executor_backend if config.vllm_engine_kwargs else None
@@ -80,7 +80,7 @@ def main():
     configure_logging()
     ray_cluster_address = os.environ["RAY_CLUSTER_ADDRESS"]
     ray_redis_port = os.environ["RAY_REDIS_PORT"]
-    use_existing_cluster = os.environ.get("YASHA_USE_EXISTING_RAY_CLUSTER", "false").lower() == "true"
+    use_existing_cluster = os.environ.get("MSHIP_USE_EXISTING_RAY_CLUSTER", "false").lower() == "true"
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     serve.shutdown()
     ray.shutdown()
@@ -96,9 +96,9 @@ def main():
         )
 
     with open(_config_file) as f:
-        yml_conf: YashaConfig = parse_yaml_raw_as(YashaConfig, f)
+        yml_conf: ModelshipConfig = parse_yaml_raw_as(ModelshipConfig, f)
 
-    logger.info("Init yasha app with config: %s", yml_conf)
+    logger.info("Init modelship app with config: %s", yml_conf)
 
     for config in yml_conf.models:
         if config.loader == ModelLoader.custom and config.plugin:
@@ -147,12 +147,12 @@ def main():
 
         logger.info("All models ready, starting API gateway...")
         serve.run(
-            YashaAPI.options(
-                name="yasha api",
+            ModelshipAPI.options(
+                name="modelship api",
                 num_replicas=1,
                 ray_actor_options={"num_cpus": 1},
             ).bind(model_handles),
-            name="yasha api",
+            name="modelship api",
             route_prefix="/",
         )
 

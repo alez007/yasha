@@ -18,11 +18,11 @@ from vllm.entrypoints.serve.render.serving import OpenAIServingRender
 from vllm.usage.usage_lib import UsageContext
 from vllm.v1.engine.async_llm import AsyncLLM
 
-from yasha.infer.base_infer import MINIMAL_WAV, BaseInfer
-from yasha.infer.infer_config import DisconnectProxy, ModelUsecase, VllmEngineConfig, YashaModelConfig
-from yasha.logging import get_logger
-from yasha.metrics import _ENABLED as _METRICS_ENABLED
-from yasha.openai.protocol import (
+from modelship.infer.base_infer import MINIMAL_WAV, BaseInfer
+from modelship.infer.infer_config import DisconnectProxy, ModelshipModelConfig, ModelUsecase, VllmEngineConfig
+from modelship.logging import get_logger
+from modelship.metrics import _ENABLED as _METRICS_ENABLED
+from modelship.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     EmbeddingCompletionRequest,
@@ -47,7 +47,7 @@ class VllmInfer(BaseInfer):
         ModelUsecase.translation,
     ]
 
-    def __init__(self, model_config: YashaModelConfig):
+    def __init__(self, model_config: ModelshipModelConfig):
         super().__init__(model_config)
 
         config_engine_kwargs = model_config.vllm_engine_kwargs.model_dump(exclude_unset=True)
@@ -99,7 +99,7 @@ class VllmInfer(BaseInfer):
             if engine := getattr(self, "engine", None):
                 engine.shutdown()
         except Exception:
-            from yasha.metrics import RESOURCE_CLEANUP_ERRORS_TOTAL
+            from modelship.metrics import RESOURCE_CLEANUP_ERRORS_TOTAL
 
             RESOURCE_CLEANUP_ERRORS_TOTAL.inc(tags={"model": self.model_config.name, "component": "vllm_engine"})
 

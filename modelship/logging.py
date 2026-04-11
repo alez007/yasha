@@ -14,7 +14,7 @@ class RequestIdFilter(logging.Filter):
         return True
 
 
-class YashaJsonFormatter(logging.Formatter):
+class ModelshipJsonFormatter(logging.Formatter):
     def format(self, record):
         msg = {
             "timestamp": self.formatTime(record, self.datefmt),
@@ -31,7 +31,7 @@ class YashaJsonFormatter(logging.Formatter):
         return json.dumps(msg)
 
 
-class YashaTextFormatter(logging.Formatter):
+class ModelshipTextFormatter(logging.Formatter):
     def format(self, record):
         ts = self.formatTime(record, self.datefmt)
         req_id = getattr(record, "request_id", None)
@@ -63,15 +63,15 @@ def configure_logging() -> None:
         return
     _configured = True
 
-    level_name = os.environ.get("YASHA_LOG_LEVEL", "INFO").upper()
-    log_format = os.environ.get("YASHA_LOG_FORMAT", "text").lower()
+    level_name = os.environ.get("MSHIP_LOG_LEVEL", "INFO").upper()
+    log_format = os.environ.get("MSHIP_LOG_FORMAT", "text").lower()
 
     trace_mode = level_name == "TRACE"
     app_level = logging.DEBUG if trace_mode else getattr(logging, level_name, logging.INFO)
     lib_level = logging.DEBUG if trace_mode else logging.WARNING
     lib_level_name = logging.getLevelName(lib_level)
 
-    root_logger = logging.getLogger("yasha")
+    root_logger = logging.getLogger("modelship")
     root_logger.setLevel(app_level)
     root_logger.propagate = False
 
@@ -82,9 +82,9 @@ def configure_logging() -> None:
     handler.setLevel(app_level)
 
     if log_format == "json":
-        handler.setFormatter(YashaJsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S"))
+        handler.setFormatter(ModelshipJsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S"))
     else:
-        handler.setFormatter(YashaTextFormatter(datefmt="%Y-%m-%d %H:%M:%S"))
+        handler.setFormatter(ModelshipTextFormatter(datefmt="%Y-%m-%d %H:%M:%S"))
 
     handler.addFilter(RequestIdFilter())
     root_logger.addHandler(handler)
@@ -99,4 +99,4 @@ def configure_logging() -> None:
 
 
 def get_logger(name: str) -> logging.Logger:
-    return logging.getLogger(f"yasha.{name}")
+    return logging.getLogger(f"modelship.{name}")

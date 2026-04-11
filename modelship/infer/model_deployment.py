@@ -4,14 +4,14 @@ from typing import Any
 
 from ray import serve
 
-from yasha.infer.base_infer import BaseInfer
-from yasha.infer.custom.custom_infer import CustomInfer
-from yasha.infer.diffusers.diffusers_infer import DiffusersInfer
-from yasha.infer.infer_config import DisconnectProxy, ModelLoader, YashaModelConfig
-from yasha.infer.transformers.transformers_infer import TransformersInfer
-from yasha.infer.vllm.vllm_infer import VllmInfer
-from yasha.logging import configure_logging, get_logger
-from yasha.metrics import (
+from modelship.infer.base_infer import BaseInfer
+from modelship.infer.custom.custom_infer import CustomInfer
+from modelship.infer.diffusers.diffusers_infer import DiffusersInfer
+from modelship.infer.infer_config import DisconnectProxy, ModelLoader, ModelshipModelConfig
+from modelship.infer.transformers.transformers_infer import TransformersInfer
+from modelship.infer.vllm.vllm_infer import VllmInfer
+from modelship.logging import configure_logging, get_logger
+from modelship.metrics import (
     EMBEDDING_DURATION_SECONDS,
     GENERATION_DURATION_SECONDS,
     IMAGE_GENERATION_DURATION_SECONDS,
@@ -20,7 +20,7 @@ from yasha.metrics import (
     TRANSCRIPTION_DURATION_SECONDS,
     TTS_GENERATION_DURATION_SECONDS,
 )
-from yasha.openai.protocol import (
+from modelship.openai.protocol import (
     ChatCompletionRequest,
     EmbeddingRequest,
     ImageGenerationRequest,
@@ -34,7 +34,7 @@ logger = get_logger("infer.deployment")
 
 @serve.deployment
 class ModelDeployment:
-    async def __init__(self, config: YashaModelConfig):
+    async def __init__(self, config: ModelshipModelConfig):
         configure_logging()
         self.config = config
         start = time.monotonic()
@@ -61,7 +61,7 @@ class ModelDeployment:
 
     @staticmethod
     def _set_request_id(request_id: str | None) -> None:
-        from yasha.logging import request_id_var
+        from modelship.logging import request_id_var
 
         request_id_var.set(request_id)
 

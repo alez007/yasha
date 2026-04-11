@@ -3,11 +3,11 @@ from typing import cast
 import torch
 from starlette.requests import Request
 
-from yasha.infer.base_infer import BaseInfer
-from yasha.infer.diffusers.openai.serving_image import OpenAIServingImage
-from yasha.infer.infer_config import DiffusersConfig, DisconnectProxy, ModelUsecase, YashaModelConfig
-from yasha.logging import get_logger
-from yasha.openai.protocol import (
+from modelship.infer.base_infer import BaseInfer
+from modelship.infer.diffusers.openai.serving_image import OpenAIServingImage
+from modelship.infer.infer_config import DiffusersConfig, DisconnectProxy, ModelshipModelConfig, ModelUsecase
+from modelship.logging import get_logger
+from modelship.openai.protocol import (
     ErrorResponse,
     ImageGenerationRequest,
     ImageGenerationResponse,
@@ -23,7 +23,7 @@ _TORCH_DTYPES = {
 
 
 class DiffusersInfer(BaseInfer):
-    def __init__(self, model_config: YashaModelConfig):
+    def __init__(self, model_config: ModelshipModelConfig):
         super().__init__(model_config)
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -38,7 +38,7 @@ class DiffusersInfer(BaseInfer):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:
-            from yasha.metrics import RESOURCE_CLEANUP_ERRORS_TOTAL
+            from modelship.metrics import RESOURCE_CLEANUP_ERRORS_TOTAL
 
             RESOURCE_CLEANUP_ERRORS_TOTAL.inc(tags={"model": self.model_config.name, "component": "diffusers_pipeline"})
 

@@ -2,9 +2,9 @@ import struct
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 
-from yasha.infer.infer_config import DisconnectProxy, YashaModelConfig
-from yasha.logging import get_logger
-from yasha.openai.protocol import (
+from modelship.infer.infer_config import DisconnectProxy, ModelshipModelConfig
+from modelship.logging import get_logger
+from modelship.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     EmbeddingRequest,
@@ -49,7 +49,7 @@ MINIMAL_WAV = _MINIMAL_WAV_HEADER + b"\x00\x00"
 
 
 class BaseInfer(ABC):
-    def __init__(self, model_config: YashaModelConfig):
+    def __init__(self, model_config: ModelshipModelConfig):
         self.model_config = model_config
         self.max_context_length: int | None = None
 

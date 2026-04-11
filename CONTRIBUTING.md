@@ -1,6 +1,6 @@
-# Contributing to Yasha
+# Contributing to Modelship
 
-Thanks for your interest in contributing to Yasha! This document covers the basics for getting started.
+Thanks for your interest in contributing to Modelship! This document covers the basics for getting started.
 
 ## Development Setup
 
@@ -9,7 +9,7 @@ The recommended way to develop is via the VS Code Dev Container. See [docs/devel
 **Quick version:**
 
 1. Install Docker + NVIDIA Container Toolkit
-2. Set `HF_TOKEN` and `YASHA_PLUGINS` environment variables
+2. Set `HF_TOKEN` and `MSHIP_PLUGINS` environment variables
 3. Open the project in VS Code and select **Dev Containers: Reopen in Container**
 4. Inside the container:
 
@@ -44,7 +44,7 @@ If you're contributing a TTS backend, see [docs/plugins.md](docs/plugins.md) for
 
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/alez007/yasha/issues). For bugs, include:
+Use [GitHub Issues](https://github.com/alez007/modelship/issues). For bugs, include:
 
 - GPU model and VRAM
 - Your `models.yaml` configuration

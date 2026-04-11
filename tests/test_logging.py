@@ -1,4 +1,4 @@
-"""Tests for the yasha.logging module."""
+"""Tests for the modelship.logging module."""
 
 import json
 import logging
@@ -7,12 +7,12 @@ from unittest.mock import patch
 
 import pytest
 
-from yasha.logging import (
+from modelship.logging import (
     _LIB_ENV_VARS,
     _LIB_LOGGERS,
+    ModelshipJsonFormatter,
+    ModelshipTextFormatter,
     RequestIdFilter,
-    YashaJsonFormatter,
-    YashaTextFormatter,
     configure_logging,
     get_logger,
     request_id_var,
@@ -21,11 +21,11 @@ from yasha.logging import (
 
 @pytest.fixture(autouse=True)
 def _reset_logging():
-    """Reset the yasha logger and _configured flag between tests."""
-    import yasha.logging as yl
+    """Reset the modelship logger and _configured flag between tests."""
+    import modelship.logging as yl
 
     yl._configured = False
-    root = logging.getLogger("yasha")
+    root = logging.getLogger("modelship")
     root.handlers.clear()
     root.setLevel(logging.WARNING)
     root.propagate = True
@@ -46,19 +46,19 @@ def _reset_logging():
 
 
 class TestGetLogger:
-    def test_returns_yasha_prefixed_logger(self):
+    def test_returns_modelship_prefixed_logger(self):
         log = get_logger("api")
-        assert log.name == "yasha.api"
+        assert log.name == "modelship.api"
 
     def test_nested_name(self):
         log = get_logger("infer.vllm")
-        assert log.name == "yasha.infer.vllm"
+        assert log.name == "modelship.infer.vllm"
 
 
 class TestConfigureLogging:
     def test_sets_up_handler(self):
         configure_logging()
-        root = logging.getLogger("yasha")
+        root = logging.getLogger("modelship")
         assert len(root.handlers) == 1
         assert root.level == logging.INFO
         assert root.propagate is False
@@ -66,13 +66,13 @@ class TestConfigureLogging:
     def test_idempotent(self):
         configure_logging()
         configure_logging()
-        root = logging.getLogger("yasha")
+        root = logging.getLogger("modelship")
         assert len(root.handlers) == 1
 
-    @patch.dict(os.environ, {"YASHA_LOG_LEVEL": "DEBUG"})
+    @patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "DEBUG"})
     def test_respects_log_level_env(self):
         configure_logging()
-        root = logging.getLogger("yasha")
+        root = logging.getLogger("modelship")
         assert root.level == logging.DEBUG
 
     def test_lib_loggers_default_to_warning(self):
@@ -82,34 +82,34 @@ class TestConfigureLogging:
         for env_var in _LIB_ENV_VARS:
             assert os.environ.get(env_var) == "WARNING"
 
-    @patch.dict(os.environ, {"YASHA_LOG_LEVEL": "DEBUG"})
+    @patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "DEBUG"})
     def test_lib_loggers_stay_warning_at_debug(self):
         configure_logging()
-        assert logging.getLogger("yasha").level == logging.DEBUG
+        assert logging.getLogger("modelship").level == logging.DEBUG
         for name in _LIB_LOGGERS:
             assert logging.getLogger(name).level == logging.WARNING
 
-    @patch.dict(os.environ, {"YASHA_LOG_LEVEL": "TRACE"})
+    @patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "TRACE"})
     def test_trace_mode_enables_all_debug(self):
         configure_logging()
-        assert logging.getLogger("yasha").level == logging.DEBUG
+        assert logging.getLogger("modelship").level == logging.DEBUG
         for name in _LIB_LOGGERS:
             assert logging.getLogger(name).level == logging.DEBUG
         for env_var in _LIB_ENV_VARS:
             assert os.environ.get(env_var) == "DEBUG"
 
-    @patch.dict(os.environ, {"YASHA_LOG_FORMAT": "json"})
+    @patch.dict(os.environ, {"MSHIP_LOG_FORMAT": "json"})
     def test_json_format(self):
         configure_logging()
-        root = logging.getLogger("yasha")
+        root = logging.getLogger("modelship")
         handler = root.handlers[0]
-        assert isinstance(handler.formatter, YashaJsonFormatter)
+        assert isinstance(handler.formatter, ModelshipJsonFormatter)
 
     def test_text_format_default(self):
         configure_logging()
-        root = logging.getLogger("yasha")
+        root = logging.getLogger("modelship")
         handler = root.handlers[0]
-        assert isinstance(handler.formatter, YashaTextFormatter)
+        assert isinstance(handler.formatter, ModelshipTextFormatter)
 
 
 class TestRequestIdFilter:
@@ -127,42 +127,42 @@ class TestRequestIdFilter:
         assert record.request_id is None
 
 
-class TestYashaJsonFormatter:
+class TestModelshipJsonFormatter:
     def test_produces_valid_json(self):
-        formatter = YashaJsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
-        record = logging.LogRecord("yasha.api", logging.INFO, "", 0, "hello %s", ("world",), None)
+        formatter = ModelshipJsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
+        record = logging.LogRecord("modelship.api", logging.INFO, "", 0, "hello %s", ("world",), None)
         record.request_id = None
         output = formatter.format(record)
         parsed = json.loads(output)
         assert parsed["level"] == "INFO"
-        assert parsed["logger"] == "yasha.api"
+        assert parsed["logger"] == "modelship.api"
         assert parsed["message"] == "hello world"
         assert "pid" in parsed
 
     def test_includes_request_id(self):
-        formatter = YashaJsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
-        record = logging.LogRecord("yasha.api", logging.INFO, "", 0, "test", (), None)
+        formatter = ModelshipJsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
+        record = logging.LogRecord("modelship.api", logging.INFO, "", 0, "test", (), None)
         record.request_id = "req-456"
         output = formatter.format(record)
         parsed = json.loads(output)
         assert parsed["request_id"] == "req-456"
 
     def test_excludes_request_id_when_none(self):
-        formatter = YashaJsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
-        record = logging.LogRecord("yasha.api", logging.INFO, "", 0, "test", (), None)
+        formatter = ModelshipJsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
+        record = logging.LogRecord("modelship.api", logging.INFO, "", 0, "test", (), None)
         record.request_id = None
         output = formatter.format(record)
         parsed = json.loads(output)
         assert "request_id" not in parsed
 
     def test_includes_exception(self):
-        formatter = YashaJsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
+        formatter = ModelshipJsonFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
         try:
             raise ValueError("boom")
         except ValueError:
             import sys
 
-            record = logging.LogRecord("yasha.api", logging.ERROR, "", 0, "error", (), sys.exc_info())
+            record = logging.LogRecord("modelship.api", logging.ERROR, "", 0, "error", (), sys.exc_info())
         record.request_id = None
         output = formatter.format(record)
         parsed = json.loads(output)
@@ -170,26 +170,26 @@ class TestYashaJsonFormatter:
         assert "ValueError: boom" in parsed["exception"]
 
 
-class TestYashaTextFormatter:
+class TestModelshipTextFormatter:
     def test_basic_format(self):
-        formatter = YashaTextFormatter(datefmt="%Y-%m-%d %H:%M:%S")
-        record = logging.LogRecord("yasha.api", logging.INFO, "", 0, "hello", (), None)
+        formatter = ModelshipTextFormatter(datefmt="%Y-%m-%d %H:%M:%S")
+        record = logging.LogRecord("modelship.api", logging.INFO, "", 0, "hello", (), None)
         record.request_id = None
         output = formatter.format(record)
         assert "INFO" in output
-        assert "yasha.api" in output
+        assert "modelship.api" in output
         assert "hello" in output
 
     def test_includes_request_id(self):
-        formatter = YashaTextFormatter(datefmt="%Y-%m-%d %H:%M:%S")
-        record = logging.LogRecord("yasha.api", logging.INFO, "", 0, "hello", (), None)
+        formatter = ModelshipTextFormatter(datefmt="%Y-%m-%d %H:%M:%S")
+        record = logging.LogRecord("modelship.api", logging.INFO, "", 0, "hello", (), None)
         record.request_id = "req-789"
         output = formatter.format(record)
         assert "[req-789]" in output
 
     def test_excludes_request_id_when_none(self):
-        formatter = YashaTextFormatter(datefmt="%Y-%m-%d %H:%M:%S")
-        record = logging.LogRecord("yasha.api", logging.INFO, "", 0, "hello", (), None)
+        formatter = ModelshipTextFormatter(datefmt="%Y-%m-%d %H:%M:%S")
+        record = logging.LogRecord("modelship.api", logging.INFO, "", 0, "hello", (), None)
         record.request_id = None
         output = formatter.format(record)
         assert "None" not in output
@@ -205,7 +205,7 @@ class TestEndToEnd:
         assert "e2e-test-id" in captured.err
         assert "end to end" in captured.err
 
-    @patch.dict(os.environ, {"YASHA_LOG_FORMAT": "json"})
+    @patch.dict(os.environ, {"MSHIP_LOG_FORMAT": "json"})
     def test_json_log_output(self, capsys):
         configure_logging()
         log = get_logger("test")

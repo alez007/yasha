@@ -1,4 +1,4 @@
-# Yasha
+# Modelship
 
 Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized models (TTS, speech-to-text, embeddings, image generation) on one or more GPUs, exposing an OpenAI-compatible API. Built on [vLLM](https://github.com/vllm-project/vllm) and [Ray](https://github.com/ray-project/ray).
 
@@ -44,7 +44,7 @@ Each model runs as an isolated Ray Serve deployment with its own lifecycle, heal
 - **Plugin system** — opt-in TTS backends installed as isolated uv workspace packages
 - **Multi-GPU support** — assign models to specific GPUs by index or named Ray resource, with full tensor parallelism support
 - **Client disconnect detection** — cancels in-flight inference when the client disconnects, freeing GPU resources immediately
-- **Prometheus metrics & Grafana dashboard** — built-in observability with custom `yasha:*` metrics, vLLM engine stats, and Ray cluster metrics on a single scrape endpoint; pre-built Grafana dashboard included
+- **Prometheus metrics & Grafana dashboard** — built-in observability with custom `modelship:*` metrics, vLLM engine stats, and Ray cluster metrics on a single scrape endpoint; pre-built Grafana dashboard included
 - **Ray dashboard** — monitor deployments, resources, and request logs
 
 ## Supported OpenAI Endpoints
@@ -64,13 +64,13 @@ Each model runs as an isolated Ray Serve deployment with its own lifecycle, heal
 Pull the latest image from GHCR:
 
 ```bash
-docker pull ghcr.io/alez007/yasha:latest
+docker pull ghcr.io/alez007/modelship:latest
 ```
 
 Grab an example config for your GPU and edit it to your liking:
 
 ```bash
-docker run --rm ghcr.io/alez007/yasha:latest cat /yasha/config/models.example.16GB.yaml > models.yaml
+docker run --rm ghcr.io/alez007/modelship:latest cat /modelship/config/models.example.16GB.yaml > models.yaml
 ```
 
 Start the server:
@@ -78,10 +78,10 @@ Start the server:
 ```bash
 docker run --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token_here \
-  -e YASHA_PLUGINS=kokoro \
-  -v ./models.yaml:/yasha/config/models.yaml \
-  -v ./models-cache:/yasha/.cache/models \
-  -p 8265:8265 -p 8000:8000 -p 8079:8079 ghcr.io/alez007/yasha:latest
+  -e MSHIP_PLUGINS=kokoro \
+  -v ./models.yaml:/modelship/config/models.yaml \
+  -v ./models-cache:/modelship/.cache/models \
+  -p 8265:8265 -p 8000:8000 -p 8079:8079 ghcr.io/alez007/modelship:latest
 ```
 
 Try it out:
@@ -103,7 +103,7 @@ Example configs are included for 8 GB, 16 GB, 24 GB, and 2×16 GB GPU setups.
 
 ## Plugin Support
 
-Yasha's TTS system is built around a plugin architecture — each TTS backend is an opt-in package with its own isolated dependencies. Plugins ship inside this repo (`plugins/`) or can be installed from PyPI.
+Modelship's TTS system is built around a plugin architecture — each TTS backend is an opt-in package with its own isolated dependencies. Plugins ship inside this repo (`plugins/`) or can be installed from PyPI.
 
 To enable plugins, pass them as extras at sync time:
 
@@ -112,10 +112,10 @@ uv sync --extra kokoro
 uv sync --extra kokoro --extra orpheus  # multiple plugins
 ```
 
-When using Docker, set the `YASHA_PLUGINS` environment variable:
+When using Docker, set the `MSHIP_PLUGINS` environment variable:
 
 ```
-YASHA_PLUGINS=kokoro,orpheus
+MSHIP_PLUGINS=kokoro,orpheus
 ```
 
 For a full guide on writing your own plugin, see [Plugin Development](docs/plugins.md).
@@ -131,9 +131,9 @@ For a full guide on writing your own plugin, see [Plugin Development](docs/plugi
 
 ## Monitoring
 
-Yasha exposes Prometheus metrics (Ray cluster, Ray Serve, vLLM, and custom `yasha:*` metrics) through a single scrape endpoint on port 8079. Metrics are **enabled by default** — set `YASHA_METRICS=false` to disable. A pre-built Grafana dashboard is included.
+Modelship exposes Prometheus metrics (Ray cluster, Ray Serve, vLLM, and custom `modelship:*` metrics) through a single scrape endpoint on port 8079. Metrics are **enabled by default** — set `MSHIP_METRICS=false` to disable. A pre-built Grafana dashboard is included.
 
-Logging supports structured JSON output (`YASHA_LOG_FORMAT=json`) and request ID correlation across Ray actor boundaries. Set `YASHA_LOG_LEVEL` to `DEBUG` for request bodies or `TRACE` to include library internals.
+Logging supports structured JSON output (`MSHIP_LOG_FORMAT=json`) and request ID correlation across Ray actor boundaries. Set `MSHIP_LOG_LEVEL` to `DEBUG` for request bodies or `TRACE` to include library internals.
 
 See [Monitoring & Logging](docs/monitoring.md) for full details.
 

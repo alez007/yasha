@@ -1,14 +1,14 @@
 # Production Readiness Plan
 
-Future development priorities for making Yasha production-ready, organized by severity and area.
+Future development priorities for making Modelship production-ready, organized by severity and area.
 
 ## Critical (Must Have Before Production)
 
 ### Security
 
-- [x] **API authentication layer** — API key auth at the gateway level via `YASHA_API_KEYS` env var; OpenAI-compatible `Authorization: Bearer <key>` header
+- [x] **API authentication layer** — API key auth at the gateway level via `MSHIP_API_KEYS` env var; OpenAI-compatible `Authorization: Bearer <key>` header
 - [ ] **Rate limiting** — per-user/IP/model throttling to prevent GPU resource monopolization
-- [x] **Input size limits** — coarse payload size limit at the gateway (`YASHA_MAX_REQUEST_BODY_BYTES`, default 50 MB); per-model `max_context_length` validation in every loader before inference
+- [x] **Input size limits** — coarse payload size limit at the gateway (`MSHIP_MAX_REQUEST_BODY_BYTES`, default 50 MB); per-model `max_context_length` validation in every loader before inference
 - [ ] **Lock down CORS** — replace wildcard `*` origins with environment-specific allowed origins
 - [ ] **Plugin sandboxing** — plugins run with full server privileges; add signature verification or sandboxing
 
@@ -41,9 +41,9 @@ Future development priorities for making Yasha production-ready, organized by se
 
 - [ ] **Prometheus alerting rules** — error rate thresholds, latency P99 breaches, model load failures, GPU memory pressure, Ray actor crashes
 - [ ] **SLO/SLI definitions** — define target availability and latency for each endpoint type
-- [x] **Structured logging (JSON)** — `YASHA_LOG_FORMAT=json` for log aggregation (ELK/Loki/Splunk)
+- [x] **Structured logging (JSON)** — `MSHIP_LOG_FORMAT=json` for log aggregation (ELK/Loki/Splunk)
 - [x] **Request-ID correlation** — trace a request from gateway through Ray actor boundaries via `contextvars`
-- [x] **Log level configuration** — `YASHA_LOG_LEVEL` controls app logs; `TRACE` enables library debug logs
+- [x] **Log level configuration** — `MSHIP_LOG_LEVEL` controls app logs; `TRACE` enables library debug logs
 
 ### Resilience
 
