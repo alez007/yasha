@@ -25,6 +25,7 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 - **Independent lifecycle** — one model crashing doesn't affect others
 - **Per-model GPU budgeting** — `num_gpus` controls VRAM allocation (e.g. 0.70 for 70%)
 - **Sequential startup** — models deploy one at a time to prevent memory spikes, ordered by tensor parallelism size (TP > 1 first)
+- **Multi-deployment routing** — the same model name can appear multiple times with different configs (e.g. GPU + CPU). The gateway round-robins requests across all deployments sharing a name. Each deployment also supports `num_replicas` for scaling identical copies via Ray Serve's built-in load balancing
 
 ### Inference Loaders
 
