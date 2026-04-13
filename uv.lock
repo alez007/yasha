@@ -1431,7 +1431,7 @@ wheels = [
 
 [[package]]
 name = "modelship"
-version = "0.1.19"
+version = "0.1.20"
 source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
@@ -1471,6 +1471,10 @@ kokoro = [
 orpheus = [
     { name = "orpheus" },
 ]
+otel = [
+    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-sdk" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1484,6 +1488,8 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "kokoro", marker = "extra == 'kokoro'", editable = "plugins/kokoro" },
     { name = "numpy", specifier = ">=2.2.6" },
+    { name = "opentelemetry-exporter-otlp", marker = "extra == 'otel'", specifier = ">=1.20.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20.0" },
     { name = "orpheus", marker = "extra == 'orpheus'", editable = "plugins/orpheus" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "pydantic", specifier = ">=2.12.0" },
@@ -1502,7 +1508,7 @@ requires-dist = [
     { name = "vllm", specifier = "==0.18.0" },
     { name = "vllm", extras = ["audio"], specifier = "==0.18.0" },
 ]
-provides-extras = ["kokoro", "bark", "orpheus", "dev"]
+provides-extras = ["kokoro", "bark", "orpheus", "otel", "dev"]
 
 [[package]]
 name = "mpmath"

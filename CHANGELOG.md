@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.20] - 2026-04-13
+
+### Added
+- auto-generate changelog from conventional commits during release
+- add Prometheus alerting rules, Grafana alerts row, and monitoring docs
+- add syslog and OpenTelemetry log export
+- additive deploys with --redeploy flag and multi-gateway support
+
+### Fixed
+- makefile fix for multi-line changelog
+
 ## [0.1.11] - 2025-06-20
 
 ### Fixed
