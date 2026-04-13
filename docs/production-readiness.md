@@ -39,7 +39,7 @@ Future development priorities for making Modelship production-ready, organized b
 
 ### Alerting & Observability
 
-- [ ] **Prometheus alerting rules** — error rate thresholds, latency P99 breaches, model load failures, GPU memory pressure, Ray actor crashes
+- [x] **Prometheus alerting rules** — error rate thresholds, latency P99 breaches, model load failures, GPU memory pressure (see `docs/prometheus-alerts.yml`)
 - [ ] **SLO/SLI definitions** — define target availability and latency for each endpoint type
 - [x] **Structured logging (JSON)** — `MSHIP_LOG_FORMAT=json` for log aggregation (ELK/Loki/Splunk)
 - [x] **Request-ID correlation** — trace a request from gateway through Ray actor boundaries via `contextvars`
