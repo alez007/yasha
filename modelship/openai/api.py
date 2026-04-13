@@ -12,7 +12,7 @@ from ray.serve.handle import DeploymentHandle
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from modelship.infer.infer_config import ModelUsecase, RequestWatcher
+from modelship.infer.infer_config import RequestWatcher
 from modelship.logging import get_logger
 from modelship.metrics import (
     MODELS_LOADED,
@@ -116,11 +116,32 @@ def _error_response(result: ErrorResponse) -> JSONResponse:
 @serve.deployment
 @serve.ingress(app)
 class ModelshipAPI:
-    def __init__(self, model_handles: dict[str, tuple[list[DeploymentHandle], ModelUsecase]]):
-        self.models: dict[str, list[DeploymentHandle]] = {name: handles for name, (handles, _) in model_handles.items()}
-        self._counters: dict[str, int] = {name: 0 for name in self.models}
-        self.model_list = [OpenAiModelCard(id=name) for name in model_handles]
-        MODELS_LOADED.set(len(self.models))  # all models are RUNNING by this point
+    def __init__(self):
+        self.models: dict[str, list[DeploymentHandle]] = {}
+        self._round_robin: dict[str, int] = {}
+        self.model_list: list[OpenAiModelCard] = []
+
+    async def add_models(self, deployments: dict[str, str]):
+        """Register new model deployments with the gateway.
+
+        Args:
+            deployments: mapping of deployment_app_name -> model_name.
+        """
+        for app_name, model_name in deployments.items():
+            try:
+                handle = serve.get_app_handle(app_name)
+            except Exception:
+                logger.exception("Failed to get handle for app: %s", app_name)
+                continue
+
+            if model_name not in self.models:
+                self.models[model_name] = []
+                self._round_robin[model_name] = 0
+                self.model_list.append(OpenAiModelCard(id=model_name))
+            self.models[model_name].append(handle)
+            logger.info("Registered deployment: %s (model: %s)", app_name, model_name)
+
+        MODELS_LOADED.set(len(self.models))
 
     @staticmethod
     def _set_request_id(request_id: str) -> None:
@@ -132,8 +153,8 @@ class ModelshipAPI:
         if model_name is None or model_name not in self.models:
             raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
         handles = self.models[model_name]
-        idx = self._counters[model_name] % len(handles)
-        self._counters[model_name] += 1
+        idx = self._round_robin[model_name] % len(handles)
+        self._round_robin[model_name] += 1
         return handles[idx]
 
     async def _handle_response(

@@ -1,7 +1,9 @@
 import argparse
 import importlib
 import os
+import random
 import signal
+import string
 import sys
 
 import ray
@@ -9,12 +11,18 @@ from pydantic_yaml import parse_yaml_raw_as
 from ray import serve
 from ray.serve.config import HTTPOptions
 
-from modelship.infer.infer_config import ModelLoader, ModelshipConfig, ModelshipModelConfig, ModelUsecase
+from modelship.infer.infer_config import ModelLoader, ModelshipConfig, ModelshipModelConfig
 from modelship.infer.model_deployment import ModelDeployment
 from modelship.logging import configure_logging, get_logger
 from modelship.openai.api import ModelshipAPI
 
 logger = get_logger("startup")
+
+_RAND_CHARS = string.ascii_lowercase + string.digits
+
+
+def _rand_suffix(length: int = 5) -> str:
+    return "".join(random.choices(_RAND_CHARS, k=length))
 
 
 def _build_cache_env_vars() -> dict[str, str]:
@@ -34,6 +42,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--config", help="Path to models.yaml config file (default: config/models.yaml)")
     parser.add_argument("--cache-dir", help="Model cache directory (env: MSHIP_CACHE_DIR)")
     parser.add_argument(
+        "--gateway-name",
+        help="Name for the API gateway app (env: MSHIP_GATEWAY_NAME, default: modelship api)",
+    )
+    parser.add_argument(
         "--use-existing-ray-cluster",
         action="store_true",
         default=None,
@@ -50,6 +62,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--max-request-body-bytes", type=int, help="Max request body size in bytes (env: MSHIP_MAX_REQUEST_BODY_BYTES)"
     )
+    parser.add_argument(
+        "--redeploy",
+        action="store_true",
+        default=False,
+        help="Tear down all existing deployments before deploying (default: additive)",
+    )
     return parser.parse_args(argv)
 
 
@@ -62,6 +80,7 @@ def _apply_args_to_env(args: argparse.Namespace) -> None:
         "log_level": "MSHIP_LOG_LEVEL",
         "log_format": "MSHIP_LOG_FORMAT",
         "api_keys": "MSHIP_API_KEYS",
+        "gateway_name": "MSHIP_GATEWAY_NAME",
     }
     for attr, env_var in _arg_to_env.items():
         val = getattr(args, attr, None)
@@ -130,6 +149,27 @@ def ensure_plugin(module_name: str):
         raise RuntimeError(f"Plugin '{module_name}' is not installed. Run: uv sync --extra {module_name}") from err
 
 
+def _get_existing_apps() -> set[str]:
+    """Return the set of currently deployed Serve app names."""
+    try:
+        status = serve.status()
+        return set(status.applications.keys())
+    except Exception:
+        return set()
+
+
+def _shutdown_ray():
+    """Shut down Ray Serve and Ray. Logs but swallows errors."""
+    try:
+        serve.shutdown()
+    except Exception:
+        logger.exception("serve.shutdown() failed")
+    try:
+        ray.shutdown()
+    except Exception:
+        logger.exception("ray.shutdown() failed")
+
+
 def main(argv: list[str] | None = None):
     args = parse_args(argv)
     _apply_args_to_env(args)
@@ -138,12 +178,23 @@ def main(argv: list[str] | None = None):
     ray_cluster_address = os.environ["RAY_CLUSTER_ADDRESS"]
     ray_redis_port = os.environ["RAY_REDIS_PORT"]
     use_existing_cluster = os.environ.get("MSHIP_USE_EXISTING_RAY_CLUSTER", "false").lower() == "true"
+    gateway_name = os.environ.get("MSHIP_GATEWAY_NAME", "modelship api")
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
-    serve.shutdown()
-    ray.shutdown()
+
+    if args.redeploy:
+        logger.info("--redeploy: tearing down existing deployments...")
+        _shutdown_ray()
+
     ray_address = f"{ray_cluster_address}:{ray_redis_port}" if use_existing_cluster else "auto"
-    ray.init(address=ray_address)
+    ray.init(address=ray_address, ignore_reinit_error=True)
     serve.start(http_options=HTTPOptions(host="0.0.0.0"))
+
+    existing_apps = set() if args.redeploy else _get_existing_apps()
+    fresh_install = gateway_name not in existing_apps
+    if existing_apps:
+        logger.info("Found existing deployments: %s", ", ".join(sorted(existing_apps)))
+    if fresh_install and not args.redeploy:
+        logger.info("No existing gateway found — treating as fresh install.")
 
     if args.config:
         _config_file = args.config
@@ -172,24 +223,38 @@ def main(argv: list[str] | None = None):
         reverse=True,
     )
 
+    # Track deployments created by this invocation: deployment_name -> model_name.
+    # Used for both model registration with the gateway and cleanup on interrupt.
+    deployed_this_run: dict[str, str] = {}
+
+    def _cleanup(sig, frame):
+        logger.info("Interrupted (signal %s), cleaning up deployments from this run...", sig)
+        for name in reversed(deployed_this_run):
+            try:
+                logger.info("Deleting deployment: %s", name)
+                serve.delete(name)
+            except Exception:
+                logger.exception("Failed to delete deployment: %s", name)
+        if fresh_install:
+            _shutdown_ray()
+        sys.exit(1)
+
+    signal.signal(signal.SIGINT, _cleanup)
+    signal.signal(signal.SIGTERM, _cleanup)
+
     try:
         # Deploy models one at a time. serve.run() blocks until the deployment reaches
         # RUNNING, ensuring each model fully initialises (and releases its load-time
         # memory spike) before the next one starts.
         #
-        # Multiple config entries may share the same `name` (e.g. one on GPU, one on
-        # CPU). Each gets a unique Ray deployment name (`name-1`, `name-2`, …) and
-        # their handles are grouped under the shared API-facing name for round-robin
-        # routing in the gateway.
-        model_handles: dict[str, tuple[list, ModelUsecase]] = {}
-        name_counters: dict[str, int] = {}
+        # Each deployment gets a unique name with a random suffix (e.g. qwen-a3f9k)
+        # to avoid collisions with existing deployments in additive mode.
         for config in sorted_models:
-            count = name_counters.get(config.name, 0) + 1
-            name_counters[config.name] = count
-            deployment_name = f"{config.name}-{count}"
+            deployment_name = f"{config.name}-{_rand_suffix()}"
 
             logger.info("Deploying model: %s (deployment: %s)", config.name, deployment_name)
-            handle = serve.run(
+            deployed_this_run[deployment_name] = config.name
+            serve.run(
                 ModelDeployment.options(
                     name=deployment_name,
                     num_replicas=config.num_replicas,
@@ -200,49 +265,43 @@ def main(argv: list[str] | None = None):
             )
             logger.info("Model ready: %s (deployment: %s)", config.name, deployment_name)
 
-            if config.name in model_handles:
-                model_handles[config.name][0].append(handle)
-            else:
-                model_handles[config.name] = ([handle], config.usecase)
+        # Ensure the gateway is running, then register the new models with it.
+        if fresh_install:
+            logger.info("Starting API gateway...")
+            serve.run(
+                ModelshipAPI.options(
+                    name=gateway_name,
+                    num_replicas=1,
+                    ray_actor_options={"num_cpus": 1},
+                ).bind(),
+                name=gateway_name,
+                route_prefix="/",
+            )
 
-        logger.info("All models ready, starting API gateway...")
-        serve.run(
-            ModelshipAPI.options(
-                name="modelship api",
-                num_replicas=1,
-                ray_actor_options={"num_cpus": 1},
-            ).bind(model_handles),
-            name="modelship api",
-            route_prefix="/",
-        )
+        if deployed_this_run:
+            gateway_handle = serve.get_app_handle(gateway_name)
+            gateway_handle.add_models.remote(deployed_this_run).result()
+            logger.info("Registered %d deployment(s) with gateway.", len(deployed_this_run))
 
-        def _shutdown(sig, frame):
-            logger.info("Shutting down (signal %s)...", sig)
-            try:
-                serve.shutdown()
-            except Exception:
-                logger.exception("serve.shutdown() failed")
-            try:
-                ray.shutdown()
-            except Exception:
-                logger.exception("ray.shutdown() failed")
-            sys.exit(0)
+        logger.info("Deploy complete. %d new deployment(s) from this run.", len(deployed_this_run))
 
-        signal.signal(signal.SIGINT, _shutdown)
-        signal.signal(signal.SIGTERM, _shutdown)
-        signal.pause()
+        if fresh_install:
+            # On fresh install, stay alive as the operator process.
+            signal.signal(signal.SIGINT, lambda s, f: (_shutdown_ray(), sys.exit(0)))
+            signal.signal(signal.SIGTERM, lambda s, f: (_shutdown_ray(), sys.exit(0)))
+            signal.pause()
+
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise
-        logger.exception("Startup failed, shutting down serve actors...")
-        try:
-            serve.shutdown()
-        except Exception:
-            logger.exception("serve.shutdown() failed during error cleanup")
-        try:
-            ray.shutdown()
-        except Exception:
-            logger.exception("ray.shutdown() failed during error cleanup")
+        logger.exception("Startup failed, cleaning up deployments from this run...")
+        for name in reversed(deployed_this_run):
+            try:
+                serve.delete(name)
+            except Exception:
+                logger.exception("Failed to delete deployment: %s", name)
+        if fresh_install:
+            _shutdown_ray()
         raise
 
 
