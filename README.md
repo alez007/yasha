@@ -153,7 +153,7 @@ For a full guide on writing your own plugin, see [Plugin Development](docs/plugi
 
 Modelship exposes Prometheus metrics (Ray cluster, Ray Serve, vLLM, and custom `modelship:*` metrics) through a single scrape endpoint on port 8079. Metrics are **enabled by default** — set `MSHIP_METRICS=false` to disable. A pre-built Grafana dashboard is included.
 
-Logging supports structured JSON output (`MSHIP_LOG_FORMAT=json`) and request ID correlation across Ray actor boundaries. Set `MSHIP_LOG_LEVEL` to `DEBUG` for request bodies or `TRACE` to include library internals.
+Logging supports structured JSON output (`MSHIP_LOG_FORMAT=json`) and request ID correlation across Ray actor boundaries. Logs can be shipped to a remote syslog server (`--log-target syslog://host:514`) or an OpenTelemetry collector (`--otel-endpoint http://collector:4317`). Set `MSHIP_LOG_LEVEL` to `DEBUG` for request bodies or `TRACE` to include library internals.
 
 See [Monitoring & Logging](docs/monitoring.md) for full details.
 
@@ -165,7 +165,7 @@ See the full [Production Readiness Plan](docs/production-readiness.md) for detai
 |------------------------------|-------|----------|
 | Architecture & Design        | 8/10  | Add K8s manifests, improve health checks |
 | Monitoring (metrics)         | 9/10  | Excellent — Prometheus + Grafana ready |
-| Monitoring (alerting + logs) | 7/10  | Structured logging + request correlation done; alerting rules still needed |
+| Monitoring (alerting + logs) | 8/10  | Syslog + OTel log export done; alerting rules still needed |
 | Security                     | 4/10  | No rate limiting, open CORS, no plugin sandboxing |
 | Resilience                   | 5/10  | Good shutdown, weak self-healing |
 | Testing                      | 3/10  | Config tests only, no integration/API tests |

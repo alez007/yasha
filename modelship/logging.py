@@ -2,6 +2,9 @@ import contextvars
 import json
 import logging
 import os
+import socket
+from logging.handlers import SysLogHandler
+from urllib.parse import urlparse
 
 request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
 
@@ -57,6 +60,23 @@ _LIB_ENV_VARS = {
 }
 
 
+def _parse_syslog_target(target: str) -> SysLogHandler:
+    """Parse a syslog URI and return a configured SysLogHandler.
+
+    Supported formats:
+        syslog://host:port       — UDP (default)
+        syslog+tcp://host:port   — TCP
+        syslog://host            — UDP, port 514
+    """
+    tcp = target.startswith("syslog+tcp://")
+    url = target.replace("syslog+tcp://", "syslog://", 1)
+    parsed = urlparse(url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 514
+    socktype = socket.SOCK_STREAM if tcp else socket.SOCK_DGRAM
+    return SysLogHandler(address=(host, port), socktype=socktype)
+
+
 def configure_logging() -> None:
     global _configured
     if _configured:
@@ -65,6 +85,7 @@ def configure_logging() -> None:
 
     level_name = os.environ.get("MSHIP_LOG_LEVEL", "INFO").upper()
     log_format = os.environ.get("MSHIP_LOG_FORMAT", "text").lower()
+    log_target = os.environ.get("MSHIP_LOG_TARGET", "console").lower()
 
     trace_mode = level_name == "TRACE"
     app_level = logging.DEBUG if trace_mode else getattr(logging, level_name, logging.INFO)
@@ -78,7 +99,7 @@ def configure_logging() -> None:
     if root_logger.handlers:
         return
 
-    handler = logging.StreamHandler()
+    handler = _parse_syslog_target(log_target) if log_target.startswith("syslog") else logging.StreamHandler()
     handler.setLevel(app_level)
 
     if log_format == "json":
@@ -89,6 +110,11 @@ def configure_logging() -> None:
     handler.addFilter(RequestIdFilter())
     root_logger.addHandler(handler)
 
+    # OpenTelemetry: add an OTLP log exporter as a second handler when configured.
+    otel_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if otel_endpoint:
+        _setup_otel(root_logger, otel_endpoint, app_level)
+
     # Set library log levels via both the Python logger (immediate effect) and
     # the library's native env var (so the level sticks when the library
     # re-configures its own loggers later, e.g. vLLM's init_logger).
@@ -96,6 +122,38 @@ def configure_logging() -> None:
         logging.getLogger(name).setLevel(lib_level)
     for env_var in _LIB_ENV_VARS:
         os.environ.setdefault(env_var, lib_level_name)
+
+
+def _setup_otel(root_logger: logging.Logger, endpoint: str, level: int) -> None:
+    """Attach an OpenTelemetry log exporter to *root_logger*.
+
+    Requires the ``opentelemetry-sdk`` and ``opentelemetry-exporter-otlp``
+    packages (install via ``uv sync --extra otel``).
+    """
+    try:
+        from opentelemetry.exporter.otlp.proto.grpc.log_exporter import (
+            OTLPLogExporter,  # pyright: ignore[reportMissingImports]
+        )
+        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler  # pyright: ignore[reportMissingImports]
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor  # pyright: ignore[reportMissingImports]
+        from opentelemetry.sdk.resources import SERVICE_NAME, Resource  # pyright: ignore[reportMissingImports]
+    except ImportError:
+        root_logger.warning(
+            "OTEL_EXPORTER_OTLP_ENDPOINT is set but opentelemetry packages are not installed. "
+            "Install with: uv sync --extra otel"
+        )
+        return
+
+    resource = Resource.create({SERVICE_NAME: "modelship"})
+    provider = LoggerProvider(resource=resource)
+    exporter = OTLPLogExporter(endpoint=endpoint, insecure=not endpoint.startswith("https"))
+    provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
+
+    otel_handler = LoggingHandler(level=level, logger_provider=provider)
+    root_logger.addHandler(otel_handler)
+
+    # Enable Ray's native OTel tracing so spans from Ray workers are exported too.
+    os.environ.setdefault("RAY_TRACING_ENABLED", "1")
 
 
 def get_logger(name: str) -> logging.Logger:

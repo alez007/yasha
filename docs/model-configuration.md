@@ -17,6 +17,8 @@ Models are configured in a YAML file (default: `config/models.yaml`). Each entry
 | `--cache-dir` | `MSHIP_CACHE_DIR` | `/modelship/.cache/models` | Model cache directory |
 | `--log-level` | `MSHIP_LOG_LEVEL` | `INFO` | Log level |
 | `--log-format` | `MSHIP_LOG_FORMAT` | `text` | Log format (`text` or `json`) |
+| `--log-target` | `MSHIP_LOG_TARGET` | `console` | Log target: `console` or syslog URI (e.g. `syslog://host:514`, `syslog+tcp://host:514`) |
+| `--otel-endpoint` | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OpenTelemetry OTLP endpoint (e.g. `http://collector:4317`) |
 | `--no-metrics` | `MSHIP_METRICS` | enabled | Disable Prometheus metrics |
 | `--api-keys` | `MSHIP_API_KEYS` | — | Comma-separated API keys |
 | `--max-request-body-bytes` | `MSHIP_MAX_REQUEST_BODY_BYTES` | `52428800` | Max request body size in bytes |
@@ -245,6 +247,8 @@ In this example, requests to model `kokoro` are distributed across three backend
 | `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace + plugins) | `/modelship/.cache/models` |
 | `MSHIP_GATEWAY_NAME` | Name for the API gateway app | `modelship api` |
 | `MSHIP_MAX_REQUEST_BODY_BYTES` | Maximum allowed request body size in bytes | `52428800` (50 MB) |
+| `MSHIP_LOG_TARGET` | Log target: `console` or syslog URI (e.g. `syslog://host:514`, `syslog+tcp://host:514`) | `console` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry OTLP endpoint for log export (e.g. `http://collector:4317`). Requires `uv sync --extra otel`. | — |
 | `CUDA_DEVICE_ORDER` | GPU enumeration order; set to `PCI_BUS_ID` for deterministic ordering in multi-GPU systems | `PCI_BUS_ID` |
 | `RAY_REDIS_PORT` | Ray GCS server port | `6379` |
 | `RAY_DASHBOARD_PORT` | Ray dashboard port | `8265` |

@@ -42,6 +42,10 @@ dependencies = [
 kokoro = ["kokoro"]
 bark = ["bark"]
 orpheus = ["orpheus"]
+otel = [
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+]
 dev = [
     "ruff>=0.11.0",
     "pyright>=1.1.400",
