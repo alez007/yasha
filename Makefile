@@ -46,11 +46,14 @@ _release:
 	ADDED=$$(git log $$RANGE --pretty=format:'%s' --no-merges | grep -iE '^feat(\(.*\))?:' | sed 's/^[^:]*: */- /' || true); \
 	FIXED=$$(git log $$RANGE --pretty=format:'%s' --no-merges | grep -iE '^fix(\(.*\))?:' | sed 's/^[^:]*: */- /' || true); \
 	CHANGED=$$(git log $$RANGE --pretty=format:'%s' --no-merges | grep -iE '^(refactor|perf|docs|chore|build|ci|style|test)(\(.*\))?:' | sed 's/^[^:]*: */- /' || true); \
-	ENTRY="## [$(NEW_VERSION)] - $$(date +%Y-%m-%d)"; \
-	if [ -n "$$ADDED" ]; then ENTRY="$$ENTRY\n\n### Added\n$$ADDED"; fi; \
-	if [ -n "$$FIXED" ]; then ENTRY="$$ENTRY\n\n### Fixed\n$$FIXED"; fi; \
-	if [ -n "$$CHANGED" ]; then ENTRY="$$ENTRY\n\n### Changed\n$$CHANGED"; fi; \
-	sed -i "/^The format is based on/a\\\\n$$ENTRY" CHANGELOG.md
+	TMPF=$$(mktemp); \
+	echo "" >> "$$TMPF"; \
+	echo "## [$(NEW_VERSION)] - $$(date +%Y-%m-%d)" >> "$$TMPF"; \
+	if [ -n "$$ADDED" ]; then echo "" >> "$$TMPF"; echo "### Added" >> "$$TMPF"; echo "$$ADDED" >> "$$TMPF"; fi; \
+	if [ -n "$$FIXED" ]; then echo "" >> "$$TMPF"; echo "### Fixed" >> "$$TMPF"; echo "$$FIXED" >> "$$TMPF"; fi; \
+	if [ -n "$$CHANGED" ]; then echo "" >> "$$TMPF"; echo "### Changed" >> "$$TMPF"; echo "$$CHANGED" >> "$$TMPF"; fi; \
+	sed -i "/^The format is based on/r $$TMPF" CHANGELOG.md; \
+	rm -f "$$TMPF"
 	@git add pyproject.toml uv.lock CHANGELOG.md
 	@git commit -m "release: v$(NEW_VERSION)"
 	@git tag -a "v$(NEW_VERSION)" -m "Release v$(NEW_VERSION)"
