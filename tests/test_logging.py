@@ -3,6 +3,8 @@
 import json
 import logging
 import os
+import socket
+from logging.handlers import SysLogHandler
 from unittest.mock import patch
 
 import pytest
@@ -13,6 +15,8 @@ from modelship.logging import (
     ModelshipJsonFormatter,
     ModelshipTextFormatter,
     RequestIdFilter,
+    _parse_syslog_target,
+    _setup_otel,
     configure_logging,
     get_logger,
     request_id_var,
@@ -215,3 +219,75 @@ class TestEndToEnd:
         parsed = json.loads(captured.err)
         assert parsed["request_id"] == "json-test-id"
         assert parsed["message"] == "json test"
+
+
+class TestParseSyslogTarget:
+    def test_udp_default(self):
+        handler = _parse_syslog_target("syslog://192.168.1.50:514")
+        assert handler.address == ("192.168.1.50", 514)
+        assert handler.socktype == socket.SOCK_DGRAM
+
+    @patch("modelship.logging.SysLogHandler.createSocket")
+    def test_tcp(self, _mock_create):
+        handler = _parse_syslog_target("syslog+tcp://127.0.0.1:1514")
+        assert handler.address == ("127.0.0.1", 1514)
+        assert handler.socktype == socket.SOCK_STREAM
+
+    def test_default_port(self):
+        handler = _parse_syslog_target("syslog://127.0.0.1")
+        assert handler.address == ("127.0.0.1", 514)
+        assert handler.socktype == socket.SOCK_DGRAM
+
+    def test_default_host(self):
+        handler = _parse_syslog_target("syslog://")
+        assert handler.address == ("localhost", 514)
+
+
+class TestSyslogLogTarget:
+    @patch.dict(os.environ, {"MSHIP_LOG_TARGET": "syslog://127.0.0.1:5140"})
+    def test_configure_creates_syslog_handler(self):
+        configure_logging()
+        root = logging.getLogger("modelship")
+        assert len(root.handlers) == 1
+        assert isinstance(root.handlers[0], SysLogHandler)
+
+    def test_console_default(self):
+        configure_logging()
+        root = logging.getLogger("modelship")
+        assert len(root.handlers) == 1
+        assert isinstance(root.handlers[0], logging.StreamHandler)
+        assert not isinstance(root.handlers[0], SysLogHandler)
+
+
+class TestOtelSetup:
+    def test_warns_when_packages_missing(self, capsys):
+        """When otel packages aren't installed, _setup_otel logs a warning and adds no handler."""
+        root = logging.getLogger("modelship")
+        root.handlers.clear()
+        sh = logging.StreamHandler()
+        root.addHandler(sh)
+        root.setLevel(logging.DEBUG)
+
+        _setup_otel(root, "http://localhost:4317", logging.INFO)
+
+        captured = capsys.readouterr()
+        assert "opentelemetry packages are not installed" in captured.err
+        assert len(root.handlers) == 1
+
+    @patch.dict(os.environ, {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317"})
+    @patch("modelship.logging._setup_otel")
+    def test_configure_calls_setup_otel(self, mock_setup):
+        configure_logging()
+        mock_setup.assert_called_once_with(
+            logging.getLogger("modelship"),
+            "http://collector:4317",
+            logging.INFO,
+        )
+
+    @patch.dict(os.environ, {}, clear=False)
+    def test_configure_skips_otel_when_not_set(self):
+        os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT", None)
+        configure_logging()
+        root = logging.getLogger("modelship")
+        assert len(root.handlers) == 1
+        assert isinstance(root.handlers[0], logging.StreamHandler)
