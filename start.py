@@ -57,6 +57,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Log level (env: MSHIP_LOG_LEVEL)",
     )
     parser.add_argument("--log-format", choices=["text", "json"], help="Log format (env: MSHIP_LOG_FORMAT)")
+    parser.add_argument(
+        "--log-target",
+        help="Log target: 'console' (default) or syslog URI e.g. syslog://host:514, syslog+tcp://host:514 (env: MSHIP_LOG_TARGET)",
+    )
+    parser.add_argument(
+        "--otel-endpoint",
+        help="OpenTelemetry OTLP endpoint e.g. http://collector:4317 (env: OTEL_EXPORTER_OTLP_ENDPOINT)",
+    )
     parser.add_argument("--no-metrics", action="store_true", default=None, help="Disable metrics (env: MSHIP_METRICS)")
     parser.add_argument("--api-keys", help="Comma-separated API keys (env: MSHIP_API_KEYS)")
     parser.add_argument(
@@ -79,6 +87,8 @@ def _apply_args_to_env(args: argparse.Namespace) -> None:
         "cache_dir": "MSHIP_CACHE_DIR",
         "log_level": "MSHIP_LOG_LEVEL",
         "log_format": "MSHIP_LOG_FORMAT",
+        "log_target": "MSHIP_LOG_TARGET",
+        "otel_endpoint": "OTEL_EXPORTER_OTLP_ENDPOINT",
         "api_keys": "MSHIP_API_KEYS",
         "gateway_name": "MSHIP_GATEWAY_NAME",
     }
