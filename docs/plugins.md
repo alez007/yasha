@@ -122,8 +122,20 @@ async def generate(self, input, voice, request_id, stream_format):
         return RawSpeechResponse(audio=audio)
 ```
 
+## Plugin README
+
+Every plugin must include a `README.md` in its package root (`plugins/myplugin/README.md`). This is the primary documentation for users configuring the plugin. It should cover:
+
+- **Installation** — how to install the plugin (`uv sync --extra` and `MSHIP_PLUGINS`)
+- **Configuration** — example `models.yaml` entry with all `plugin_config` options documented in a table
+- **Voices / options** — any model-specific choices (voice presets, providers, etc.)
+- **Example request** — a working `curl` command
+
+See the built-in plugins for reference: [Kokoro](../plugins/kokoro/README.md), [Bark](../plugins/bark/README.md), [Orpheus](../plugins/orpheus/README.md).
+
 ## Submitting to this repo
 
 Open a PR adding:
 - `plugins/myplugin/` with your package
+- `plugins/myplugin/README.md` documenting configuration and usage
 - One line in root `pyproject.toml` optional extras
