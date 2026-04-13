@@ -44,6 +44,8 @@ Future development priorities for making Modelship production-ready, organized b
 - [x] **Structured logging (JSON)** — `MSHIP_LOG_FORMAT=json` for log aggregation (ELK/Loki/Splunk)
 - [x] **Request-ID correlation** — trace a request from gateway through Ray actor boundaries via `contextvars`
 - [x] **Log level configuration** — `MSHIP_LOG_LEVEL` controls app logs; `TRACE` enables library debug logs
+- [x] **Syslog support** — `--log-target syslog://host:port` ships logs to a remote syslog server (UDP or TCP)
+- [x] **OpenTelemetry log export** — `--otel-endpoint` ships logs (and enables Ray traces) via OTLP to any OTel collector
 
 ### Resilience
 
@@ -95,7 +97,7 @@ Future development priorities for making Modelship production-ready, organized b
 |------------------------------|---------|--------|
 | Architecture & Design        | 8/10    | 9/10   |
 | Monitoring (metrics)         | 9/10    | 9/10   |
-| Monitoring (alerting + logs) | 7/10    | 8/10   |
+| Monitoring (alerting + logs) | 8/10    | 9/10   |
 | Security                     | 4/10    | 8/10   |
 | Resilience                   | 5/10    | 8/10   |
 | Testing                      | 3/10    | 7/10   |

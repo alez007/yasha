@@ -12,6 +12,8 @@ Modelship uses a centralized logging system with structured output and request c
 |---|---|---|
 | `MSHIP_LOG_LEVEL` | `INFO` | App log level. Set to `DEBUG` for full request/response bodies. Set to `TRACE` to also enable library debug logs. |
 | `MSHIP_LOG_FORMAT` | `text` | `text` for human-readable output, `json` for structured JSON lines (for log aggregation with ELK/Loki/Splunk). |
+| `MSHIP_LOG_TARGET` | `console` | Log target. `console` writes to stderr; syslog URIs ship logs to a remote syslog server (see below). |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | When set, logs are also exported to an OpenTelemetry collector via OTLP (see below). |
 
 ### Log Levels
 
@@ -49,6 +51,59 @@ JSON format example:
 | `modelship.infer.diffusers` | Diffusers inference backend |
 | `modelship.infer.custom` | Custom/plugin inference backend |
 | `modelship.plugin.<name>` | Individual plugins (kokoro, bark, orpheus) |
+
+### Syslog
+
+Ship logs to a remote syslog server instead of stderr. Useful for centralized logging on bare-metal or Unraid setups without extra infrastructure.
+
+```bash
+# UDP (default)
+python start.py --log-target syslog://192.168.1.50:514
+
+# TCP (reliable delivery)
+python start.py --log-target syslog+tcp://192.168.1.50:514
+
+# Via environment variable
+MSHIP_LOG_TARGET=syslog://192.168.1.50:514 python start.py
+```
+
+Supported URI formats:
+
+| URI | Protocol | Notes |
+|---|---|---|
+| `syslog://host:port` | UDP | Default, fire-and-forget |
+| `syslog+tcp://host:port` | TCP | Reliable delivery |
+| `syslog://host` | UDP | Port defaults to 514 |
+
+The syslog target replaces the console handler — logs go to the syslog server only. The `--log-format` setting still applies (text or JSON).
+
+### OpenTelemetry
+
+Export logs to an OpenTelemetry collector via OTLP. Unlike syslog, OTel is additive — logs still go to the console (or syslog) handler, and are also shipped to the collector.
+
+First, install the optional dependencies:
+
+```bash
+uv sync --extra otel
+```
+
+Then configure the endpoint:
+
+```bash
+# Via CLI
+python start.py --otel-endpoint http://collector:4317
+
+# Via environment variable
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317 python start.py
+```
+
+When OTel is enabled:
+- Logs are exported via `BatchLogRecordProcessor` with `OTLPLogExporter` (gRPC)
+- The service name is set to `modelship`
+- `RAY_TRACING_ENABLED=1` is set automatically so Ray workers also export traces
+- HTTPS endpoints are detected from the URI scheme; all others use insecure connections
+
+If the `opentelemetry-sdk` and `opentelemetry-exporter-otlp` packages are not installed, a warning is logged and OTel is skipped.
 
 ## Architecture
 
