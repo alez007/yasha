@@ -1,6 +1,53 @@
 # Model Configuration
 
-Models are configured in `config/models.yaml`. Each entry defines one deployment.
+Models are configured in a YAML file (default: `config/models.yaml`). Each entry defines one deployment.
+
+## CLI Options
+
+`start.py` accepts the following arguments (env vars work as fallbacks):
+
+| Argument | Env Var | Default | Description |
+|---|---|---|---|
+| `--config` | — | `config/models.yaml` | Path to models config file |
+| `--gateway-name` | `MSHIP_GATEWAY_NAME` | `modelship api` | Name for the API gateway app |
+| `--ray-cluster-address` | `RAY_CLUSTER_ADDRESS` | — | Ray cluster address |
+| `--ray-redis-port` | `RAY_REDIS_PORT` | — | Ray Redis port |
+| `--use-existing-ray-cluster` | `MSHIP_USE_EXISTING_RAY_CLUSTER` | `false` | Connect to an existing Ray cluster |
+| `--redeploy` | — | `false` | Tear down all existing deployments before deploying |
+| `--cache-dir` | `MSHIP_CACHE_DIR` | `/modelship/.cache/models` | Model cache directory |
+| `--log-level` | `MSHIP_LOG_LEVEL` | `INFO` | Log level |
+| `--log-format` | `MSHIP_LOG_FORMAT` | `text` | Log format (`text` or `json`) |
+| `--no-metrics` | `MSHIP_METRICS` | enabled | Disable Prometheus metrics |
+| `--api-keys` | `MSHIP_API_KEYS` | — | Comma-separated API keys |
+| `--max-request-body-bytes` | `MSHIP_MAX_REQUEST_BODY_BYTES` | `52428800` | Max request body size in bytes |
+
+### Additive Deploys
+
+By default, `start.py` adds models to a running cluster without disrupting existing deployments. This allows incremental composition:
+
+```bash
+# Deploy LLM models
+python start.py --config config/llm.yaml
+
+# Later, add TTS without touching the running LLMs
+python start.py --config config/tts.yaml
+
+# Add more models from another config
+python start.py --config config/embeddings.yaml
+```
+
+Use `--redeploy` to tear down everything and start fresh:
+
+```bash
+python start.py --config config/models.yaml --redeploy
+```
+
+Multiple gateways can run independently by using `--gateway-name`:
+
+```bash
+python start.py --config config/llm.yaml --gateway-name "llm-api"
+python start.py --config config/tts.yaml --gateway-name "tts-api"
+```
 
 ## Fields
 
@@ -11,16 +58,121 @@ Models are configured in `config/models.yaml`. Each entry defines one deployment
 | `usecase` | string | `generate`, `embed`, `transcription`, `translation`, `tts`, or `image` |
 | `loader` | string | `vllm`, `transformers`, `diffusers`, or `custom` |
 | `plugin` | string | Plugin module name (required when `loader: custom`); must be installed via `uv sync --extra <plugin>` |
-| `num_gpus` | float | Fraction of a GPU to allocate (0.0–1.0); also sets vLLM `gpu_memory_utilization` |
+| `num_gpus` | float | Fraction of a GPU to allocate (0.0-1.0); also sets vLLM `gpu_memory_utilization` |
 | `num_cpus` | float | CPU units to allocate (default `0.1`) |
 | `num_replicas` | int | Number of identical Ray Serve replicas for this deployment (default `1`) |
-| `vllm_engine_kwargs` | object | Passed directly to the vLLM engine — see [vLLM engine args](https://docs.vllm.ai/en/latest/configuration/engine_args.html) |
+| `vllm_engine_kwargs` | object | Passed directly to the vLLM engine (see below) |
+| `transformers_config` | object | Transformers loader options (see below) |
 | `diffusers_config` | object | Diffusers pipeline options (see below) |
 | `plugin_config` | object | Plugin-specific options passed through to the plugin |
 
-## Diffusers Config
+## vLLM Loader
 
-Options for `loader: diffusers` models (image generation via HuggingFace Diffusers):
+The `vllm` loader supports chat/generation, embeddings, transcription, and translation. Configuration is passed via `vllm_engine_kwargs`:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `tensor_parallel_size` | int | `1` | Number of GPUs for tensor parallelism |
+| `max_model_len` | int | auto | Maximum sequence length |
+| `dtype` | string | `auto` | Model dtype (`auto`, `float16`, `bfloat16`) |
+| `tokenizer` | string | model default | Custom tokenizer path |
+| `trust_remote_code` | bool | `false` | Allow remote code execution |
+| `gpu_memory_utilization` | float | `0.9` | VRAM fraction (overridden by `num_gpus` when set) |
+| `distributed_executor_backend` | string | auto | `ray` or `mp` for multi-GPU |
+| `quantization` | string | — | Quantization method (e.g. `awq`, `gptq`) |
+| `enable_auto_tool_choice` | bool | — | Enable automatic tool/function calling |
+| `tool_call_parser` | string | — | Tool call parser (e.g. `llama3_json`, `hermes`) |
+| `enforce_eager` | bool | — | Disable CUDA graph capture |
+| `kv_cache_dtype` | string | — | KV cache dtype (e.g. `fp8`) |
+
+### Chat / Text Generation
+
+```yaml
+models:
+  - name: qwen
+    model: Qwen/Qwen3-0.6B
+    usecase: generate
+    loader: vllm
+    num_gpus: 0.30
+    vllm_engine_kwargs:
+      max_model_len: 8192
+```
+
+### LLM with Tool Calling
+
+```yaml
+models:
+  - name: llama
+    model: meta-llama/Llama-3.1-8B-Instruct
+    usecase: generate
+    loader: vllm
+    num_gpus: 0.70
+    vllm_engine_kwargs:
+      enable_auto_tool_choice: true
+      tool_call_parser: llama3_json
+```
+
+### Multi-GPU with Tensor Parallelism
+
+```yaml
+models:
+  - name: llama-70b
+    model: meta-llama/Llama-3.1-70B-Instruct
+    usecase: generate
+    loader: vllm
+    vllm_engine_kwargs:
+      tensor_parallel_size: 2
+      distributed_executor_backend: ray
+```
+
+### Embeddings
+
+```yaml
+models:
+  - name: nomic-embed
+    model: nomic-ai/nomic-embed-text-v1.5
+    usecase: embed
+    loader: vllm
+    num_gpus: 0.15
+    vllm_engine_kwargs:
+      trust_remote_code: true
+```
+
+### Speech-to-Text (Whisper)
+
+```yaml
+models:
+  - name: whisper
+    model: openai/whisper-small
+    usecase: transcription
+    loader: vllm
+    num_gpus: 0.15
+    vllm_engine_kwargs:
+      trust_remote_code: true
+```
+
+## Transformers Loader
+
+The `transformers` loader uses PyTorch with HuggingFace Transformers. Currently supports TTS use cases.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `device` | string | `cpu` | Device to run on (`cpu` or `cuda:0`) |
+
+```yaml
+models:
+  - name: my-tts
+    model: some-org/some-tts-model
+    usecase: tts
+    loader: transformers
+    num_gpus: 0.20
+    transformers_config:
+      device: "cuda:0"
+```
+
+## Diffusers Loader
+
+The `diffusers` loader uses HuggingFace Diffusers for image generation. Any model supported by `AutoPipelineForText2Image` works out of the box.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -28,21 +180,29 @@ Options for `loader: diffusers` models (image generation via HuggingFace Diffuse
 | `num_inference_steps` | int | `30` | Default denoising steps (can be overridden per request) |
 | `guidance_scale` | float | `7.5` | Default classifier-free guidance scale (can be overridden per request) |
 
-Any model supported by `AutoPipelineForText2Image` works out of the box — Stable Diffusion 1.5/2.x/XL/3.x, SDXL Turbo, Flux, PixArt, Kandinsky, etc.
-
-Example:
-
 ```yaml
-- name: "sdxl-turbo"
-  model: "stabilityai/sdxl-turbo"
-  usecase: "image"
-  loader: "diffusers"
-  num_gpus: 0.35
-  diffusers_config:
-    torch_dtype: "float16"
-    num_inference_steps: 4
-    guidance_scale: 0.0
+models:
+  - name: sdxl-turbo
+    model: stabilityai/sdxl-turbo
+    usecase: image
+    loader: diffusers
+    num_gpus: 0.35
+    diffusers_config:
+      torch_dtype: "float16"
+      num_inference_steps: 4
+      guidance_scale: 0.0
 ```
+
+## Custom Loader (Plugins)
+
+The `custom` loader delegates to a plugin module. The `plugin` field is required and must match an installed plugin package. Plugin-specific options are passed via `plugin_config`.
+
+See each plugin's README for configuration details:
+- [Kokoro TTS](../plugins/kokoro/README.md)
+- [Bark TTS](../plugins/bark/README.md)
+- [Orpheus TTS](../plugins/orpheus/README.md)
+
+For writing your own plugin, see [Plugin Development](plugins.md).
 
 ## Multi-Deployment Routing
 
@@ -83,6 +243,7 @@ In this example, requests to model `kokoro` are distributed across three backend
 | `HF_TOKEN` | HuggingFace access token | — |
 | `MSHIP_PLUGINS` | Comma-separated list of plugins to install at startup (e.g. `kokoro,orpheus`) | — |
 | `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace + plugins) | `/modelship/.cache/models` |
+| `MSHIP_GATEWAY_NAME` | Name for the API gateway app | `modelship api` |
 | `MSHIP_MAX_REQUEST_BODY_BYTES` | Maximum allowed request body size in bytes | `52428800` (50 MB) |
 | `CUDA_DEVICE_ORDER` | GPU enumeration order; set to `PCI_BUS_ID` for deterministic ordering in multi-GPU systems | `PCI_BUS_ID` |
 | `RAY_REDIS_PORT` | Ray GCS server port | `6379` |

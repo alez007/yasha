@@ -72,10 +72,13 @@ Pull the latest image from GHCR:
 docker pull ghcr.io/alez007/modelship:latest
 ```
 
-Grab an example config for your GPU and edit it to your liking:
+Create a `models.yaml` config file (see [config/models.yaml](config/models.yaml) for an example):
 
-```bash
-docker run --rm ghcr.io/alez007/modelship:latest cat /modelship/config/models.example.16GB.yaml > models.yaml
+```yaml
+models:
+  - name: qwen
+    model: Qwen/Qwen3-0.6B
+    loader: vllm
 ```
 
 Start the server:
@@ -104,7 +107,19 @@ curl http://localhost:8000/v1/chat/completions \
 - Prometheus metrics: `http://localhost:8079`
 - Ray dashboard: `http://localhost:8265`
 
-Example configs are included for 8 GB, 16 GB, 24 GB, and 2×16 GB GPU setups.
+### Additive Deploys
+
+By default, running `start.py` with a new config adds models to the running cluster without disrupting existing deployments:
+
+```bash
+# Deploy LLMs
+python start.py --config config/llm.yaml
+
+# Later, add TTS models — LLMs keep running
+python start.py --config config/tts.yaml
+```
+
+Use `--redeploy` to tear down everything and start fresh. See [Model Configuration](docs/model-configuration.md) for the full CLI reference.
 
 ## Plugin Support
 
@@ -155,7 +170,7 @@ See the full [Production Readiness Plan](docs/production-readiness.md) for detai
 | Resilience                   | 5/10  | Good shutdown, weak self-healing |
 | Testing                      | 3/10  | Config tests only, no integration/API tests |
 | DevOps Experience            | 5/10  | Good docs, no K8s/Helm, no runbooks |
-| Update/Deploy Strategy       | 3/10  | No rolling updates, no hot-reload |
+| Update/Deploy Strategy       | 5/10  | Additive deploys supported, no rolling updates for existing models |
 
 ### Critical items before production
 
