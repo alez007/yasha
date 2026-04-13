@@ -114,7 +114,7 @@ To import it:
 2. Upload `grafana-dashboard.json` or paste its contents
 3. Select your Prometheus datasource when prompted
 
-The dashboard has 6 rows:
+The dashboard has 7 rows:
 
 | Row | What it shows | Metric sources |
 |---|---|---|
@@ -124,6 +124,55 @@ The dashboard has 6 rows:
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory | `ray_node_*` |
 | **Ray Serve** | Health check latency, request count, deployment processing latency, HTTP request latency | `ray_serve_*` |
 | **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_modelship_*` |
+| **Alerts** | Error rate %, KV cache usage, queue depth, TTFT P99, client disconnects, preemptions, GPU memory | `ray_modelship_*`, `ray_vllm_*`, `ray_node_*` |
+
+## Alerting
+
+A standalone Prometheus alerting rules file is included at [`docs/prometheus-alerts.yml`](prometheus-alerts.yml). The Grafana dashboard also has a dedicated **Alerts** row with threshold lines on the key panels.
+
+### Importing Alert Rules
+
+Add the rules file to your Prometheus config:
+
+```yaml
+rule_files:
+  - /path/to/prometheus-alerts.yml
+```
+
+Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-lifecycle` is set).
+
+### Alert Reference
+
+#### Critical (page-worthy)
+
+| Alert | Condition | For | Description |
+|---|---|---|---|
+| `ModelshipHighErrorRate` | Error rate > 5% of traffic | 5m | Significant portion of requests are failing |
+| `ModelshipNoModelsLoaded` | `models_loaded` == 0 | 2m | Server is running but cannot serve requests |
+| `ModelshipModelLoadFailure` | Any increase in `model_load_failures_total` | 0m | A model failed to initialize |
+| `ModelshipKVCacheExhausted` | KV cache usage > 95% | 5m | Requests will queue or be preempted |
+
+#### Warning (investigate)
+
+| Alert | Condition | For | Description |
+|---|---|---|---|
+| `ModelshipHighP99Latency` | Gateway P99 > 30s | 5m | End-to-end latency is very high |
+| `ModelshipHighQueueDepth` | Waiting requests > 10 | 5m | vLLM engine is falling behind |
+| `ModelshipPreemptions` | Preemption rate > 0 | 5m | GPU memory pressure causing request eviction |
+| `ModelshipClientDisconnects` | Disconnect rate > 1/min | 5m | Clients timing out or dropping connections |
+| `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |
+| `ModelshipHighTTFT` | TTFT P99 > 5s | 5m | Users waiting too long for first token |
+
+### Tuning Thresholds
+
+All thresholds are starting points. Adjust based on your deployment:
+
+- **Error rate**: 5% is aggressive — if you run small models that occasionally OOM, raise to 10%.
+- **P99 latency**: 30s works for chat completions with long outputs. For embeddings or TTS, consider lowering to 5-10s by adding per-endpoint rules.
+- **Queue depth**: 10 assumes a single vLLM instance. Scale proportionally with replicas.
+- **KV cache**: 95% is the danger zone. If you use prefix caching heavily, 90% may be more appropriate.
+- **TTFT**: 5s is generous. For interactive chat, consider 2-3s.
+- **GPU memory**: 1 GB threshold assumes you're not running anything else on the GPU. Raise if you have shared workloads.
 
 ## Health Check
 

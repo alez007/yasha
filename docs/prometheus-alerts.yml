@@ -1,0 +1,127 @@
+# Modelship Prometheus Alerting Rules
+#
+# Import into Prometheus:
+#   rule_files:
+#     - /path/to/prometheus-alerts.yml
+#
+# All thresholds are starting points — tune per deployment based on
+# your model sizes, traffic patterns, and hardware.
+
+groups:
+  - name: modelship-critical
+    rules:
+      - alert: ModelshipHighErrorRate
+        expr: |
+          sum(rate(ray_modelship_request_errors_total[5m]))
+          / clamp_min(sum(rate(ray_modelship_request_total[5m])), 1)
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High request error rate (> 5%)"
+          description: >-
+            Error rate is {{ $value | humanizePercentage }} of total traffic
+            over the last 5 minutes.
+
+      - alert: ModelshipNoModelsLoaded
+        expr: ray_modelship_models_loaded == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No models loaded"
+          description: >-
+            ray_modelship_models_loaded has been 0 for 2 minutes.
+            The server is running but cannot serve any requests.
+
+      - alert: ModelshipModelLoadFailure
+        expr: increase(ray_modelship_model_load_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Model load failure detected"
+          description: >-
+            {{ $labels.model }} ({{ $labels.loader }}) failed to load.
+
+      - alert: ModelshipKVCacheExhausted
+        expr: ray_vllm_kv_cache_usage_perc > 0.95
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "vLLM KV cache near exhaustion (> 95%)"
+          description: >-
+            KV cache usage is {{ $value | humanizePercentage }}.
+            Requests will queue or be preempted.
+
+  - name: modelship-warning
+    rules:
+      - alert: ModelshipHighP99Latency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(ray_modelship_request_duration_seconds_bucket[5m])) by (le)
+          ) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Request latency P99 > 30s"
+          description: >-
+            P99 gateway latency is {{ $value | humanizeDuration }}.
+
+      - alert: ModelshipHighQueueDepth
+        expr: ray_vllm_num_requests_waiting > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "vLLM request queue depth > 10"
+          description: >-
+            {{ $value }} requests waiting in the vLLM queue.
+
+      - alert: ModelshipPreemptions
+        expr: rate(ray_vllm_num_preemptions_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "vLLM preemptions occurring"
+          description: >-
+            Preemptions indicate GPU memory pressure — requests are being
+            evicted and recomputed.
+
+      - alert: ModelshipClientDisconnects
+        expr: sum(rate(ray_modelship_client_disconnects_total[5m])) > 0.0167
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Client disconnects > 1/min"
+          description: >-
+            {{ $value | humanize }} disconnects/s — clients may be timing out.
+
+      - alert: ModelshipGPUMemoryPressure
+        expr: ray_node_gram_available < 1024
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU memory available < 1 GB"
+          description: >-
+            GPU {{ $labels.GpuIndex }} has only {{ $value | humanize }}MB free.
+
+      - alert: ModelshipHighTTFT
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(ray_vllm_time_to_first_token_seconds_bucket[5m])) by (le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Time to first token P99 > 5s"
+          description: >-
+            TTFT P99 is {{ $value | humanizeDuration }} — users are waiting
+            too long for the first token.
