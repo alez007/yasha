@@ -36,7 +36,22 @@ _release:
 	@echo "Bumping version: $(VERSION) -> $(NEW_VERSION)"
 	@sed -i '0,/^version = ".*"/{s/^version = ".*"/version = "$(NEW_VERSION)"/}' pyproject.toml
 	@uv lock
-	@git add pyproject.toml uv.lock
+	@# --- auto-update CHANGELOG.md ---
+	@PREV_TAG=$$(git describe --tags --abbrev=0 2>/dev/null || echo ""); \
+	if [ -n "$$PREV_TAG" ]; then \
+		RANGE="$$PREV_TAG..HEAD"; \
+	else \
+		RANGE=""; \
+	fi; \
+	ADDED=$$(git log $$RANGE --pretty=format:'%s' --no-merges | grep -iE '^feat(\(.*\))?:' | sed 's/^[^:]*: */- /' || true); \
+	FIXED=$$(git log $$RANGE --pretty=format:'%s' --no-merges | grep -iE '^fix(\(.*\))?:' | sed 's/^[^:]*: */- /' || true); \
+	CHANGED=$$(git log $$RANGE --pretty=format:'%s' --no-merges | grep -iE '^(refactor|perf|docs|chore|build|ci|style|test)(\(.*\))?:' | sed 's/^[^:]*: */- /' || true); \
+	ENTRY="## [$(NEW_VERSION)] - $$(date +%Y-%m-%d)"; \
+	if [ -n "$$ADDED" ]; then ENTRY="$$ENTRY\n\n### Added\n$$ADDED"; fi; \
+	if [ -n "$$FIXED" ]; then ENTRY="$$ENTRY\n\n### Fixed\n$$FIXED"; fi; \
+	if [ -n "$$CHANGED" ]; then ENTRY="$$ENTRY\n\n### Changed\n$$CHANGED"; fi; \
+	sed -i "/^The format is based on/a\\\\n$$ENTRY" CHANGELOG.md
+	@git add pyproject.toml uv.lock CHANGELOG.md
 	@git commit -m "release: v$(NEW_VERSION)"
 	@git tag -a "v$(NEW_VERSION)" -m "Release v$(NEW_VERSION)"
 	@git push origin main --follow-tags
