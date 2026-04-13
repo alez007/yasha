@@ -83,7 +83,6 @@ FROM base AS prod
 
 ADD ./start.py start.py
 ADD ./modelship modelship
-ADD ./config config
 ADD ./scripts scripts
 
 RUN --mount=type=cache,target=/root/.cache/uv \
