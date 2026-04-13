@@ -124,6 +124,7 @@ def configure_logging() -> None:
         os.environ.setdefault(env_var, lib_level_name)
 
 
+# pyright: reportMissingImports=false
 def _setup_otel(root_logger: logging.Logger, endpoint: str, level: int) -> None:
     """Attach an OpenTelemetry log exporter to *root_logger*.
 
@@ -132,11 +133,11 @@ def _setup_otel(root_logger: logging.Logger, endpoint: str, level: int) -> None:
     """
     try:
         from opentelemetry.exporter.otlp.proto.grpc.log_exporter import (
-            OTLPLogExporter,  # pyright: ignore[reportMissingImports]
+            OTLPLogExporter,
         )
-        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler  # pyright: ignore[reportMissingImports]
-        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor  # pyright: ignore[reportMissingImports]
-        from opentelemetry.sdk.resources import SERVICE_NAME, Resource  # pyright: ignore[reportMissingImports]
+        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+        from opentelemetry.sdk.resources import SERVICE_NAME, Resource
     except ImportError:
         root_logger.warning(
             "OTEL_EXPORTER_OTLP_ENDPOINT is set but opentelemetry packages are not installed. "
