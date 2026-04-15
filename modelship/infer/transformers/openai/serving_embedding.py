@@ -33,9 +33,9 @@ class OpenAIServingEmbedding(OpenAIServing):
     ) -> EmbeddingResponse | ErrorResponse:
         request_id = f"{self.request_id_prefix}-{base_request_id(raw_request)}"
         logger.info("embedding request %s", request_id)
-        logger.log(TRACE, "embedding request %s: input=%s", request_id, request.input)
+        logger.log(TRACE, "embedding request %s: input=%s", request_id, request.input)  # type: ignore[union-attr]
 
-        inputs = request.input
+        inputs = request.input  # type: ignore[union-attr]
         if isinstance(inputs, str):
             inputs = [inputs]
 
@@ -45,7 +45,7 @@ class OpenAIServingEmbedding(OpenAIServing):
             logger.exception("embedding inference failed for %s", request_id)
             return create_error_response("embedding inference failed")
 
-        tokenized = self.model.tokenize(inputs)
+        tokenized = self.model.tokenize(inputs)  # type: ignore[arg-type]
         prompt_tokens = sum(len(ids) for ids in tokenized["input_ids"])
 
         data = [EmbeddingResponseData(index=i, embedding=emb.tolist()) for i, emb in enumerate(embeddings)]
