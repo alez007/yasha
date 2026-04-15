@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.22] - 2026-04-15
+
+### Added
+- add transformers CPU inference, TRACE logging, and fix audio resampling
+
+### Fixed
+- resolve pyright type errors across serving modules
+
 ## [0.1.21] - 2026-04-13
 
 ### Fixed
