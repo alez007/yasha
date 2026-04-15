@@ -2,8 +2,6 @@ import importlib
 from collections.abc import AsyncGenerator
 from typing import cast
 
-from starlette.requests import Request
-
 from modelship.infer.base_infer import BaseInfer
 from modelship.infer.custom.openai.serving_speech import OpenAIServingSpeech
 from modelship.infer.infer_config import ModelshipModelConfig, ModelUsecase, RawRequestProxy
@@ -53,4 +51,4 @@ class CustomInfer(BaseInfer):
     ) -> ErrorResponse | RawSpeechResponse | AsyncGenerator[str, None]:
         if self.serving_speech is None:
             return await super().create_speech(request, raw_request)
-        return await self.serving_speech.create_speech(request, cast("Request", raw_request))
+        return await self.serving_speech.create_speech(request, raw_request)

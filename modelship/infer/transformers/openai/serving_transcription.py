@@ -48,7 +48,7 @@ class OpenAIServingTranscription(OpenAIServing):
 
     @property
     def _target_sr(self) -> int:
-        return self.pipeline.feature_extractor.sampling_rate
+        return self.pipeline.feature_extractor.sampling_rate  # type: ignore[union-attr]
 
     async def warmup(self) -> None:
         logger.info("Warming up transcription model: %s", self.model_name)
@@ -101,7 +101,7 @@ class OpenAIServingTranslation(OpenAIServing):
 
     @property
     def _target_sr(self) -> int:
-        return self.pipeline.feature_extractor.sampling_rate
+        return self.pipeline.feature_extractor.sampling_rate  # type: ignore[union-attr]
 
     async def warmup(self) -> None:
         logger.info("Warming up translation model: %s", self.model_name)

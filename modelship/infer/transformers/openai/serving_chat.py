@@ -48,7 +48,7 @@ class OpenAIServingChat(OpenAIServing):
             TRACE, "chat request %s: messages=%s, max_tokens=%s", request_id, request.messages, request.max_tokens
         )
 
-        messages = [{"role": m["role"], "content": m["content"]} for m in request.messages]
+        messages = [{"role": m["role"], "content": m["content"]} for m in request.messages]  # type: ignore[index]
 
         if request.stream:
             return self._stream(request_id, messages, request.max_tokens)
@@ -107,10 +107,10 @@ class OpenAIServingChat(OpenAIServing):
         from vllm.entrypoints.openai.chat_completion.protocol import (
             ChatCompletionResponseStreamChoice,
             ChatCompletionStreamResponse,
-            DeltaMessage,
         )
+        from vllm.entrypoints.openai.engine.protocol import DeltaMessage
 
-        streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)
+        streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)  # type: ignore[arg-type]
 
         kwargs = {**self.config.pipeline_kwargs}
         if max_tokens is not None:
