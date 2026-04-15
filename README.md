@@ -1,6 +1,19 @@
 # Modelship
 
+[![CI](https://github.com/alez007/modelship/actions/workflows/ci.yml/badge.svg)](https://github.com/alez007/modelship/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+
 Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized models (TTS, speech-to-text, embeddings, image generation) on GPU or CPU, exposing an OpenAI-compatible API. Built on [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) with pluggable inference backends: [vLLM](https://github.com/vllm-project/vllm) for high-throughput GPU inference, [HuggingFace Transformers](https://github.com/huggingface/transformers) for CPU and lightweight GPU workloads, [Diffusers](https://github.com/huggingface/diffusers) for image generation, and a plugin system for custom backends.
+
+## Why Modelship?
+
+Most self-hosted inference tools focus on running a single model. Modelship is for when you need **multiple models running simultaneously** — an LLM, a TTS engine, a speech-to-text model, an embedding model, and an image generator — all behind a single OpenAI-compatible API, with fine-grained control over GPU memory allocation across them.
+
+- **One server, many models** — run a full AI stack (chat + TTS + STT + embeddings + image gen) on a single machine instead of juggling separate services
+- **GPU memory control** — allocate exact GPU fractions per model (e.g. 70% for the LLM, 5% for TTS) so everything fits on your hardware
+- **Mix and match backends** — use vLLM for high-throughput GPU inference, Transformers for CPU-only workloads, Diffusers for images, and plugins for custom backends — in the same deployment
+- **Drop-in OpenAI replacement** — any OpenAI SDK client works out of the box, making it easy to integrate with existing apps and tools like [Home Assistant](docs/home-assistant.md)
 
 ## Architecture
 
