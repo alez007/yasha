@@ -1,39 +1,56 @@
-import importlib
 from collections.abc import AsyncGenerator
-from typing import ClassVar, cast
 
 import torch
-from starlette.requests import Request
 
 from modelship.infer.base_infer import BaseInfer
-from modelship.infer.infer_config import DisconnectProxy, ModelshipModelConfig, ModelUsecase
-from modelship.infer.transformers.openai.serving_speech import OpenAIServingSpeech
+from modelship.infer.base_serving import OpenAIServing
+from modelship.infer.infer_config import ModelshipModelConfig, ModelUsecase, RawRequestProxy, TransformersConfig
 from modelship.logging import get_logger
 from modelship.openai.protocol import (
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    EmbeddingRequest,
+    EmbeddingResponse,
     ErrorResponse,
     RawSpeechResponse,
     SpeechRequest,
+    TranscriptionRequest,
+    TranscriptionResponse,
+    TranscriptionResponseVerbose,
+    TranslationRequest,
+    TranslationResponse,
+    TranslationResponseVerbose,
 )
-from modelship.plugins.base_plugin import BasePluginTransformers, PluginProtoTransformers
 
 logger = get_logger("infer.transformers")
 
+_TORCH_DTYPES = {
+    "float16": torch.float16,
+    "float32": torch.float32,
+    "bfloat16": torch.bfloat16,
+}
+
 
 class TransformersInfer(BaseInfer):
-    _transformers_usecases: ClassVar[list[ModelUsecase]] = [ModelUsecase.tts]
-
     def __init__(self, model_config: ModelshipModelConfig):
         super().__init__(model_config)
-        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        self.config = model_config.transformers_config or TransformersConfig()
+        self.device = self.config.device
+        self.torch_dtype = _TORCH_DTYPES.get(self.config.torch_dtype) if self.config.torch_dtype != "auto" else "auto"
 
         mem_frac = self._get_memory_fraction()
         if torch.cuda.is_available() and mem_frac is not None:
             torch.cuda.set_per_process_memory_fraction(mem_frac)
 
+        self._serving: list[OpenAIServing] = []
+
+    def shutdown(self) -> None:
+        pass
+
     def __del__(self):
         try:
-            if serving_speech := getattr(self, "serving_speech", None):
-                del serving_speech
+            for serving in getattr(self, "_serving", []):
+                del serving
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:
@@ -42,37 +59,115 @@ class TransformersInfer(BaseInfer):
             RESOURCE_CLEANUP_ERRORS_TOTAL.inc(tags={"model": self.model_config.name, "component": "transformers_model"})
 
     async def start(self):
-        self.serving_speech = await self.init_serving_speech()
-        if self.serving_speech and self.serving_speech.speech_model:
-            self._set_max_context_length(self.serving_speech.speech_model.max_context_length())
+        usecase = self.model_config.usecase
+        model_name = self.model_config.model
 
-    async def init_serving_speech(self) -> OpenAIServingSpeech | None:
-        logger.info("init serving speech with model: %s", self.model_config.name)
+        if usecase is ModelUsecase.generate:
+            from transformers import pipeline
 
-        speech_model: BasePluginTransformers | None = None
-        plugin = self.model_config.plugin
-        if plugin is not None:
-            logger.info("Loading plugin: %s", plugin)
-            module = cast("PluginProtoTransformers", importlib.import_module(plugin))
-            assert self.model_config.model is not None
-            speech_model = module.ModelPlugin(model_name=self.model_config.model, device=self.device)
+            from modelship.infer.transformers.openai.serving_chat import OpenAIServingChat
 
-        return OpenAIServingSpeech(speech_model=speech_model) if self.model_config.usecase is ModelUsecase.tts else None
+            pipe = pipeline(
+                "text-generation",
+                model=model_name,
+                device=self.device,
+                torch_dtype=self.torch_dtype,
+                trust_remote_code=self.config.trust_remote_code,
+                model_kwargs=self.config.model_kwargs,
+            )
+            self.serving_chat = OpenAIServingChat(pipe, self.model_config.name, self.config)
+            self._serving.append(self.serving_chat)
+
+        elif usecase is ModelUsecase.embed:
+            from sentence_transformers import SentenceTransformer
+
+            from modelship.infer.transformers.openai.serving_embedding import OpenAIServingEmbedding
+
+            model = SentenceTransformer(
+                model_name,
+                device=self.device,
+                trust_remote_code=self.config.trust_remote_code,
+                model_kwargs=self.config.model_kwargs,
+            )
+            self.serving_embedding = OpenAIServingEmbedding(model, self.model_config.name)
+            self._serving.append(self.serving_embedding)
+
+        elif usecase in (ModelUsecase.transcription, ModelUsecase.translation):
+            from transformers import pipeline
+
+            from modelship.infer.transformers.openai.serving_transcription import (
+                OpenAIServingTranscription,
+                OpenAIServingTranslation,
+            )
+
+            pipe = pipeline(
+                "automatic-speech-recognition",
+                model=model_name,
+                device=self.device,
+                torch_dtype=self.torch_dtype,
+                trust_remote_code=self.config.trust_remote_code,
+                model_kwargs=self.config.model_kwargs,
+            )
+            self.serving_transcription = OpenAIServingTranscription(pipe, self.model_config.name, self.config)
+            self.serving_translation = OpenAIServingTranslation(pipe, self.model_config.name, self.config)
+            self._serving.append(self.serving_transcription)
+            self._serving.append(self.serving_translation)
+
+        elif usecase is ModelUsecase.tts:
+            from transformers import pipeline
+
+            from modelship.infer.transformers.openai.serving_speech import OpenAIServingSpeech
+
+            pipe = pipeline(
+                "text-to-audio",
+                model=model_name,
+                device=self.device,
+                torch_dtype=self.torch_dtype,
+                trust_remote_code=self.config.trust_remote_code,
+                model_kwargs=self.config.model_kwargs,
+            )
+            self.serving_speech = OpenAIServingSpeech(pipe, self.model_config.name, self.config)
+            self._serving.append(self.serving_speech)
+
+        logger.info(
+            "TransformersInfer started for %s (usecase=%s, device=%s)", self.model_config.name, usecase, self.device
+        )
 
     async def warmup(self) -> None:
-        if self.serving_speech is None:
-            return
-        logger.info("Warming up transformers TTS model: %s", self.model_config.name)
-        request = SpeechRequest(model=self.model_config.name, input="warmup", voice="default")
-        result = await self.create_speech(request, DisconnectProxy(None, {}))
-        if isinstance(result, AsyncGenerator):
-            async for _ in result:
-                pass
-        logger.info("Warmup TTS done for %s", self.model_config.name)
+        for serving in self._serving:
+            await serving.warmup()
+
+    async def create_chat_completion(
+        self, request: ChatCompletionRequest, raw_request: RawRequestProxy
+    ) -> ErrorResponse | ChatCompletionResponse | AsyncGenerator[str, None]:
+        if not hasattr(self, "serving_chat"):
+            return await super().create_chat_completion(request, raw_request)
+        return await self.serving_chat.create_chat_completion(request, raw_request)
+
+    async def create_embedding(
+        self, request: EmbeddingRequest, raw_request: RawRequestProxy
+    ) -> EmbeddingResponse | ErrorResponse:
+        if not hasattr(self, "serving_embedding"):
+            return await super().create_embedding(request, raw_request)
+        return await self.serving_embedding.create_embedding(request, raw_request)
+
+    async def create_transcription(
+        self, audio_data: bytes, request: TranscriptionRequest, raw_request: RawRequestProxy
+    ) -> ErrorResponse | TranscriptionResponse | TranscriptionResponseVerbose | AsyncGenerator[str, None]:
+        if not hasattr(self, "serving_transcription"):
+            return await super().create_transcription(audio_data, request, raw_request)
+        return await self.serving_transcription.create_transcription(audio_data, request, raw_request)
+
+    async def create_translation(
+        self, audio_data: bytes, request: TranslationRequest, raw_request: RawRequestProxy
+    ) -> ErrorResponse | TranslationResponse | TranslationResponseVerbose | AsyncGenerator[str, None]:
+        if not hasattr(self, "serving_translation"):
+            return await super().create_translation(audio_data, request, raw_request)
+        return await self.serving_translation.create_translation(audio_data, request, raw_request)
 
     async def create_speech(
-        self, request: SpeechRequest, raw_request: DisconnectProxy
+        self, request: SpeechRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | RawSpeechResponse | AsyncGenerator[str, None]:
-        if self.serving_speech is None:
+        if not hasattr(self, "serving_speech"):
             return await super().create_speech(request, raw_request)
-        return await self.serving_speech.create_speech(request, cast("Request", raw_request))
+        return await self.serving_speech.create_speech(request, raw_request)

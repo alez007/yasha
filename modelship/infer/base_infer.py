@@ -2,7 +2,7 @@ import struct
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 
-from modelship.infer.infer_config import DisconnectProxy, ModelshipModelConfig
+from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy
 from modelship.logging import get_logger
 from modelship.openai.protocol import (
     ChatCompletionRequest,
@@ -64,6 +64,14 @@ class BaseInfer(ABC):
         logger.info("max_context_length for %s: %s", self.model_config.name, self.max_context_length)
 
     @abstractmethod
+    def shutdown(self) -> None:
+        """Synchronously release resources (engine processes, GPU memory, etc.).
+
+        Called during graceful teardown. Subclasses must implement to clean up
+        loader-specific resources.
+        """
+
+    @abstractmethod
     async def start(self) -> None: ...
 
     @abstractmethod
@@ -76,29 +84,29 @@ class BaseInfer(ABC):
         """
 
     async def create_chat_completion(
-        self, request: ChatCompletionRequest, raw_request: DisconnectProxy
+        self, request: ChatCompletionRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | ChatCompletionResponse | AsyncGenerator[str, None]:
         return _NOT_SUPPORTED
 
-    async def create_embedding(self, request: EmbeddingRequest, raw_request: DisconnectProxy) -> ErrorResponse:
+    async def create_embedding(self, request: EmbeddingRequest, raw_request: RawRequestProxy) -> ErrorResponse:
         return _NOT_SUPPORTED
 
     async def create_transcription(
-        self, audio_data: bytes, request: TranscriptionRequest, raw_request: DisconnectProxy
+        self, audio_data: bytes, request: TranscriptionRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | TranscriptionResponse | TranscriptionResponseVerbose | AsyncGenerator[str, None]:
         return _NOT_SUPPORTED
 
     async def create_translation(
-        self, audio_data: bytes, request: TranslationRequest, raw_request: DisconnectProxy
+        self, audio_data: bytes, request: TranslationRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | TranslationResponse | TranslationResponseVerbose | AsyncGenerator[str, None]:
         return _NOT_SUPPORTED
 
     async def create_speech(
-        self, request: SpeechRequest, raw_request: DisconnectProxy
+        self, request: SpeechRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | RawSpeechResponse | AsyncGenerator[str, None]:
         return _NOT_SUPPORTED
 
     async def create_image_generation(
-        self, request: ImageGenerationRequest, raw_request: DisconnectProxy
+        self, request: ImageGenerationRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | ImageGenerationResponse:
         return _NOT_SUPPORTED

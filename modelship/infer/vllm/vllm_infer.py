@@ -19,7 +19,7 @@ from vllm.usage.usage_lib import UsageContext
 from vllm.v1.engine.async_llm import AsyncLLM
 
 from modelship.infer.base_infer import MINIMAL_WAV, BaseInfer
-from modelship.infer.infer_config import DisconnectProxy, ModelshipModelConfig, ModelUsecase, VllmEngineConfig
+from modelship.infer.infer_config import ModelshipModelConfig, ModelUsecase, RawRequestProxy, VllmEngineConfig
 from modelship.logging import get_logger
 from modelship.metrics import _ENABLED as _METRICS_ENABLED
 from modelship.openai.protocol import (
@@ -94,14 +94,19 @@ class VllmInfer(BaseInfer):
             stat_loggers=stat_loggers,
         )
 
-    def __del__(self):
+    def shutdown(self) -> None:
         try:
             if engine := getattr(self, "engine", None):
+                logger.info("Shutting down vllm engine for %s", self.model_config.name)
                 engine.shutdown()
         except Exception:
             from modelship.metrics import RESOURCE_CLEANUP_ERRORS_TOTAL
 
             RESOURCE_CLEANUP_ERRORS_TOTAL.inc(tags={"model": self.model_config.name, "component": "vllm_engine"})
+            logger.exception("Failed to shutdown vllm engine for %s", self.model_config.name)
+
+    def __del__(self):
+        self.shutdown()
 
     async def start(self):
         logger.info("Start vllm infer for model: %s", self.model_config)
@@ -117,7 +122,7 @@ class VllmInfer(BaseInfer):
 
     async def warmup(self) -> None:
         logger.info("Warming up vllm model: %s", self.model_config.name)
-        dummy_proxy = DisconnectProxy(None, {})
+        dummy_proxy = RawRequestProxy(None, {})
 
         if self.serving_chat is not None:
             request = ChatCompletionRequest(
@@ -254,21 +259,21 @@ class VllmInfer(BaseInfer):
         )
 
     async def create_chat_completion(
-        self, request: ChatCompletionRequest, raw_request: DisconnectProxy
+        self, request: ChatCompletionRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | ChatCompletionResponse | AsyncGenerator[str, None]:
         if self.serving_chat is None:
             return await super().create_chat_completion(request, raw_request)
         return await self.serving_chat.create_chat_completion(request, cast("Request", raw_request))
 
     async def create_embedding(
-        self, request: EmbeddingRequest, raw_request: DisconnectProxy
+        self, request: EmbeddingRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | Response:
         if self.serving_embedding is None:
             return await super().create_embedding(request, raw_request)
         return await self.serving_embedding(request, cast("Request", raw_request))
 
     async def create_transcription(
-        self, audio_data: bytes, request: TranscriptionRequest, raw_request: DisconnectProxy
+        self, audio_data: bytes, request: TranscriptionRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | TranscriptionResponse | TranscriptionResponseVerbose | AsyncGenerator[str, None]:
         if self.serving_transcription is None:
             return await super().create_transcription(audio_data, request, raw_request)
@@ -276,7 +281,7 @@ class VllmInfer(BaseInfer):
         return await self.serving_transcription.create_transcription(audio_data, request, cast("Request", raw_request))
 
     async def create_translation(
-        self, audio_data: bytes, request: TranslationRequest, raw_request: DisconnectProxy
+        self, audio_data: bytes, request: TranslationRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | TranslationResponse | TranslationResponseVerbose | AsyncGenerator[str, None]:
         if self.serving_translation is None:
             return await super().create_translation(audio_data, request, raw_request)

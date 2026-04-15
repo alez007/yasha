@@ -1,6 +1,6 @@
 # Modelship
 
-Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized models (TTS, speech-to-text, embeddings, image generation) on one or more GPUs, exposing an OpenAI-compatible API. Built on [vLLM](https://github.com/vllm-project/vllm) and [Ray](https://github.com/ray-project/ray).
+Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized models (TTS, speech-to-text, embeddings, image generation) on GPU or CPU, exposing an OpenAI-compatible API. Built on [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) with pluggable inference backends: [vLLM](https://github.com/vllm-project/vllm) for high-throughput GPU inference, [HuggingFace Transformers](https://github.com/huggingface/transformers) for CPU and lightweight GPU workloads, [Diffusers](https://github.com/huggingface/diffusers) for image generation, and a plugin system for custom backends.
 
 ## Architecture
 
@@ -15,33 +15,51 @@ graph TD
     API -->|round-robin| TTS
     API -->|round-robin| STT
     API -->|round-robin| EMB
+    API -->|round-robin| IMG
 
-    subgraph GPU0["GPU 0"]
+    subgraph GPU0["GPU 0 — vLLM"]
         LLM_GPU["LLM Deployment<br/>e.g. Llama 3.1 8B<br/>70% GPU"]
         TTS["TTS Deployment<br/>e.g. Kokoro 82M<br/>5% GPU"]
     end
 
-    subgraph GPU1["GPU 1"]
-        STT["STT Deployment<br/>e.g. Whisper<br/>50% GPU"]
+    subgraph GPU1["GPU 1 — Mixed backends"]
+        STT["STT Deployment (vLLM)<br/>e.g. Whisper Large<br/>50% GPU"]
         EMB["Embedding Deployment<br/>e.g. Nomic Embed<br/>50% GPU"]
     end
 
-    subgraph CPU["CPU-only"]
-        LLM_CPU["LLM Deployment<br/>e.g. Llama 3.1 8B<br/>CPU-only replica"]
+    subgraph CPU["CPU — Transformers"]
+        LLM_CPU["LLM Deployment<br/>e.g. Qwen3-0.6B<br/>CPU-only"]
+        STT_CPU["STT Deployment<br/>e.g. Whisper Small<br/>CPU-only"]
+    end
+
+    subgraph GPU2["GPU 2 — Diffusers"]
+        IMG["Image Generation<br/>e.g. SDXL Turbo<br/>35% GPU"]
     end
 ```
 
-Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Models can be deployed across multiple GPUs, run on CPU-only, or both — multiple deployments of the same model (e.g. one on GPU, one on CPU) are load-balanced with round-robin routing. Each deployment can also scale horizontally with `num_replicas`.
+Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Four inference backends are available:
+
+| Backend | Best for | GPU required |
+|---|---|---|
+| **vLLM** | High-throughput chat, embeddings, transcription | Yes |
+| **Transformers** | Chat, embeddings, transcription, TTS on CPU or lightweight GPU | No |
+| **Diffusers** | Image generation | Yes |
+| **Custom (plugins)** | TTS backends (Kokoro, Bark, Orpheus) | No |
+
+Models can be deployed across multiple GPUs, run on CPU-only, or both — multiple deployments of the same model (e.g. one on GPU via vLLM, one on CPU via Transformers) are load-balanced with round-robin routing. Each deployment can also scale horizontally with `num_replicas`.
 
 ## Requirements
 
-- **NVIDIA GPU** — 16 GB+ VRAM recommended for a full stack (LLM + TTS + STT + embeddings); 8 GB is sufficient for lighter setups
-- **Docker** with [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- **Docker** (or Python 3.12+ with `uv` for local development)
+- **NVIDIA GPU** (optional) — 16 GB+ VRAM recommended for a full stack (LLM + TTS + STT + embeddings) via vLLM; 8 GB is sufficient for lighter setups. Not required when using the Transformers backend on CPU
+- **[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)** — required only when running GPU models in Docker
 - **HuggingFace token** for gated models
 
 ## Features
 
-- **Multi-model, multi-GPU** — run chat, embedding, STT, TTS, and image generation models simultaneously across one or more GPUs with tunable per-model GPU memory allocation; models can also run on CPU-only
+- **Multi-model, multi-GPU** — run chat, embedding, STT, TTS, and image generation models simultaneously across one or more GPUs with tunable per-model GPU memory allocation
+- **CPU-only support** — run models without a GPU using the Transformers backend (chat, embeddings, transcription, TTS). Useful for development, testing, or small models that don't need GPU acceleration
+- **Multiple inference backends** — vLLM for high-throughput GPU inference, HuggingFace Transformers for CPU and lightweight GPU workloads, Diffusers for image generation, and a plugin system for custom backends
 - **Per-model isolated deployments** — each model runs in its own Ray Serve deployment with independent lifecycle, health checks, failure isolation, and configurable replica count
 - **OpenAI-compatible API** — drop-in replacement for any OpenAI SDK client
 - **Streaming** — SSE streaming for chat completions and TTS audio
@@ -153,7 +171,7 @@ For a full guide on writing your own plugin, see [Plugin Development](docs/plugi
 
 Modelship exposes Prometheus metrics (Ray cluster, Ray Serve, vLLM, and custom `modelship:*` metrics) through a single scrape endpoint on port 8079. Metrics are **enabled by default** — set `MSHIP_METRICS=false` to disable. A pre-built Grafana dashboard is included.
 
-Logging supports structured JSON output (`MSHIP_LOG_FORMAT=json`) and request ID correlation across Ray actor boundaries. Logs can be shipped to a remote syslog server (`--log-target syslog://host:514`) or an OpenTelemetry collector (`--otel-endpoint http://collector:4317`). Set `MSHIP_LOG_LEVEL` to `DEBUG` for request bodies or `TRACE` to include library internals.
+Logging supports structured JSON output (`MSHIP_LOG_FORMAT=json`) and request ID correlation across Ray actor boundaries. Logs can be shipped to a remote syslog server (`--log-target syslog://host:514`) or an OpenTelemetry collector (`--otel-endpoint http://collector:4317`). Set `MSHIP_LOG_LEVEL` to `TRACE` for full request/response payloads, or `DEBUG` for detailed diagnostics without payloads.
 
 See [Monitoring & Logging](docs/monitoring.md) for full details.
 

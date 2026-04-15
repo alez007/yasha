@@ -4,10 +4,9 @@ import io
 import time
 
 from diffusers.pipelines.auto_pipeline import AutoPipelineForText2Image
-from fastapi import Request
 
-from modelship.infer.infer_config import DiffusersConfig
-from modelship.logging import get_logger
+from modelship.infer.infer_config import DiffusersConfig, RawRequestProxy
+from modelship.logging import TRACE, get_logger
 from modelship.openai.protocol import (
     ErrorResponse,
     ImageGenerationRequest,
@@ -28,11 +27,21 @@ class OpenAIServingImage:
         self.config = config
 
     async def create_image_generation(
-        self, request: ImageGenerationRequest, raw_request: Request
+        self, request: ImageGenerationRequest, raw_request: RawRequestProxy
     ) -> ImageGenerationResponse | ErrorResponse:
         request_id = f"{self.request_id_prefix}-{base_request_id(raw_request)}"
         logger.info(
             "image generation request %s: prompt=%r, n=%d, size=%s", request_id, request.prompt, request.n, request.size
+        )
+        logger.log(
+            TRACE,
+            "image request %s: prompt=%r, n=%d, size=%s, steps=%s, guidance=%s",
+            request_id,
+            request.prompt,
+            request.n,
+            request.size,
+            request.num_inference_steps,
+            request.guidance_scale,
         )
 
         try:
@@ -65,7 +74,9 @@ class OpenAIServingImage:
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             data.append(ImageObject(b64_json=b64, revised_prompt=request.prompt))
 
-        return ImageGenerationResponse(created=int(time.time()), data=data)
+        response = ImageGenerationResponse(created=int(time.time()), data=data)
+        logger.log(TRACE, "image response %s: num_images=%d", request_id, len(data))
+        return response
 
 
 def _parse_size(size: str) -> tuple[int, int]:
