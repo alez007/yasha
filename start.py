@@ -71,6 +71,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--max-request-body-bytes", type=int, help="Max request body size in bytes (env: MSHIP_MAX_REQUEST_BODY_BYTES)"
     )
     parser.add_argument(
+        "--openai-api-port",
+        type=int,
+        help="Port for the OpenAI-compatible API (env: MSHIP_OPENAI_API_PORT, default: 8000)",
+    )
+    parser.add_argument(
         "--redeploy",
         action="store_true",
         default=False,
@@ -105,6 +110,9 @@ def _apply_args_to_env(args: argparse.Namespace) -> None:
 
     if args.max_request_body_bytes is not None:
         os.environ["MSHIP_MAX_REQUEST_BODY_BYTES"] = str(args.max_request_body_bytes)
+
+    if args.openai_api_port is not None:
+        os.environ["MSHIP_OPENAI_API_PORT"] = str(args.openai_api_port)
 
 
 def build_actor_options(config: ModelshipModelConfig) -> dict:
@@ -202,7 +210,8 @@ def main(argv: list[str] | None = None):
 
     ray_address = f"{ray_cluster_address}:{ray_redis_port}" if use_existing_cluster else "auto"
     ray.init(address=ray_address, ignore_reinit_error=True)
-    serve.start(http_options=HTTPOptions(host="0.0.0.0"))
+    openai_api_port = int(os.environ.get("MSHIP_OPENAI_API_PORT", "8000"))
+    serve.start(http_options=HTTPOptions(host="0.0.0.0", port=openai_api_port))
 
     existing_apps = set() if args.redeploy else _get_existing_apps()
     fresh_install = gateway_name not in existing_apps
