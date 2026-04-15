@@ -10,18 +10,21 @@ Modelship uses a centralized logging system with structured output and request c
 
 | Env Var | Default | Description |
 |---|---|---|
-| `MSHIP_LOG_LEVEL` | `INFO` | App log level. Set to `DEBUG` for full request/response bodies. Set to `TRACE` to also enable library debug logs. |
+| `MSHIP_LOG_LEVEL` | `INFO` | App log level. Set to `TRACE` for request/response payloads, `DEBUG` for detailed diagnostics. Each level sets library logs to the next level up (e.g. `DEBUG` app → `INFO` libs). |
 | `MSHIP_LOG_FORMAT` | `text` | `text` for human-readable output, `json` for structured JSON lines (for log aggregation with ELK/Loki/Splunk). |
 | `MSHIP_LOG_TARGET` | `console` | Log target. `console` writes to stderr; syslog URIs ship logs to a remote syslog server (see below). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | When set, logs are also exported to an OpenTelemetry collector via OTLP (see below). |
 
 ### Log Levels
 
-| Level | App logs (`modelship.*`) | Library logs (Ray, vLLM, transformers) |
+Each level sets library logs (Ray, vLLM, transformers) to the next level up:
+
+| Level | App logs (`modelship.*`) | Library logs |
 |---|---|---|
-| `INFO` (default) | Startup, deployment, request summaries | `WARNING` only |
-| `DEBUG` | Full request/response bodies, per-chunk details | `WARNING` only |
-| `TRACE` | Same as `DEBUG` | `DEBUG` — all library internals |
+| `TRACE` | Request/response payloads (audio bytes, transcription text, chat messages, etc.) | `DEBUG` |
+| `DEBUG` | Detailed diagnostics, per-chunk details | `INFO` |
+| `INFO` (default) | Startup, deployment, request summaries | `WARNING` |
+| `WARNING` | Warnings only | `ERROR` |
 
 ### Request Correlation
 
@@ -48,7 +51,12 @@ JSON format example:
 | `modelship.infer.deployment` | Ray Serve model deployment actor |
 | `modelship.infer.vllm` | vLLM inference backend |
 | `modelship.infer.transformers` | Transformers inference backend |
+| `modelship.infer.transformers.transcription` | Transformers speech-to-text/translation |
+| `modelship.infer.transformers.chat` | Transformers chat/generation |
+| `modelship.infer.transformers.embedding` | Transformers embeddings |
+| `modelship.infer.transformers.speech` | Transformers TTS |
 | `modelship.infer.diffusers` | Diffusers inference backend |
+| `modelship.infer.diffusers.image` | Diffusers image generation |
 | `modelship.infer.custom` | Custom/plugin inference backend |
 | `modelship.plugin.<name>` | Individual plugins (kokoro, bark, orpheus) |
 

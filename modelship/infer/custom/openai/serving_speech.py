@@ -1,7 +1,6 @@
 from collections.abc import AsyncGenerator
 
-from fastapi import Request
-
+from modelship.infer.infer_config import RawRequestProxy
 from modelship.logging import get_logger
 from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechRequest, create_error_response
 from modelship.plugins.base_plugin import BasePlugin
@@ -19,7 +18,7 @@ class OpenAIServingSpeech:
         self.serving_engine = serving_engine
 
     async def create_speech(
-        self, request: SpeechRequest, raw_request: Request
+        self, request: SpeechRequest, raw_request: RawRequestProxy
     ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
         if self.serving_engine is None:
             return create_error_response("tts model is not yet accessible")
