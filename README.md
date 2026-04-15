@@ -166,6 +166,7 @@ For a full guide on writing your own plugin, see [Plugin Development](docs/plugi
 - [Plugin Development](docs/plugins.md) — writing custom TTS backends
 - [Home Assistant Integration](docs/home-assistant.md) — Wyoming protocol setup for voice automation
 - [Monitoring & Logging](docs/monitoring.md) — Prometheus metrics, Grafana dashboard, structured logging, health checks
+- [Roadmap](ROADMAP.md) — what's planned next and where to contribute
 
 ## Monitoring
 
