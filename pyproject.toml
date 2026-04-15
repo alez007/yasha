@@ -27,7 +27,8 @@ dependencies = [
     "pydantic-yaml>=1.6.0",
     "python-multipart>=0.0.20",
     "ray[data,default,serve-grpc]>=2.51.1",
-    "scipy>=1.16.1",
+    "librosa>=0.11.0",
+    "soundfile>=0.13.0",
     "torch>=2.10.0",
     "torchvision>=0.25.0",
     "transformers>=4.57.5",
@@ -36,6 +37,7 @@ dependencies = [
     "requests>=2.32.5",
     "accelerate>=1.6.0",
     "diffusers>=0.31.0",
+    "sentence-transformers>=3.0.0",
 ]
 
 [project.optional-dependencies]

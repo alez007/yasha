@@ -47,6 +47,10 @@ class VllmEngineConfig(BaseModel):
 
 class TransformersConfig(BaseModel):
     device: str = "cpu"
+    torch_dtype: str = "auto"
+    trust_remote_code: bool = False
+    model_kwargs: dict[str, Any] = Field(default_factory=dict)
+    pipeline_kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
 class DiffusersConfig(BaseModel):
@@ -60,7 +64,7 @@ class ModelshipModelConfig(BaseModel):
     model: str
     usecase: ModelUsecase
     loader: ModelLoader
-    plugin: str | None = None  # only meaningful for loader='custom', silently ignored otherwise
+    plugin: str | None = None  # only meaningful for loader='custom'
     num_gpus: float = 0
     num_cpus: float = 0.1
     num_replicas: int = 1
@@ -124,14 +128,14 @@ class RequestWatcher:
         return self._event
 
 
-class DisconnectProxy:
+class RawRequestProxy:
     """
     Stands in for a FastAPI Request inside model deployment actors.
 
     The real FastAPI Request cannot cross Ray process boundaries — it holds a live
     TCP socket and ASGI callables that are not serializable. Instead, the gateway
     extracts the serializable parts (headers as a plain dict, disconnect signal via
-    DisconnectEvent Ray actor) and passes those to the model deployment. DisconnectProxy
+    DisconnectEvent Ray actor) and passes those to the model deployment. RawRequestProxy
     reconstructs them into the interface that vllm expects from a raw_request:
 
       - raw_request.headers.get(...)     → Starlette Headers built from the dict
@@ -140,10 +144,11 @@ class DisconnectProxy:
     Any additional attributes vllm reads from raw_request in future should be added here.
     """
 
-    def __init__(self, event, headers: dict):
+    def __init__(self, event, headers: dict, request_id: str | None = None):
         self._event = event
         self.headers = Headers(headers=headers)
         self.state = State()  # vllm writes per-request state here; initialized empty, lives in the actor process
+        self.request_id = request_id
 
     async def is_disconnected(self) -> bool:
         return await self._event.is_set.remote()

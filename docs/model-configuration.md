@@ -155,11 +155,60 @@ models:
 
 ## Transformers Loader
 
-The `transformers` loader uses PyTorch with HuggingFace Transformers. Currently supports TTS use cases.
+The `transformers` loader uses PyTorch with HuggingFace Transformers. Supports chat/generation, embeddings, transcription, translation, and TTS. Unlike the vLLM loader, it can run entirely on CPU — making it ideal for smaller models, development, or environments without a GPU.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `device` | string | `cpu` | Device to run on (`cpu` or `cuda:0`) |
+| `device` | string | `cpu` | Device to run on (`cpu`, `cuda`, `cuda:0`, etc.) |
+| `torch_dtype` | string | `auto` | Model dtype (`auto`, `float16`, `bfloat16`, `float32`) |
+| `trust_remote_code` | bool | `false` | Allow remote code execution |
+| `model_kwargs` | object | `{}` | Extra keyword arguments passed to the model constructor |
+| `pipeline_kwargs` | object | `{}` | Extra keyword arguments passed to the pipeline at inference time |
+
+### Chat / Text Generation (CPU)
+
+```yaml
+models:
+  - name: qwen
+    model: Qwen/Qwen3-0.6B
+    usecase: generate
+    loader: transformers
+    num_gpus: 0
+    transformers_config:
+      device: "cpu"
+```
+
+### Speech-to-Text (CPU)
+
+Audio is automatically decoded and resampled to the model's expected sample rate (e.g. 16kHz for Whisper).
+
+```yaml
+models:
+  - name: whisper
+    model: openai/whisper-small
+    usecase: transcription
+    loader: transformers
+    num_gpus: 0
+    transformers_config:
+      device: "cpu"
+```
+
+### Embeddings (CPU)
+
+Uses `sentence-transformers` under the hood.
+
+```yaml
+models:
+  - name: embeddings
+    model: sentence-transformers/all-MiniLM-L6-v2
+    usecase: embed
+    loader: transformers
+    num_gpus: 0
+    transformers_config:
+      device: "cpu"
+```
+
+### TTS (GPU)
 
 ```yaml
 models:

@@ -87,16 +87,18 @@ class TestConfigureLogging:
             assert os.environ.get(env_var) == "WARNING"
 
     @patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "DEBUG"})
-    def test_lib_loggers_stay_warning_at_debug(self):
+    def test_lib_loggers_info_at_debug(self):
         configure_logging()
         assert logging.getLogger("modelship").level == logging.DEBUG
         for name in _LIB_LOGGERS:
-            assert logging.getLogger(name).level == logging.WARNING
+            assert logging.getLogger(name).level == logging.INFO
 
     @patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "TRACE"})
-    def test_trace_mode_enables_all_debug(self):
+    def test_trace_mode_sets_trace_app_debug_libs(self):
+        from modelship.logging import TRACE
+
         configure_logging()
-        assert logging.getLogger("modelship").level == logging.DEBUG
+        assert logging.getLogger("modelship").level == TRACE
         for name in _LIB_LOGGERS:
             assert logging.getLogger(name).level == logging.DEBUG
         for env_var in _LIB_ENV_VARS:

@@ -87,9 +87,9 @@ def configure_logging() -> None:
     log_format = os.environ.get("MSHIP_LOG_FORMAT", "text").lower()
     log_target = os.environ.get("MSHIP_LOG_TARGET", "console").lower()
 
-    trace_mode = level_name == "TRACE"
-    app_level = logging.DEBUG if trace_mode else getattr(logging, level_name, logging.INFO)
-    lib_level = logging.DEBUG if trace_mode else logging.WARNING
+    levels = [TRACE, logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL]
+    app_level = TRACE if level_name == "TRACE" else getattr(logging, level_name, logging.INFO)
+    lib_level = next((lv for lv in levels if lv > app_level), logging.CRITICAL)
     lib_level_name = logging.getLevelName(lib_level)
 
     root_logger = logging.getLogger("modelship")

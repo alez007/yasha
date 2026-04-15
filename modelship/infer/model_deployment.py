@@ -7,7 +7,7 @@ from ray import serve
 from modelship.infer.base_infer import BaseInfer
 from modelship.infer.custom.custom_infer import CustomInfer
 from modelship.infer.diffusers.diffusers_infer import DiffusersInfer
-from modelship.infer.infer_config import DisconnectProxy, ModelLoader, ModelshipModelConfig
+from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, RawRequestProxy
 from modelship.infer.transformers.transformers_infer import TransformersInfer
 from modelship.infer.vllm.vllm_infer import VllmInfer
 from modelship.logging import configure_logging, get_logger
@@ -59,6 +59,13 @@ class ModelDeployment:
                 time.monotonic() - start, tags={"model": config.name, "loader": config.loader.value}
             )
 
+    def __del__(self):
+        if infer := getattr(self, "infer", None):
+            try:
+                infer.shutdown()
+            except Exception:
+                logger.exception("Failed to shutdown infer for %s", self.config.name)
+
     @staticmethod
     def _set_request_id(request_id: str | None) -> None:
         from modelship.logging import request_id_var
@@ -73,7 +80,7 @@ class ModelDeployment:
         request_id: str | None = None,
     ):
         self._set_request_id(request_id)
-        proxy = DisconnectProxy(disconnect_event, request_headers)
+        proxy = RawRequestProxy(disconnect_event, request_headers, request_id)
         start = time.monotonic()
         result = await self.infer.create_chat_completion(request, proxy)
         GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
@@ -91,7 +98,7 @@ class ModelDeployment:
         request_id: str | None = None,
     ):
         self._set_request_id(request_id)
-        proxy = DisconnectProxy(disconnect_event, request_headers)
+        proxy = RawRequestProxy(disconnect_event, request_headers, request_id)
         start = time.monotonic()
         result = await self.infer.create_embedding(request, proxy)
         EMBEDDING_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
@@ -110,7 +117,7 @@ class ModelDeployment:
         request_id: str | None = None,
     ):
         self._set_request_id(request_id)
-        proxy = DisconnectProxy(disconnect_event, request_headers)
+        proxy = RawRequestProxy(disconnect_event, request_headers, request_id)
         start = time.monotonic()
         result = await self.infer.create_transcription(audio_data, request, proxy)
         TRANSCRIPTION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
@@ -129,7 +136,7 @@ class ModelDeployment:
         request_id: str | None = None,
     ):
         self._set_request_id(request_id)
-        proxy = DisconnectProxy(disconnect_event, request_headers)
+        proxy = RawRequestProxy(disconnect_event, request_headers, request_id)
         start = time.monotonic()
         result = await self.infer.create_translation(audio_data, request, proxy)
         TRANSCRIPTION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
@@ -147,7 +154,7 @@ class ModelDeployment:
         request_id: str | None = None,
     ):
         self._set_request_id(request_id)
-        proxy = DisconnectProxy(disconnect_event, request_headers)
+        proxy = RawRequestProxy(disconnect_event, request_headers, request_id)
         start = time.monotonic()
         result = await self.infer.create_speech(request, proxy)
         TTS_GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
@@ -165,7 +172,7 @@ class ModelDeployment:
         request_id: str | None = None,
     ):
         self._set_request_id(request_id)
-        proxy = DisconnectProxy(disconnect_event, request_headers)
+        proxy = RawRequestProxy(disconnect_event, request_headers, request_id)
         start = time.monotonic()
         result = await self.infer.create_image_generation(request, proxy)
         IMAGE_GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
