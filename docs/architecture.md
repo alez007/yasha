@@ -2,18 +2,19 @@
 
 ## Overview
 
-Modelship is built on two core technologies:
-- **[Ray Serve](https://docs.ray.io/en/latest/serve/)** — manages model deployments as isolated actors with independent scaling and failure handling
-- **[vLLM](https://github.com/vllm-project/vllm)** — high-throughput LLM inference engine with continuous batching and PagedAttention
+Modelship is built on [Ray Serve](https://docs.ray.io/en/latest/serve/) for deployment orchestration and a **FastAPI gateway** that exposes an OpenAI-compatible API. Multiple inference backends are supported:
 
-A **FastAPI gateway** sits in front, exposing an OpenAI-compatible API that routes requests to the appropriate model deployment.
+- **[vLLM](https://github.com/vllm-project/vllm)** — high-throughput GPU inference with continuous batching and PagedAttention
+- **[HuggingFace Transformers](https://github.com/huggingface/transformers)** — CPU and lightweight GPU inference for chat, embeddings, transcription, and TTS
+- **[HuggingFace Diffusers](https://github.com/huggingface/diffusers)** — image generation via `AutoPipelineForText2Image`
+- **Plugin system** — custom TTS backends (Kokoro, Bark, Orpheus)
 
 ## Request Lifecycle
 
 1. Client sends a request to the FastAPI gateway (e.g. `POST /v1/chat/completions`)
 2. The gateway identifies the target model from the request body
 3. A `RequestWatcher` begins monitoring the client connection for disconnects
-4. The request is forwarded to the model's Ray Serve deployment via a `DisconnectProxy` (serializable headers + cancellation event)
+4. The request is forwarded to the model's Ray Serve deployment via a `RawRequestProxy` (serializable headers + cancellation event)
 5. The model deployment runs inference (vLLM, transformers, or plugin)
 6. Response streams back as JSON or SSE
 7. If the client disconnects mid-inference, the watcher fires the cancellation event, freeing GPU resources immediately
@@ -33,12 +34,14 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 
 Each deployment uses one of three loaders:
 
-| Loader | Backend | Use cases |
-|--------|---------|-----------|
-| `vllm` | vLLM engine | Chat/generation, embeddings, transcription, translation |
-| `transformers` | PyTorch + HuggingFace | Custom model implementations |
-| `diffusers` | HuggingFace Diffusers | Image generation (any `AutoPipelineForText2Image` model) |
-| `custom` | Plugin system | TTS backends (Kokoro, Bark, Orpheus) |
+| Loader | Backend | Use cases | GPU required |
+|--------|---------|-----------|--------------|
+| `vllm` | vLLM engine | Chat/generation, embeddings, transcription, translation | Yes |
+| `transformers` | PyTorch + HuggingFace | Chat/generation, embeddings, transcription, translation, TTS | No — runs on CPU or GPU |
+| `diffusers` | HuggingFace Diffusers | Image generation (any `AutoPipelineForText2Image` model) | Yes |
+| `custom` | Plugin system | TTS backends (Kokoro, Bark, Orpheus) | No |
+
+The `transformers` loader is ideal for CPU-only deployments, smaller models, or development/testing without a GPU. It uses HuggingFace `pipeline()` under the hood and handles audio resampling automatically for speech-to-text models. The `vllm` loader provides higher throughput on GPU with continuous batching and PagedAttention.
 
 ## GPU Allocation
 
@@ -64,6 +67,7 @@ See [Plugin Development](plugins.md) for details.
 | `modelship/infer/model_deployment.py` | Ray Serve deployment actor |
 | `modelship/infer/infer_config.py` | Pydantic config models and protocols |
 | `modelship/infer/vllm/vllm_infer.py` | vLLM engine wrapper |
+| `modelship/infer/transformers/transformers_infer.py` | Transformers pipeline wrapper (CPU/GPU) |
 | `modelship/infer/diffusers/diffusers_infer.py` | Diffusers pipeline wrapper |
 | `modelship/plugins/base_plugin.py` | Plugin base classes |
 | `config/models.yaml` | Model configuration |

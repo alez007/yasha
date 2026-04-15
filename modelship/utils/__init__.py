@@ -2,18 +2,19 @@ import os
 import uuid
 
 import requests
-from fastapi import Request
+
+from modelship.infer.infer_config import RawRequestProxy
 
 
 def random_uuid() -> str:
     return str(uuid.uuid4().hex)
 
 
-def base_request_id(raw_request: Request | None, default: str | None = None) -> str | None:
-    """Pulls the request id to use from a header, if provided"""
-    default = default or random_uuid()
-    if raw_request is None:
-        return default
+def base_request_id(raw_request: RawRequestProxy | None = None) -> str:
+    """Return the request ID from a RawRequestProxy, or generate a new one."""
+    if raw_request is not None and raw_request.request_id is not None:
+        return raw_request.request_id
+    return random_uuid()
 
 
 def download(url: str, file_path: str, overwrite: bool = False):

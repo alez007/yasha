@@ -6,7 +6,7 @@ from starlette.requests import Request
 
 from modelship.infer.base_infer import BaseInfer
 from modelship.infer.custom.openai.serving_speech import OpenAIServingSpeech
-from modelship.infer.infer_config import DisconnectProxy, ModelshipModelConfig, ModelUsecase
+from modelship.infer.infer_config import ModelshipModelConfig, ModelUsecase, RawRequestProxy
 from modelship.logging import get_logger
 from modelship.openai.protocol import (
     ErrorResponse,
@@ -23,6 +23,9 @@ class CustomInfer(BaseInfer):
         super().__init__(model_config)
         self.custom_engine: BasePlugin | None = None
         self.serving_speech: OpenAIServingSpeech | None = None
+
+    def shutdown(self) -> None:
+        pass
 
     async def start(self):
         plugin = self.model_config.plugin
@@ -46,7 +49,7 @@ class CustomInfer(BaseInfer):
         )
 
     async def create_speech(
-        self, request: SpeechRequest, raw_request: DisconnectProxy
+        self, request: SpeechRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | RawSpeechResponse | AsyncGenerator[str, None]:
         if self.serving_speech is None:
             return await super().create_speech(request, raw_request)

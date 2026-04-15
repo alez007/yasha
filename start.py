@@ -141,6 +141,11 @@ def build_actor_options(config: ModelshipModelConfig) -> dict:
 
     env_vars = _build_cache_env_vars()
 
+    for log_var in ("MSHIP_LOG_LEVEL", "MSHIP_LOG_FORMAT", "MSHIP_LOG_TARGET"):
+        val = os.environ.get(log_var)
+        if val is not None:
+            env_vars[log_var] = val
+
     if tp > 1 and tp_backend != "mp" and config.num_gpus > 0:
         # ray backend: set per-worker GPU fraction so vLLM worker actors claim the
         # right amount. Only override when num_gpus is explicitly set; otherwise
@@ -238,7 +243,7 @@ def main(argv: list[str] | None = None):
     deployed_this_run: dict[str, str] = {}
 
     def _cleanup(sig, frame):
-        logger.info("Interrupted (signal %s), cleaning up deployments from this run...", sig)
+        logger.info("Shutting down (signal %s), cleaning up deployments from this run...", sig)
         for name in reversed(deployed_this_run):
             try:
                 logger.info("Deleting deployment: %s", name)
@@ -247,7 +252,7 @@ def main(argv: list[str] | None = None):
                 logger.exception("Failed to delete deployment: %s", name)
         if fresh_install:
             _shutdown_ray()
-        sys.exit(1)
+        sys.exit(0)
 
     signal.signal(signal.SIGINT, _cleanup)
     signal.signal(signal.SIGTERM, _cleanup)
@@ -297,8 +302,11 @@ def main(argv: list[str] | None = None):
 
         if fresh_install:
             # On fresh install, stay alive as the operator process.
-            signal.signal(signal.SIGINT, lambda s, f: (_shutdown_ray(), sys.exit(0)))
-            signal.signal(signal.SIGTERM, lambda s, f: (_shutdown_ray(), sys.exit(0)))
+            # Reuse _cleanup which gracefully deletes each deployment (letting actors
+            # run __del__ and clean up child processes like vllm EngineCore) before
+            # tearing down Ray.
+            signal.signal(signal.SIGINT, _cleanup)
+            signal.signal(signal.SIGTERM, _cleanup)
             signal.pause()
 
     except BaseException as e:
