@@ -3,7 +3,11 @@
   "build": {
     "dockerfile": "../Dockerfile",
     "target": "dev",
-    "context": ".."
+    "context": "..",
+    "args": {
+      "UID": "${localEnv:UID:1000}",
+      "GID": "${localEnv:GID:1000}"
+    }
   },
   "features": {
     "ghcr.io/devcontainers/features/node:1": {
@@ -25,12 +29,13 @@
     "8265": { "label": "Ray Dashboard" }
   },
   "mounts": [
-    "source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind"
+    "source=${localEnv:HOME}/.claude,target=/home/modelship/.claude,type=bind"
   ],
   "postCreateCommand": "npm install -g @anthropic-ai/claude-code",
   "containerEnv": {
-    "CLAUDE_CONFIG_DIR": "/root/.claude"
+    "CLAUDE_CONFIG_DIR": "/home/modelship/.claude"
   },
+  "remoteUser": "modelship",
   "remoteEnv": {
     "HF_TOKEN": "${localEnv:HF_TOKEN}",
     "MSHIP_PLUGINS": "${localEnv:MSHIP_PLUGINS}",
