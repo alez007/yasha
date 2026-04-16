@@ -14,6 +14,7 @@ from modelship.openai.protocol import (
     TranscriptionRequest,
     TranscriptionResponse,
     TranscriptionResponseVerbose,
+    TranscriptionUsageAudio,
     TranslationRequest,
     TranslationResponse,
     TranslationResponseVerbose,
@@ -75,8 +76,6 @@ class OpenAIServingTranscription(OpenAIServing):
 
         text = result["text"].strip()
         logger.log(TRACE, "transcription response %s: text=%r, duration=%ds", request_id, text, duration_seconds)
-
-        from vllm.entrypoints.openai.speech_to_text.protocol import TranscriptionUsageAudio
 
         return TranscriptionResponse(
             text=text,

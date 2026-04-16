@@ -9,10 +9,22 @@ from vllm.config.model import ModelDType
 from vllm.config.parallel import DistributedExecutorBackend
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.entrypoints.logger import RequestLogger
+from vllm.entrypoints.openai.chat_completion.protocol import (
+    ChatCompletionRequest as VllmChatCompletionRequest,
+)
 from vllm.entrypoints.openai.chat_completion.serving import OpenAIServingChat
 from vllm.entrypoints.openai.models.protocol import BaseModelPath
 from vllm.entrypoints.openai.models.serving import OpenAIServingModels
+from vllm.entrypoints.openai.speech_to_text.protocol import (
+    TranscriptionRequest as VllmTranscriptionRequest,
+)
+from vllm.entrypoints.openai.speech_to_text.protocol import (
+    TranslationRequest as VllmTranslationRequest,
+)
 from vllm.entrypoints.openai.speech_to_text.serving import OpenAIServingTranscription, OpenAIServingTranslation
+from vllm.entrypoints.pooling.embed.protocol import (
+    EmbeddingCompletionRequest as VllmEmbeddingCompletionRequest,
+)
 from vllm.entrypoints.pooling.embed.serving import ServingEmbedding
 from vllm.entrypoints.serve.render.serving import OpenAIServingRender
 from vllm.usage.usage_lib import UsageContext
@@ -263,26 +275,43 @@ class VllmInfer(BaseInfer):
     ) -> ErrorResponse | ChatCompletionResponse | AsyncGenerator[str, None]:
         if self.serving_chat is None:
             return await super().create_chat_completion(request, raw_request)
-        return await self.serving_chat.create_chat_completion(request, cast("Request", raw_request))
+        vllm_request = VllmChatCompletionRequest(**request.model_dump())
+        result = await self.serving_chat.create_chat_completion(vllm_request, cast("Request", raw_request))
+        return cast("ErrorResponse | ChatCompletionResponse | AsyncGenerator[str, None]", result)
 
     async def create_embedding(
         self, request: EmbeddingRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | Response:
         if self.serving_embedding is None:
             return await super().create_embedding(request, raw_request)
-        return await self.serving_embedding(request, cast("Request", raw_request))
+        vllm_request = VllmEmbeddingCompletionRequest(**request.model_dump())
+        return cast(
+            "ErrorResponse | Response", await self.serving_embedding(vllm_request, cast("Request", raw_request))
+        )
 
     async def create_transcription(
         self, audio_data: bytes, request: TranscriptionRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | TranscriptionResponse | TranscriptionResponseVerbose | AsyncGenerator[str, None]:
         if self.serving_transcription is None:
             return await super().create_transcription(audio_data, request, raw_request)
-        request.timestamp_granularities = []
-        return await self.serving_transcription.create_transcription(audio_data, request, cast("Request", raw_request))
+        vllm_request = VllmTranscriptionRequest(**request.model_dump())
+        vllm_request.timestamp_granularities = []
+        result = await self.serving_transcription.create_transcription(
+            audio_data, vllm_request, cast("Request", raw_request)
+        )
+        return cast(
+            "ErrorResponse | TranscriptionResponse | TranscriptionResponseVerbose | AsyncGenerator[str, None]", result
+        )
 
     async def create_translation(
         self, audio_data: bytes, request: TranslationRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | TranslationResponse | TranslationResponseVerbose | AsyncGenerator[str, None]:
         if self.serving_translation is None:
             return await super().create_translation(audio_data, request, raw_request)
-        return await self.serving_translation.create_translation(audio_data, request, cast("Request", raw_request))
+        vllm_request = VllmTranslationRequest(**request.model_dump())
+        result = await self.serving_translation.create_translation(
+            audio_data, vllm_request, cast("Request", raw_request)
+        )
+        return cast(
+            "ErrorResponse | TranslationResponse | TranslationResponseVerbose | AsyncGenerator[str, None]", result
+        )
