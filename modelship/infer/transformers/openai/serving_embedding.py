@@ -1,13 +1,18 @@
 import time
 
 from sentence_transformers import SentenceTransformer
-from vllm.entrypoints.openai.engine.protocol import UsageInfo
-from vllm.entrypoints.pooling.embed.protocol import EmbeddingResponseData
 
 from modelship.infer.base_serving import OpenAIServing
 from modelship.infer.infer_config import RawRequestProxy
 from modelship.logging import TRACE, get_logger
-from modelship.openai.protocol import EmbeddingRequest, EmbeddingResponse, ErrorResponse, create_error_response
+from modelship.openai.protocol import (
+    EmbeddingRequest,
+    EmbeddingResponse,
+    EmbeddingResponseData,
+    ErrorResponse,
+    UsageInfo,
+    create_error_response,
+)
 from modelship.utils import base_request_id
 
 logger = get_logger("infer.transformers.embedding")

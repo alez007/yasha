@@ -12,7 +12,13 @@ from modelship.logging import TRACE, get_logger
 from modelship.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
+    ChatCompletionResponseChoice,
+    ChatCompletionResponseStreamChoice,
+    ChatCompletionStreamResponse,
+    ChatMessage,
+    DeltaMessage,
     ErrorResponse,
+    UsageInfo,
     create_error_response,
 )
 from modelship.utils import base_request_id
@@ -64,12 +70,6 @@ class OpenAIServingChat(OpenAIServing):
         completion_text = generated[-1]["content"] if isinstance(generated, list) else generated
         completion_tokens = len(self.tokenizer.encode(completion_text))
 
-        from vllm.entrypoints.openai.chat_completion.protocol import (
-            ChatCompletionResponseChoice,
-            ChatMessage,
-        )
-        from vllm.entrypoints.openai.engine.protocol import UsageInfo
-
         response = ChatCompletionResponse(
             id=request_id,
             model=self.model_name,
@@ -104,12 +104,6 @@ class OpenAIServingChat(OpenAIServing):
         return self.pipeline(messages, return_full_text=False, **kwargs)  # type: ignore[return-value]
 
     async def _stream(self, request_id: str, messages: list[dict], max_tokens: int | None) -> AsyncGenerator[str, None]:
-        from vllm.entrypoints.openai.chat_completion.protocol import (
-            ChatCompletionResponseStreamChoice,
-            ChatCompletionStreamResponse,
-        )
-        from vllm.entrypoints.openai.engine.protocol import DeltaMessage
-
         streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)  # type: ignore[arg-type]
 
         kwargs = {**self.config.pipeline_kwargs}
