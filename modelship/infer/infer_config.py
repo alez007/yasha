@@ -1,12 +1,13 @@
 import asyncio
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 import ray
 from fastapi import Request
 from pydantic import BaseModel, Field, model_validator
 from starlette.datastructures import Headers, State
-from vllm.entrypoints.chat_utils import ChatTemplateContentFormatOption
+
+ChatTemplateContentFormatOption = Literal["auto", "string", "openai"]
 
 
 class ModelUsecase(StrEnum):
