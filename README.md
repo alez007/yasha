@@ -97,31 +97,47 @@ Models can be deployed across multiple GPUs, run on CPU-only, or both — multip
 
 ## Quick Start
 
-Pull the latest image from GHCR:
-
-```bash
-docker pull ghcr.io/alez007/modelship:latest
-```
-
-Create a `models.yaml` config file (see [config/models.yaml](config/models.yaml) for an example):
+Create a `models.yaml` config file (see [Model Configuration](docs/model-configuration.md) for the full reference):
 
 ```yaml
 models:
   - name: qwen
     model: Qwen/Qwen3-0.6B
-    loader: vllm
+    loader: transformers
+    num_cpus: 2
 ```
 
-Start the server:
+Start the server (CPU-only — no GPU required):
+
+```bash
+docker run --rm --shm-size=8g \
+  -e RAY_HEAD_GPU_NUM=0 \
+  -e RAY_HEAD_CPU_NUM=2 \
+  -v ./models.yaml:/modelship/config/models.yaml \
+  -v ./models-cache:/modelship/.cache/models \
+  -p 8000:8000 \
+  ghcr.io/alez007/modelship:latest
+```
+
+For GPU inference with vLLM, add `--gpus all` and pass your HuggingFace token for gated models:
 
 ```bash
 docker run --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token_here \
-  -e MSHIP_PLUGINS=kokoro \
+  -e RAY_HEAD_CPU_NUM=2 \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/modelship/.cache/models \
-  -p 8265:8265 -p 8000:8000 -p 8079:8079 ghcr.io/alez007/modelship:latest
+  -p 8000:8000 \
+  ghcr.io/alez007/modelship:latest
 ```
+
+Optionally expose additional ports:
+
+| Port | Service | When to expose |
+|------|---------|----------------|
+| `8000` | OpenAI-compatible API | Always — this is the main API |
+| `8265` | Ray dashboard | During development — monitor deployments, resources, and logs |
+| `8079` | Prometheus metrics | When scraping metrics with Prometheus/Grafana |
 
 Try it out:
 
@@ -129,14 +145,10 @@ Try it out:
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "your-model-name",
+    "model": "qwen",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
-
-- API: `http://localhost:8000`
-- Prometheus metrics: `http://localhost:8079`
-- Ray dashboard: `http://localhost:8265`
 
 ### Additive Deploys
 
