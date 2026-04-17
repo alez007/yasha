@@ -97,47 +97,45 @@ Models can be deployed across multiple GPUs, run on CPU-only, or both — multip
 
 ## Quick Start
 
-Create a `models.yaml` config file (see [Model Configuration](docs/model-configuration.md) for the full reference):
+Modelship provides two versions: a **Standard (GPU)** version for high-performance inference and a **Lightweight (CPU)** version for non-GPU hardware.
+
+Create a `models.yaml` config file (see [Model Configuration](docs/model-configuration.md) for full reference):
 
 ```yaml
 models:
   - name: qwen
-    model: Qwen/Qwen3-0.6B
+    model: Qwen/Qwen2.5-1.5B-Instruct
     loader: transformers
     num_cpus: 2
 ```
 
-Start the server (CPU-only — no GPU required):
+### Choose your version
 
-```bash
-docker run --rm --shm-size=8g \
-  -e RAY_HEAD_GPU_NUM=0 \
-  -e RAY_HEAD_CPU_NUM=2 \
-  -v ./models.yaml:/modelship/config/models.yaml \
-  -v ./models-cache:/modelship/.cache/models \
-  -p 8000:8000 \
-  ghcr.io/alez007/modelship:latest
-```
-
-For GPU inference with vLLM, add `--gpus all` and pass your HuggingFace token for gated models:
+#### GPU (Standard)
+Best for high-throughput inference using vLLM or Diffusers. Requires an NVIDIA GPU and the NVIDIA Container Toolkit.
 
 ```bash
 docker run --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token_here \
   -e RAY_HEAD_CPU_NUM=2 \
+  -e RAY_HEAD_GPU_NUM=1 \
   -v ./models.yaml:/modelship/config/models.yaml \
-  -v ./models-cache:/modelship/.cache/models \
+  -v ./models-cache:/.cache/models \
   -p 8000:8000 \
   ghcr.io/alez007/modelship:latest
 ```
 
-Optionally expose additional ports:
+#### CPU (Lightweight)
+Optimized for non-GPU hardware (mini-PCs, laptops) using the Transformers backend.
 
-| Port | Service | When to expose |
-|------|---------|----------------|
-| `8000` | OpenAI-compatible API | Always — this is the main API |
-| `8265` | Ray dashboard | During development — monitor deployments, resources, and logs |
-| `8079` | Prometheus metrics | When scraping metrics with Prometheus/Grafana |
+```bash
+docker run --rm --shm-size=8g \
+  -e RAY_HEAD_CPU_NUM=2 \
+  -v ./models.yaml:/modelship/config/models.yaml \
+  -v ./models-cache:/.cache/models \
+  -p 8000:8000 \
+  ghcr.io/alez007/modelship:latest-cpu
+```
 
 Try it out:
 

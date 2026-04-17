@@ -20,7 +20,6 @@ dependencies = [
     "argparse>=1.4.0",
     "asyncio>=4.0.0",
     "fastapi>=0.116.1",
-    "flashinfer-python>=0.6.1",
     "httpx>=0.28.1",
     "numpy>=2.2.6",
     "pydantic>=2.12.0",
@@ -29,18 +28,27 @@ dependencies = [
     "ray[data,default,serve-grpc]>=2.51.1",
     "librosa>=0.11.0",
     "soundfile>=0.13.0",
-    "torch>=2.10.0",
-    "torchvision>=0.25.0",
-    "transformers>=4.57.5",
-    "vllm==0.18.0",
-    "vllm[audio]==0.18.0",
     "requests>=2.32.5",
-    "accelerate>=1.6.0",
-    "diffusers>=0.31.0",
-    "sentence-transformers>=3.0.0",
 ]
 
 [project.optional-dependencies]
+gpu = [
+    "torch>=2.10.0",
+    "torchvision>=0.25.0",
+    "transformers>=4.57.5",
+    "sentence-transformers>=3.0.0",
+    "flashinfer-python>=0.6.1",
+    "vllm==0.18.0",
+    "vllm[audio]==0.18.0",
+    "accelerate>=1.6.0",
+    "diffusers>=0.31.0",
+]
+cpu = [
+    "torch>=2.10.0",
+    "torchvision>=0.25.0",
+    "transformers>=4.57.5",
+    "sentence-transformers>=3.0.0",
+]
 kokoro = ["kokoro"]
 bark = ["bark"]
 orpheus = ["orpheus"]
@@ -69,10 +77,36 @@ build-backend = "uv_build"
 [tool.uv.workspace]
 members = ["plugins/*"]
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
 [tool.uv.sources]
 kokoro = { workspace = true }
 bark = { workspace = true }
 orpheus = { workspace = true }
+torch = [
+  { index = "pytorch-cu128", extra = "gpu" },
+  { index = "pytorch-cpu", extra = "cpu" },
+]
+torchvision = [
+  { index = "pytorch-cu128", extra = "gpu" },
+  { index = "pytorch-cpu", extra = "cpu" },
+]
+
+[tool.uv]
+conflicts = [
+  [
+    { extra = "gpu" },
+    { extra = "cpu" },
+  ],
+]
 
 [tool.uv.build-backend]
 module-name = "modelship"

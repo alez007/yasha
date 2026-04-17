@@ -29,9 +29,10 @@
     "8265": { "label": "Ray Dashboard" }
   },
   "mounts": [
-    "source=${localEnv:HOME}/.claude,target=/home/modelship/.claude,type=bind"
+    "source=${localEnv:HOME}/.claude,target=/home/modelship/.claude,type=bind",
+    "source=${localEnv:HOME}/.gemini,target=/home/modelship/.gemini,type=bind"
   ],
-  "postCreateCommand": "npm install -g @anthropic-ai/claude-code",
+  "postCreateCommand": "npm install -g @anthropic-ai/claude-code && npm install -g @google/gemini-cli",
   "containerEnv": {
     "CLAUDE_CONFIG_DIR": "/home/modelship/.claude"
   },
