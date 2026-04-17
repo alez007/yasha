@@ -120,8 +120,9 @@ def configure_logging() -> None:
     # re-configures its own loggers later, e.g. vLLM's init_logger).
     for name in _LIB_LOGGERS:
         logging.getLogger(name).setLevel(lib_level)
-    for env_var in _LIB_ENV_VARS:
-        os.environ.setdefault(env_var, lib_level_name)
+    for env_var, lib_name in _LIB_ENV_VARS.items():
+        val = lib_level_name.lower() if lib_name == "transformers" else lib_level_name
+        os.environ.setdefault(env_var, val)
 
 
 # pyright: reportMissingImports=false

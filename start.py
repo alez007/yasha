@@ -26,12 +26,11 @@ def _rand_suffix(length: int = 5) -> str:
 
 
 def _build_cache_env_vars() -> dict[str, str]:
-    cache_dir = os.environ.get("MSHIP_CACHE_DIR", "/modelship/.cache/models")
-    cache_root = os.path.dirname(cache_dir)
+    base_cache = os.environ.get("MSHIP_CACHE_DIR", "/.cache")
     return {
-        "HF_HOME": os.environ.get("HF_HOME", f"{cache_root}/huggingface"),
-        "VLLM_CACHE_ROOT": os.environ.get("VLLM_CACHE_ROOT", f"{cache_root}/vllm"),
-        "FLASHINFER_CACHE_DIR": os.environ.get("FLASHINFER_CACHE_DIR", f"{cache_root}/flashinfer"),
+        "HF_HOME": os.environ.get("HF_HOME", f"{base_cache}/huggingface"),
+        "VLLM_CACHE_ROOT": os.environ.get("VLLM_CACHE_ROOT", f"{base_cache}/vllm"),
+        "FLASHINFER_CACHE_DIR": os.environ.get("FLASHINFER_CACHE_DIR", f"{base_cache}/flashinfer"),
     }
 
 

@@ -7,6 +7,14 @@ if [ -n "${MSHIP_PLUGINS}" ]; then
         EXTRAS="$EXTRAS --extra $plugin"
     done
 fi
+
+# Detect if we should use GPU based on RAY_HEAD_GPU_NUM
+if [ "${RAY_HEAD_GPU_NUM:-0}" -gt 0 ]; then
+    EXTRAS="$EXTRAS --extra gpu"
+else
+    EXTRAS="$EXTRAS --extra cpu"
+fi
+
 uv sync --project /modelship --locked $EXTRAS
 
 if [ "${MSHIP_USE_EXISTING_RAY_CLUSTER}" != "true" ]; then

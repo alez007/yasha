@@ -5,11 +5,7 @@ from typing import Any
 from ray import serve
 
 from modelship.infer.base_infer import BaseInfer
-from modelship.infer.custom.custom_infer import CustomInfer
-from modelship.infer.diffusers.diffusers_infer import DiffusersInfer
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, RawRequestProxy
-from modelship.infer.transformers.transformers_infer import TransformersInfer
-from modelship.infer.vllm.vllm_infer import VllmInfer
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
     EMBEDDING_DURATION_SECONDS,
@@ -41,12 +37,20 @@ class ModelDeployment:
         self.infer: BaseInfer
         try:
             if config.loader == ModelLoader.vllm:
+                from modelship.infer.vllm.vllm_infer import VllmInfer
+
                 self.infer = VllmInfer(config)
             elif config.loader == ModelLoader.transformers:
+                from modelship.infer.transformers.transformers_infer import TransformersInfer
+
                 self.infer = TransformersInfer(config)
             elif config.loader == ModelLoader.diffusers:
+                from modelship.infer.diffusers.diffusers_infer import DiffusersInfer
+
                 self.infer = DiffusersInfer(config)
             else:
+                from modelship.infer.custom.custom_infer import CustomInfer
+
                 self.infer = CustomInfer(config)
 
             await self.infer.start()

@@ -83,8 +83,9 @@ class TestConfigureLogging:
         configure_logging()
         for name in _LIB_LOGGERS:
             assert logging.getLogger(name).level == logging.WARNING
-        for env_var in _LIB_ENV_VARS:
-            assert os.environ.get(env_var) == "WARNING"
+        for env_var, lib_name in _LIB_ENV_VARS.items():
+            expected = "warning" if lib_name == "transformers" else "WARNING"
+            assert os.environ.get(env_var) == expected
 
     @patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "DEBUG"})
     def test_lib_loggers_info_at_debug(self):
@@ -101,8 +102,9 @@ class TestConfigureLogging:
         assert logging.getLogger("modelship").level == TRACE
         for name in _LIB_LOGGERS:
             assert logging.getLogger(name).level == logging.DEBUG
-        for env_var in _LIB_ENV_VARS:
-            assert os.environ.get(env_var) == "DEBUG"
+        for env_var, lib_name in _LIB_ENV_VARS.items():
+            expected = "debug" if lib_name == "transformers" else "DEBUG"
+            assert os.environ.get(env_var) == expected
 
     @patch.dict(os.environ, {"MSHIP_LOG_FORMAT": "json"})
     def test_json_format(self):

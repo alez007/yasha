@@ -2,7 +2,8 @@
 
 ## Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) with [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- [Docker](https://docs.docker.com/get-docker/)
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (optional — only required for GPU development)
 - [VS Code](https://code.visualstudio.com/) with the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension
 
 ## Quick start (Dev Container)
@@ -57,8 +58,8 @@ The following environment variables are set in the dev image with sensible defau
 | `RAY_REDIS_PORT` | `6379` | Ray GCS port |
 | `RAY_CLUSTER_ADDRESS` | `ray://0.0.0.0` | Ray cluster address |
 | `RAY_HEAD_CPU_NUM` | `2` | CPUs allocated to Ray head |
-| `RAY_HEAD_GPU_NUM` | `1` | GPUs allocated to Ray head |
-| `MSHIP_CACHE_DIR` | `/modelship/.cache/models` | Model cache directory |
+| `RAY_HEAD_GPU_NUM` | `1` | GPUs allocated to Ray head (set to `0` for CPU-only development) |
+| `MSHIP_CACHE_DIR` | `/.cache` | Model cache directory |
 | `MSHIP_USE_EXISTING_RAY_CLUSTER` | `false` | Set to `true` to skip starting a Ray head node |
 
 ### Installing plugin dependencies for IntelliSense
@@ -75,26 +76,57 @@ If you prefer not to use Dev Containers, you can build and run the dev image dir
 
 ### Building the dev image
 
+**GPU (Standard):**
 ```bash
 docker build -t modelship_dev --target dev .
+```
+
+**CPU (Lightweight):**
+```bash
+docker build -t modelship_dev_cpu --target dev -f Dockerfile.cpu .
 ```
 
 ### Running with live source mounting
 
 The dev image does not bake in source files. Mount the repo root so changes take effect without rebuilding:
 
+**GPU:**
 ```bash
 docker run -it --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token_here \
   -e MSHIP_PLUGINS=kokoro \
+  -e RAY_HEAD_GPU_NUM=1 \
   --mount type=bind,src=./,dst=/modelship \
-  -p 8265:8265 -p 8000:8000 modelship_dev
+  -p 8000:8000 modelship_dev
+```
+
+**CPU:**
+```bash
+docker run -it --rm --shm-size=8g \
+  -e HF_TOKEN=your_token_here \
+  -e RAY_HEAD_GPU_NUM=0 \
+  --mount type=bind,src=./,dst=/modelship \
+  -p 8000:8000 modelship_dev_cpu
 ```
 
 The container's entrypoint (`start.sh`) automatically syncs dependencies (including any plugins listed in `MSHIP_PLUGINS`), starts the Ray head node, and drops into a shell. Then start the server:
 
 ```bash
 uv run start.py
+```
+
+## Production Builds
+
+To build the production images locally:
+
+**GPU:**
+```bash
+docker build -t modelship:latest --target prod .
+```
+
+**CPU:**
+```bash
+docker build -t modelship:latest-cpu --target prod -f Dockerfile.cpu .
 ```
 
 ## Ports
