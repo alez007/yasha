@@ -44,7 +44,7 @@ jobs:
           target: prod
           push: true
           build-args: |
-            CUDA_VERSION=13.0.2
+            CUDA_VERSION=12.8.1
             PYTHON_VERSION=3.12.10
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
