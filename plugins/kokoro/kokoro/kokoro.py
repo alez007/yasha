@@ -39,7 +39,7 @@ from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.logging import get_logger
 from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechResponse
 from modelship.plugins.base_plugin import BasePlugin
-from modelship.utils import cache_dir, download
+from modelship.utils import download, plugins_dir
 
 logger = get_logger("plugin.kokoro")
 
@@ -55,7 +55,7 @@ class ModelPlugin(BasePlugin):
         logger.info("onnxruntime device: %s", ort.get_device())
         logger.info("available providers: %s", ort.get_available_providers())
 
-        plugin_dir = f"{cache_dir()}/kokoro"
+        plugin_dir = f"{plugins_dir()}/kokoro"
         os.makedirs(plugin_dir, exist_ok=True)
 
         model_path = f"{plugin_dir}/kokoro-v1.0.onnx"

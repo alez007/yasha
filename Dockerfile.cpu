@@ -1,19 +1,10 @@
-ARG CUDA_VERSION=12.8.1
 ARG PYTHON_VERSION=3.12.10
 
 FROM ubuntu:24.04 AS base
 
-ARG CUDA_VERSION
 ARG PYTHON_VERSION
 ARG UID=1000
 ARG GID=1000
-
-RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg && \
-    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
-        | gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
-        > /etc/apt/sources.list.d/cuda.list
 
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
@@ -21,23 +12,10 @@ RUN apt-get update -y && \
     curl \
     espeak-ng \
     git \
+    ca-certificates \
     gosu
 
-RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && CUDA_MAJOR_VERSION=$(echo $CUDA_VERSION | cut -d. -f1) && \
-    apt-get update -y && \
-    apt-get install -y --no-install-recommends \
-        build-essential \
-        cuda-nvcc-${CUDA_VERSION_DASH} \
-        cuda-cudart-${CUDA_VERSION_DASH} \
-        cuda-nvrtc-${CUDA_VERSION_DASH} \
-        cuda-cuobjdump-${CUDA_VERSION_DASH} \
-        libcurand-dev-${CUDA_VERSION_DASH} \
-        libcublas-${CUDA_VERSION_DASH} \
-        cudnn9-cuda-${CUDA_MAJOR_VERSION}
-
 # Create non-root user matching host UID/GID
-# If a group with the target GID already exists (e.g. ubuntu:1000), reuse it;
-# if a user with the target UID already exists, reuse and rename it.
 RUN if ! getent group $GID >/dev/null; then groupadd -g $GID modelship; fi && \
     if ! getent passwd $UID >/dev/null; then useradd -m -u $UID -g $GID modelship; \
     else existing=$(getent passwd $UID | cut -d: -f1) && usermod -l modelship -d /home/modelship -m "$existing"; fi
@@ -58,12 +36,11 @@ ADD ./plugins plugins
 
 ENV UV_PROJECT_ENVIRONMENT=/.venv
 ENV VIRTUAL_ENV=/.venv
-ENV CUDA_DEVICE_ORDER=PCI_BUS_ID
 ENV MSHIP_CACHE_DIR=/.cache
 ENV RAY_REDIS_PORT=6379
 ENV RAY_CLUSTER_ADDRESS=0.0.0.0
 ENV RAY_HEAD_CPU_NUM=2
-ENV RAY_HEAD_GPU_NUM=1
+ENV RAY_HEAD_GPU_NUM=0
 ENV MSHIP_USE_EXISTING_RAY_CLUSTER=false
 ENV MSHIP_METRICS=true
 ENV RAY_METRICS_EXPORT_PORT=8079
@@ -85,8 +62,9 @@ FROM base AS dev
 
 USER modelship
 
+# Sync with CPU index to ensure torch/torchvision are lightweight
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --extra dev --extra gpu
+    uv sync --locked --no-install-project --extra dev --extra cpu
 
 ADD --chown=$UID:$GID ./scripts/start_ray.sh /modelship/scripts/start_ray.sh
 
@@ -103,9 +81,9 @@ ADD --chown=$UID:$GID ./scripts scripts
 
 USER modelship
 
-# Sync base dependencies only (no gpu extra)
+# Sync base dependencies only (no gpu extra) with CPU index
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --extra gpu
+    uv sync --locked --no-install-project --no-dev --extra cpu
 
 USER root
 
