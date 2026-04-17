@@ -27,6 +27,12 @@ def download(url: str, file_path: str, overwrite: bool = False):
 
 
 def cache_dir() -> str:
-    path = os.environ.get("MSHIP_CACHE_DIR", "/modelship/.cache/models")
+    path = os.environ.get("MSHIP_CACHE_DIR", "/.cache")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def plugins_dir() -> str:
+    path = f"{cache_dir()}/plugins"
     os.makedirs(path, exist_ok=True)
     return path

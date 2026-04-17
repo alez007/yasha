@@ -14,7 +14,7 @@ Models are configured in a YAML file (default: `config/models.yaml`). Each entry
 | `--ray-redis-port` | `RAY_REDIS_PORT` | — | Ray Redis port |
 | `--use-existing-ray-cluster` | `MSHIP_USE_EXISTING_RAY_CLUSTER` | `false` | Connect to an existing Ray cluster |
 | `--redeploy` | — | `false` | Tear down all existing deployments before deploying |
-| `--cache-dir` | `MSHIP_CACHE_DIR` | `/modelship/.cache/models` | Model cache directory |
+| `--cache-dir` | `MSHIP_CACHE_DIR` | `/.cache` | Base cache directory |
 | `--log-level` | `MSHIP_LOG_LEVEL` | `INFO` | Log level |
 | `--log-format` | `MSHIP_LOG_FORMAT` | `text` | Log format (`text` or `json`) |
 | `--log-target` | `MSHIP_LOG_TARGET` | `console` | Log target: `console` or syslog URI (e.g. `syslog://host:514`, `syslog+tcp://host:514`) |
@@ -22,6 +22,15 @@ Models are configured in a YAML file (default: `config/models.yaml`). Each entry
 | `--no-metrics` | `MSHIP_METRICS` | enabled | Disable Prometheus metrics |
 | `--api-keys` | `MSHIP_API_KEYS` | — | Comma-separated API keys |
 | `--max-request-body-bytes` | `MSHIP_MAX_REQUEST_BODY_BYTES` | `52428800` | Max request body size in bytes |
+
+### Cache Directory Structure
+
+The base cache directory (`MSHIP_CACHE_DIR`, default: `/.cache`) is organized into the following subdirectories:
+
+- `{base_cache}/huggingface`: HuggingFace models and tokenizers (via `HF_HOME`).
+- `{base_cache}/vllm`: vLLM-specific compiled artifacts and caches (via `VLLM_CACHE_ROOT`).
+- `{base_cache}/flashinfer`: FlashInfer kernels (via `FLASHINFER_CACHE_DIR`).
+- `{base_cache}/plugins`: Downloaded weights and artifacts used by custom plugins.
 
 ### Additive Deploys
 
@@ -293,7 +302,7 @@ In this example, requests to model `kokoro` are distributed across three backend
 |---|---|---|
 | `HF_TOKEN` | HuggingFace access token | — |
 | `MSHIP_PLUGINS` | Comma-separated list of plugins to install at startup (e.g. `kokoro,orpheus`) | — |
-| `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace + plugins) | `/modelship/.cache/models` |
+| `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace + plugins) | `/.cache` |
 | `MSHIP_GATEWAY_NAME` | Name for the API gateway app | `modelship api` |
 | `MSHIP_MAX_REQUEST_BODY_BYTES` | Maximum allowed request body size in bytes | `52428800` (50 MB) |
 | `MSHIP_LOG_TARGET` | Log target: `console` or syslog URI (e.g. `syslog://host:514`, `syslog+tcp://host:514`) | `console` |
@@ -306,4 +315,4 @@ In this example, requests to model `kokoro` are distributed across three backend
 | `RAY_OBJECT_STORE_SHM_SIZE` | Shared memory for Ray object store | `8g` |
 | `VLLM_USE_V1` | Use vLLM v1 API | `1` |
 | `ONNX_PROVIDER` | ONNX Runtime execution provider | `CUDAExecutionProvider` |
-| `NVIDIA_CUDA_VERSION` | CUDA toolkit version | `12.9.1` |
+| `NVIDIA_CUDA_VERSION` | CUDA toolkit version | `12.8.1` |
