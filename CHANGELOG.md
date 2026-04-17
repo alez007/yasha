@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.23] - 2026-04-17
+
+### Added
+- migrate cache to /.cache, fix CUDA 12 mismatch, and logging typos
+- add --openai-api-port flag and run container as non-root user
+
+### Fixed
+- update for ci
+- update for ci
+- update for ci
+
+### Changed
+- decouple OpenAI protocol models from vLLM
+- improve quick start with correct docker env vars and CPU-first example
+- add public roadmap
+- add badges and "Why Modelship?" section to README
+
 ## [0.1.22] - 2026-04-15
 
 ### Added
