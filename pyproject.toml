@@ -42,12 +42,14 @@ gpu = [
     "vllm[audio]==0.18.0",
     "accelerate>=1.6.0",
     "diffusers>=0.31.0",
+    "llama-cpp-python>=0.3.6",
 ]
 cpu = [
     "torch>=2.10.0",
     "torchvision>=0.25.0",
     "transformers>=4.57.5",
     "sentence-transformers>=3.0.0",
+    "llama-cpp-python>=0.3.6",
 ]
 kokoro = ["kokoro"]
 bark = ["bark"]

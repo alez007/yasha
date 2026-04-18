@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
-Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized models (TTS, speech-to-text, embeddings, image generation) on GPU or CPU, exposing an OpenAI-compatible API. Built on [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) with pluggable inference backends: [vLLM](https://github.com/vllm-project/vllm) for high-throughput GPU inference, [HuggingFace Transformers](https://github.com/huggingface/transformers) for CPU and lightweight GPU workloads, [Diffusers](https://github.com/huggingface/diffusers) for image generation, and a plugin system for custom backends.
+Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized models (TTS, speech-to-text, embeddings, image generation) on GPU or CPU, exposing an OpenAI-compatible API. Built on [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) with pluggable inference backends: [vLLM](https://github.com/vllm-project/vllm) for high-throughput GPU inference, [HuggingFace Transformers](https://github.com/huggingface/transformers) for CPU and lightweight GPU workloads, [llama.cpp](https://github.com/abetlen/llama-cpp-python) for high-efficiency GGUF models on CPU, [Diffusers](https://github.com/huggingface/diffusers) for image generation, and a plugin system for custom backends.
 
 ## Why Modelship?
 
@@ -12,7 +12,7 @@ Most self-hosted inference tools focus on running a single model. Modelship is f
 
 - **One server, many models** — run a full AI stack (chat + TTS + STT + embeddings + image gen) on a single machine instead of juggling separate services
 - **GPU memory control** — allocate exact GPU fractions per model (e.g. 70% for the LLM, 5% for TTS) so everything fits on your hardware
-- **Mix and match backends** — use vLLM for high-throughput GPU inference, Transformers for CPU-only workloads, Diffusers for images, and plugins for custom backends — in the same deployment
+- **Mix and match backends** — use vLLM for high-throughput GPU inference, Transformers or llama.cpp for CPU-only workloads, Diffusers for images, and plugins for custom backends — in the same deployment
 - **Drop-in OpenAI replacement** — any OpenAI SDK client works out of the box, making it easy to integrate with existing apps and tools like [Home Assistant](docs/home-assistant.md)
 
 ## Architecture
@@ -40,7 +40,7 @@ graph TD
         EMB["Embedding Deployment<br/>e.g. Nomic Embed<br/>50% GPU"]
     end
 
-    subgraph CPU["CPU — Transformers"]
+    subgraph CPU["CPU — Transformers / llama.cpp"]
         LLM_CPU["LLM Deployment<br/>e.g. Qwen3-0.6B<br/>CPU-only"]
         STT_CPU["STT Deployment<br/>e.g. Whisper Small<br/>CPU-only"]
     end
@@ -50,16 +50,18 @@ graph TD
     end
 ```
 
-Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Four inference backends are available:
+Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Five inference backends are available:
 
 | Backend | Best for | GPU required |
 |---|---|---|
 | **vLLM** | High-throughput chat, embeddings, transcription | Yes |
+| **llama.cpp** | High-efficiency quantized GGUF models (chat, embeddings) | No |
 | **Transformers** | Chat, embeddings, transcription, TTS on CPU or lightweight GPU | No |
 | **Diffusers** | Image generation | Yes |
 | **Custom (plugins)** | TTS backends (Kokoro, Bark, Orpheus) | No |
 
 Models can be deployed across multiple GPUs, run on CPU-only, or both — multiple deployments of the same model (e.g. one on GPU via vLLM, one on CPU via Transformers) are load-balanced with round-robin routing. Each deployment can also scale horizontally with `num_replicas`.
+...
 
 ## Requirements
 

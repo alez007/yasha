@@ -32,16 +32,17 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 
 ### Inference Loaders
 
-Each deployment uses one of three loaders:
+Each deployment uses one of the following loaders:
 
 | Loader | Backend | Use cases | GPU required |
 |--------|---------|-----------|--------------|
 | `vllm` | vLLM engine | Chat/generation, embeddings, transcription, translation | Yes |
+| `llama_cpp` | llama-cpp-python | Chat/generation, embeddings (GGUF models) | No — currently CPU-only |
 | `transformers` | PyTorch + HuggingFace | Chat/generation, embeddings, transcription, translation, TTS | No — runs on CPU or GPU |
 | `diffusers` | HuggingFace Diffusers | Image generation (any `AutoPipelineForText2Image` model) | Yes |
 | `custom` | Plugin system | TTS backends (Kokoro, Bark, Orpheus) | No |
 
-The `transformers` loader is ideal for CPU-only deployments, smaller models, or development/testing without a GPU. It uses HuggingFace `pipeline()` under the hood and handles audio resampling automatically for speech-to-text models. The `vllm` loader provides higher throughput on GPU with continuous batching and PagedAttention.
+The `transformers` loader is ideal for CPU-only deployments, smaller models, or development/testing without a GPU. It uses HuggingFace `pipeline()` under the hood and handles audio resampling automatically for speech-to-text models. The `llama_cpp` loader provides high-efficiency inference for quantized GGUF models on CPU. The `vllm` loader provides higher throughput on GPU with continuous batching and PagedAttention.
 
 ## GPU Allocation
 

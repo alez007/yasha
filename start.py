@@ -115,34 +115,42 @@ def _apply_args_to_env(args: argparse.Namespace) -> None:
 
 
 def build_actor_options(config: ModelshipModelConfig) -> dict:
-    tp = config.vllm_engine_kwargs.tensor_parallel_size if config.vllm_engine_kwargs else 1
-
-    tp_backend = config.vllm_engine_kwargs.distributed_executor_backend if config.vllm_engine_kwargs else None
-
-    if config.num_gpus == 0:
-        num_gpus = 0
-    elif tp > 1 and tp_backend == "mp":
-        # mp backend: the main actor forks TP worker subprocesses, each owning one
-        # physical GPU. Allocate tp whole units so Ray exposes all devices via
-        # CUDA_VISIBLE_DEVICES. num_gpus is not used for Ray allocation in this path —
-        # gpu_memory_utilization is passed directly to vLLM instead.
+    if config.loader == ModelLoader.llama_cpp:
         if config.num_gpus > 0:
             logger.warning(
-                "num_gpus=%s is ignored for model '%s': with vllm mp backend and "
-                "tensor_parallel_size=%d, Ray GPU allocation is determined by tp.",
+                "num_gpus=%s is ignored for model '%s': llama_cpp loader currently only supports CPU.",
                 config.num_gpus,
                 config.name,
-                tp,
             )
-        num_gpus = float(tp)
-    elif tp > 1:
-        # ray backend: vLLM spawns tp worker Ray actors that each claim their own
-        # fractional GPU. The outer actor is a coordinator only and needs no GPU
-        # units. VLLM_RAY_PER_WORKER_GPUS tells vLLM what fraction each worker
-        # actor should request.
         num_gpus = 0
     else:
-        num_gpus = config.num_gpus
+        tp = config.vllm_engine_kwargs.tensor_parallel_size if config.vllm_engine_kwargs else 1
+        tp_backend = config.vllm_engine_kwargs.distributed_executor_backend if config.vllm_engine_kwargs else None
+
+        if config.num_gpus == 0:
+            num_gpus = 0
+        elif tp > 1 and tp_backend == "mp":
+            # mp backend: the main actor forks TP worker subprocesses, each owning one
+            # physical GPU. Allocate tp whole units so Ray exposes all devices via
+            # CUDA_VISIBLE_DEVICES. num_gpus is not used for Ray allocation in this path —
+            # gpu_memory_utilization is passed directly to vLLM instead.
+            if config.num_gpus > 0:
+                logger.warning(
+                    "num_gpus=%s is ignored for model '%s': with vllm mp backend and "
+                    "tensor_parallel_size=%d, Ray GPU allocation is determined by tp.",
+                    config.num_gpus,
+                    config.name,
+                    tp,
+                )
+            num_gpus = float(tp)
+        elif tp > 1:
+            # ray backend: vLLM spawns tp worker Ray actors that each claim their own
+            # fractional GPU. The outer actor is a coordinator only and needs no GPU
+            # units. VLLM_RAY_PER_WORKER_GPUS tells vLLM what fraction each worker
+            # actor should request.
+            num_gpus = 0
+        else:
+            num_gpus = config.num_gpus
 
     options: dict = {"num_gpus": num_gpus, "num_cpus": config.num_cpus}
 

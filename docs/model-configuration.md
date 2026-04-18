@@ -67,7 +67,7 @@ python start.py --config config/tts.yaml --gateway-name "tts-api"
 | `name` | string | Model identifier used in API requests |
 | `model` | string | HuggingFace model ID |
 | `usecase` | string | `generate`, `embed`, `transcription`, `translation`, `tts`, or `image` |
-| `loader` | string | `vllm`, `transformers`, `diffusers`, or `custom` |
+| `loader` | string | `vllm`, `transformers`, `diffusers`, `llama_cpp`, or `custom` |
 | `plugin` | string | Plugin module name (required when `loader: custom`); must be installed via `uv sync --extra <plugin>` |
 | `num_gpus` | float | Fraction of a GPU to allocate (0.0-1.0); also sets vLLM `gpu_memory_utilization` |
 | `num_cpus` | float | CPU units to allocate (default `0.1`) |
@@ -75,6 +75,7 @@ python start.py --config config/tts.yaml --gateway-name "tts-api"
 | `vllm_engine_kwargs` | object | Passed directly to the vLLM engine (see below) |
 | `transformers_config` | object | Transformers loader options (see below) |
 | `diffusers_config` | object | Diffusers pipeline options (see below) |
+| `llama_cpp_config` | object | llama.cpp loader options (see below) |
 | `plugin_config` | object | Plugin-specific options passed through to the plugin |
 
 ## vLLM Loader
@@ -251,6 +252,46 @@ models:
       torch_dtype: "float16"
       num_inference_steps: 4
       guidance_scale: 0.0
+```
+
+## llama.cpp Loader
+
+The `llama_cpp` loader uses [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) to run GGUF models. It currently supports **CPU-only inference** — any `num_gpus` configuration is ignored. This loader is ideal for running quantized models efficiently on hardware without dedicated GPUs.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `n_ctx` | int | `2048` | Maximum sequence length |
+| `n_batch` | int | `512` | Batch size for prompt processing |
+| `chat_format` | string | — | Chat template format (e.g. `llama-3`) |
+| `hf_filename` | string | — | Specific GGUF filename to download from the HF repo (supports glob patterns) |
+| `model_kwargs` | object | `{}` | Extra keyword arguments passed to the `Llama` constructor |
+
+> **Note:** Setting `MSHIP_LOG_LEVEL` to `TRACE` will enable `verbose` mode in the underlying llama.cpp engine.
+
+### Chat / Text Generation (GGUF)
+
+```yaml
+models:
+  - name: llama-3
+    model: meta-llama/Llama-3-8B-Instruct-GGUF
+    usecase: generate
+    loader: llama_cpp
+    num_cpus: 4
+    llama_cpp_config:
+      hf_filename: "*Q4_K_M.gguf"
+      n_ctx: 4096
+```
+
+### Embeddings (GGUF)
+
+```yaml
+models:
+  - name: nomic-embed
+    model: nomic-ai/nomic-embed-text-v1.5-GGUF
+    usecase: embed
+    loader: llama_cpp
+    llama_cpp_config:
+      hf_filename: "nomic-embed-text-v1.5.Q4_K_M.gguf"
 ```
 
 ## Custom Loader (Plugins)
