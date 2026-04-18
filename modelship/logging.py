@@ -48,7 +48,7 @@ class ModelshipTextFormatter(logging.Formatter):
 TRACE = 5
 logging.addLevelName(TRACE, "TRACE")
 
-_LIB_LOGGERS = ("ray", "ray.serve", "vllm", "transformers", "diffusers")
+_LIB_LOGGERS = ("ray", "ray.serve", "vllm", "transformers", "diffusers", "llama_cpp")
 
 # Env vars that libraries check internally when creating their own loggers.
 # Setting these ensures the level sticks even when a library re-configures

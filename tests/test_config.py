@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from modelship.infer.infer_config import (
+    LlamaCppConfig,
     ModelLoader,
     ModelshipConfig,
     ModelshipModelConfig,
@@ -11,6 +12,44 @@ from modelship.infer.infer_config import (
     TransformersConfig,
     VllmEngineConfig,
 )
+
+
+class TestLlamaCppConfig:
+    def test_defaults(self):
+        config = LlamaCppConfig()
+        assert config.n_gpu_layers == -1
+        assert config.n_ctx == 2048
+        assert config.n_batch == 512
+        assert config.chat_format is None
+        assert config.hf_filename is None
+        assert config.model_kwargs == {}
+
+    def test_custom_values(self):
+        config = LlamaCppConfig(
+            n_gpu_layers=33,
+            n_ctx=4096,
+            n_batch=1024,
+            chat_format="llama-3",
+            hf_filename="model.gguf",
+            model_kwargs={"seed": 42},
+        )
+        assert config.n_gpu_layers == 33
+        assert config.n_ctx == 4096
+        assert config.n_batch == 1024
+        assert config.chat_format == "llama-3"
+        assert config.hf_filename == "model.gguf"
+        assert config.model_kwargs == {"seed": 42}
+
+    def test_llama_cpp_model_config(self):
+        config = ModelshipModelConfig(
+            name="llama-3",
+            model="meta-llama/Llama-3-8B-Instruct-GGUF",
+            usecase=ModelUsecase.generate,
+            loader=ModelLoader.llama_cpp,
+            llama_cpp_config=LlamaCppConfig(hf_filename="*Q4_K_M.gguf"),
+        )
+        assert config.loader == ModelLoader.llama_cpp
+        assert config.llama_cpp_config.hf_filename == "*Q4_K_M.gguf"
 
 
 class TestModelshipModelConfig:

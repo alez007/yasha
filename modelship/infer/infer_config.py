@@ -23,6 +23,7 @@ class ModelLoader(StrEnum):
     vllm = "vllm"
     transformers = "transformers"
     diffusers = "diffusers"
+    llama_cpp = "llama_cpp"
     custom = "custom"
 
 
@@ -60,6 +61,15 @@ class DiffusersConfig(BaseModel):
     guidance_scale: float = 7.5
 
 
+class LlamaCppConfig(BaseModel):
+    n_gpu_layers: int = -1
+    n_ctx: int = 2048
+    n_batch: int = 512
+    chat_format: str | None = None
+    hf_filename: str | None = None
+    model_kwargs: dict[str, Any] = Field(default_factory=dict)
+
+
 class ModelshipModelConfig(BaseModel):
     name: str
     model: str
@@ -72,6 +82,7 @@ class ModelshipModelConfig(BaseModel):
     vllm_engine_kwargs: VllmEngineConfig = Field(default_factory=VllmEngineConfig)
     transformers_config: TransformersConfig | None = None
     diffusers_config: DiffusersConfig | None = None
+    llama_cpp_config: LlamaCppConfig | None = None
     plugin_config: dict[str, Any] | None = None  # plugin devs parse this themselves
 
     @model_validator(mode="after")
