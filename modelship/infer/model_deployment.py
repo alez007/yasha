@@ -48,6 +48,10 @@ class ModelDeployment:
                 from modelship.infer.diffusers.diffusers_infer import DiffusersInfer
 
                 self.infer = DiffusersInfer(config)
+            elif config.loader == ModelLoader.llama_cpp:
+                from modelship.infer.llama_cpp.llama_cpp_infer import LlamaCppInfer
+
+                self.infer = LlamaCppInfer(config)
             else:
                 from modelship.infer.custom.custom_infer import CustomInfer
 
