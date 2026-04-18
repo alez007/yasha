@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.24] - 2026-04-18
+
+### Added
+- add llama_cpp loader for cpu-only gguf inference
+
 ## [0.1.23] - 2026-04-17
 
 ### Added
