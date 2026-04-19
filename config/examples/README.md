@@ -1,0 +1,24 @@
+# Example configs
+
+Ready-to-run `models.yaml` configs for common scenarios. Mount one into the container at `/modelship/config/models.yaml` to use it.
+
+| File | What it runs | Hardware |
+|---|---|---|
+| [llama-cpp.yaml](llama-cpp.yaml) | Quantized GGUF chat + embeddings | CPU (any arch) |
+| [transformers-cpu.yaml](transformers-cpu.yaml) | Llama 3.2 1B + Nomic embed + Whisper + MMS-TTS | CPU |
+| [vllm.yaml](vllm.yaml) | High-throughput chat with tool calling, embeddings, Whisper | NVIDIA GPU |
+| [diffusers.yaml](diffusers.yaml) | SDXL Turbo image generation | NVIDIA GPU |
+| [kokoro-tts.yaml](kokoro-tts.yaml) | Kokoro TTS with GPU + CPU fallback replicas | Mixed |
+| [full-stack.yaml](full-stack.yaml) | LLM + TTS + STT + embeddings on one GPU | NVIDIA GPU |
+
+Example:
+
+```bash
+docker run --rm --shm-size=8g \
+  -v ./config/examples/llama-cpp.yaml:/modelship/config/models.yaml \
+  -v ./models-cache:/.cache \
+  -p 8000:8000 \
+  ghcr.io/alez007/modelship:latest-cpu
+```
+
+See [../../docs/model-configuration.md](../../docs/model-configuration.md) for the full field reference.

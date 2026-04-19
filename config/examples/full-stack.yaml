@@ -1,0 +1,39 @@
+# Full AI stack on a single GPU: chat + TTS + STT + embeddings + image gen.
+# Tune num_gpus fractions to fit your VRAM budget.
+# Plugins (Kokoro) require `MSHIP_PLUGINS=kokoro` or `uv sync --extra kokoro`.
+
+models:
+  - name: "llm"
+    model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    usecase: "generate"
+    loader: "vllm"
+    num_gpus: 0.55
+    vllm_engine_kwargs:
+      max_model_len: 16000
+      enable_auto_tool_choice: true
+      tool_call_parser: "hermes"
+
+  - name: "kokoro"
+    model: "hexgrad/Kokoro-82M"
+    usecase: "tts"
+    loader: "custom"
+    plugin: "kokoro"
+    num_gpus: 0.07
+    plugin_config:
+      onnx_provider: "CUDAExecutionProvider"
+
+  - name: "whisper"
+    model: "openai/whisper-small"
+    usecase: "transcription"
+    loader: "vllm"
+    num_gpus: 0.15
+    vllm_engine_kwargs:
+      trust_remote_code: true
+
+  - name: "nomic-embed"
+    model: "nomic-ai/nomic-embed-text-v1.5"
+    usecase: "embed"
+    loader: "vllm"
+    num_gpus: 0.10
+    vllm_engine_kwargs:
+      trust_remote_code: true

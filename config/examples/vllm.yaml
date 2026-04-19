@@ -1,0 +1,33 @@
+# vLLM loader examples — require an NVIDIA GPU.
+# See docs/model-configuration.md for the full vllm_engine_kwargs reference.
+
+models:
+  # High-throughput chat with tool calling
+  - name: "llm"
+    model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    usecase: "generate"
+    loader: "vllm"
+    num_gpus: 0.7
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      max_model_len: 16000
+      enable_auto_tool_choice: true
+      tool_call_parser: "hermes"
+
+  # Embeddings
+  - name: "nomic-embed"
+    model: "nomic-ai/nomic-embed-text-v1.5"
+    usecase: "embed"
+    loader: "vllm"
+    num_gpus: 0.1
+    vllm_engine_kwargs:
+      trust_remote_code: true
+
+  # Speech-to-text (Whisper)
+  - name: "whisper"
+    model: "openai/whisper-small"
+    usecase: "transcription"
+    loader: "vllm"
+    num_gpus: 0.25
+    vllm_engine_kwargs:
+      trust_remote_code: true

@@ -256,12 +256,13 @@ models:
 
 ## llama.cpp Loader
 
-The `llama_cpp` loader uses [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) to run GGUF models. It currently supports **CPU-only inference** — any `num_gpus` configuration is ignored. This loader is ideal for running quantized models efficiently on hardware without dedicated GPUs.
+The `llama_cpp` loader uses [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) to run GGUF models. It currently supports **CPU-only inference** — any `num_gpus` or `n_gpu_layers` configuration is ignored (a warning is logged and `n_gpu_layers` is forced to `0`). This loader is ideal for running quantized models efficiently on hardware without dedicated GPUs.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `n_ctx` | int | `2048` | Maximum sequence length |
 | `n_batch` | int | `512` | Batch size for prompt processing |
+| `n_gpu_layers` | int | `0` | Currently ignored — forced to `0` (CPU-only) |
 | `chat_format` | string | — | Chat template format (e.g. `llama-3`) |
 | `hf_filename` | string | — | Specific GGUF filename to download from the HF repo (supports glob patterns) |
 | `model_kwargs` | object | `{}` | Extra keyword arguments passed to the `Llama` constructor |
@@ -276,11 +277,9 @@ models:
     model: "lmstudio-community/Qwen2.5-7B-Instruct-GGUF"
     usecase: "generate"
     loader: "llama_cpp"
-    num_gpus: 0
     num_cpus: 3
     llama_cpp_config:
       hf_filename: "*Q4_K_M.gguf"
-      n_gpu_layers: -1
 ```
 
 ### Embeddings (GGUF)

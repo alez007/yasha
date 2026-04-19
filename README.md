@@ -99,27 +99,57 @@ Models can be deployed across multiple GPUs, run on CPU-only, or both — multip
 
 ## Quick Start
 
-Modelship provides two versions: a **Standard (GPU)** version for high-performance inference and a **Lightweight (CPU)** version for non-GPU hardware.
+The fastest way to try Modelship: run a quantized 7B chat model on a laptop — no GPU required. Copy-paste this block and you'll have an OpenAI-compatible API on `http://localhost:8000` in a few minutes (first run downloads ~4.5 GB of weights into `./models-cache`).
 
-Create a `models.yaml` config file (see [Model Configuration](docs/model-configuration.md) for full reference):
-
-```yaml
+```bash
+mkdir -p models-cache && cat > models.yaml <<'EOF'
 models:
   - name: qwen
-    model: Qwen/Qwen2.5-1.5B-Instruct
-    loader: transformers
-    num_cpus: 2
+    model: lmstudio-community/Qwen2.5-7B-Instruct-GGUF
+    usecase: generate
+    loader: llama_cpp
+    num_cpus: 3
+    llama_cpp_config:
+      hf_filename: "*Q4_K_M.gguf"
+EOF
+
+docker run --rm --shm-size=8g \
+  -v ./models.yaml:/modelship/config/models.yaml \
+  -v ./models-cache:/.cache \
+  -p 8000:8000 \
+  ghcr.io/alez007/modelship:latest-cpu
 ```
 
-### Choose your version
+Images are multi-arch (amd64 + arm64), so this works on Apple Silicon and ARM Linux hosts too.
 
-#### GPU (Standard)
-Best for high-throughput inference using vLLM or Diffusers. Requires an NVIDIA GPU and the NVIDIA Container Toolkit.
+Once the server is up (look for `Deployed app 'modelship api' successfully`), call it:
+
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen", "messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+Or point any OpenAI SDK at it — no code changes, just swap `base_url`:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="not-needed")
+resp = client.chat.completions.create(
+    model="qwen",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(resp.choices[0].message.content)
+```
+
+### GPU (vLLM, Diffusers)
+
+For high-throughput GPU inference, use the standard image and add `--gpus all`. You'll also need the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) and an `HF_TOKEN` for gated models. Example `models.yaml` entries for vLLM, Diffusers, and multi-GPU setups live in [docs/model-configuration.md](docs/model-configuration.md); ready-to-run configs are in [config/examples/](config/examples/).
 
 ```bash
 docker run --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token_here \
-  -e RAY_HEAD_CPU_NUM=2 \
   -e RAY_HEAD_GPU_NUM=1 \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
@@ -127,42 +157,7 @@ docker run --rm --shm-size=8g --gpus all \
   ghcr.io/alez007/modelship:latest
 ```
 
-#### CPU (Lightweight)
-Optimized for non-GPU hardware (mini-PCs, laptops) using the Transformers backend.
-
-```bash
-docker run --rm --shm-size=8g \
-  -e RAY_HEAD_CPU_NUM=2 \
-  -v ./models.yaml:/modelship/config/models.yaml \
-  -v ./models-cache:/.cache \
-  -p 8000:8000 \
-  ghcr.io/alez007/modelship:latest-cpu
-```
-
-Try it out:
-
-```bash
-curl http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
-
-### Additive Deploys
-
-By default, running `start.py` with a new config adds models to the running cluster without disrupting existing deployments:
-
-```bash
-# Deploy LLMs
-python start.py --config config/llm.yaml
-
-# Later, add TTS models — LLMs keep running
-python start.py --config config/tts.yaml
-```
-
-Use `--redeploy` to tear down everything and start fresh. See [Model Configuration](docs/model-configuration.md) for the full CLI reference.
+Hitting an error? Check [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Plugin Support
 
@@ -191,6 +186,7 @@ For a full guide on writing your own plugin, see [Plugin Development](docs/plugi
 - [Plugin Development](docs/plugins.md) — writing custom TTS backends
 - [Home Assistant Integration](docs/home-assistant.md) — Wyoming protocol setup for voice automation
 - [Monitoring & Logging](docs/monitoring.md) — Prometheus metrics, Grafana dashboard, structured logging, health checks
+- [Troubleshooting](docs/troubleshooting.md) — common first-run errors and fixes
 - [Roadmap](ROADMAP.md) — what's planned next and where to contribute
 
 ## Monitoring
@@ -203,26 +199,7 @@ See [Monitoring & Logging](docs/monitoring.md) for full details.
 
 ## Production Readiness
 
-See the full [Production Readiness Plan](docs/production-readiness.md) for details. Summary of current status:
-
-| Area                         | Score | Key Gaps |
-|------------------------------|-------|----------|
-| Architecture & Design        | 8/10  | Add K8s manifests, improve health checks |
-| Monitoring (metrics)         | 9/10  | Excellent — Prometheus + Grafana ready |
-| Monitoring (alerting + logs) | 8/10  | Syslog + OTel log export done; alerting rules still needed |
-| Security                     | 4/10  | No rate limiting, open CORS, no plugin sandboxing |
-| Resilience                   | 5/10  | Good shutdown, weak self-healing |
-| Testing                      | 3/10  | Config tests only, no integration/API tests |
-| DevOps Experience            | 5/10  | Good docs, no K8s/Helm, no runbooks |
-| Update/Deploy Strategy       | 5/10  | Additive deploys supported, no rolling updates for existing models |
-
-### Critical items before production
-
-- Rate limiting per user/model
-- Detailed readiness/liveness probes (current `/health` is a no-op)
-- Integration and API test coverage
-- Kubernetes manifests and Helm chart
-- Prometheus alerting rules and SLO definitions
+Modelship is actively used but not yet hardened for production. Key gaps today: no rate limiting, `/health` is a no-op, thin test coverage, no Helm chart, no Prometheus alerting rules. See the full [Production Readiness Plan](docs/production-readiness.md) for the scorecard and roadmap.
 
 ## Contributing
 

@@ -1,0 +1,12 @@
+# Diffusers loader example — image generation on GPU.
+
+models:
+  - name: "sd-turbo"
+    model: "stabilityai/sdxl-turbo"
+    usecase: "image"
+    loader: "diffusers"
+    num_gpus: 0.8
+    diffusers_config:
+      torch_dtype: "float16"
+      num_inference_steps: 4
+      guidance_scale: 0.0
