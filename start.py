@@ -115,6 +115,12 @@ def _apply_args_to_env(args: argparse.Namespace) -> None:
 
 
 def build_actor_options(config: ModelshipModelConfig) -> dict:
+    env_vars = _build_cache_env_vars()
+    for log_var in ("MSHIP_LOG_LEVEL", "MSHIP_LOG_FORMAT", "MSHIP_LOG_TARGET"):
+        val = os.environ.get(log_var)
+        if val is not None:
+            env_vars[log_var] = val
+
     if config.loader == ModelLoader.llama_cpp:
         if config.num_gpus > 0:
             logger.warning(
@@ -149,27 +155,16 @@ def build_actor_options(config: ModelshipModelConfig) -> dict:
             # units. VLLM_RAY_PER_WORKER_GPUS tells vLLM what fraction each worker
             # actor should request.
             num_gpus = 0
+            if config.num_gpus > 0:
+                env_vars["VLLM_RAY_PER_WORKER_GPUS"] = str(config.num_gpus)
         else:
             num_gpus = config.num_gpus
 
-    options: dict = {"num_gpus": num_gpus, "num_cpus": config.num_cpus}
-
-    env_vars = _build_cache_env_vars()
-
-    for log_var in ("MSHIP_LOG_LEVEL", "MSHIP_LOG_FORMAT", "MSHIP_LOG_TARGET"):
-        val = os.environ.get(log_var)
-        if val is not None:
-            env_vars[log_var] = val
-
-    if tp > 1 and tp_backend != "mp" and config.num_gpus > 0:
-        # ray backend: set per-worker GPU fraction so vLLM worker actors claim the
-        # right amount. Only override when num_gpus is explicitly set; otherwise
-        # let vLLM use its built-in default (0.9/worker).
-        env_vars["VLLM_RAY_PER_WORKER_GPUS"] = str(config.num_gpus)
-
-    options["runtime_env"] = {"env_vars": env_vars}
-
-    return options
+    return {
+        "num_gpus": num_gpus,
+        "num_cpus": config.num_cpus,
+        "runtime_env": {"env_vars": env_vars},
+    }
 
 
 def ensure_plugin(module_name: str):
