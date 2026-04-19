@@ -97,6 +97,7 @@ docker run -it --rm --shm-size=8g --gpus all \
   -e MSHIP_PLUGINS=kokoro \
   -e RAY_HEAD_GPU_NUM=1 \
   --mount type=bind,src=./,dst=/modelship \
+  -v ./models-cache:/.cache \
   -p 8000:8000 modelship_dev
 ```
 
@@ -106,6 +107,7 @@ docker run -it --rm --shm-size=8g \
   -e HF_TOKEN=your_token_here \
   -e RAY_HEAD_GPU_NUM=0 \
   --mount type=bind,src=./,dst=/modelship \
+  -v ./models-cache:/.cache \
   -p 8000:8000 modelship_dev_cpu
 ```
 

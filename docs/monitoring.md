@@ -135,6 +135,7 @@ docker run --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token \
   -e MSHIP_METRICS=true \
   -v ./models.yaml:/modelship/config/models.yaml \
+  -v ./models-cache:/.cache \
   -p 8000:8000 -p 8079:8079 -p 8265:8265 \
   ghcr.io/alez007/modelship:latest
 ```
