@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.25] - 2026-04-19
+
+### Fixed
+- resolve UnboundLocalError and enable arm64 builds
+
+### Changed
+- fix cache volume mounts and update llama_cpp example
+- clean up env var building and enable arm64 builds
+
 ## [0.1.24] - 2026-04-18
 
 ### Added
