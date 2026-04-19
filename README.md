@@ -122,7 +122,7 @@ docker run --rm --shm-size=8g --gpus all \
   -e RAY_HEAD_CPU_NUM=2 \
   -e RAY_HEAD_GPU_NUM=1 \
   -v ./models.yaml:/modelship/config/models.yaml \
-  -v ./models-cache:/.cache/models \
+  -v ./models-cache:/.cache \
   -p 8000:8000 \
   ghcr.io/alez007/modelship:latest
 ```
@@ -134,7 +134,7 @@ Optimized for non-GPU hardware (mini-PCs, laptops) using the Transformers backen
 docker run --rm --shm-size=8g \
   -e RAY_HEAD_CPU_NUM=2 \
   -v ./models.yaml:/modelship/config/models.yaml \
-  -v ./models-cache:/.cache/models \
+  -v ./models-cache:/.cache \
   -p 8000:8000 \
   ghcr.io/alez007/modelship:latest-cpu
 ```
