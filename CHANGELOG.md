@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.26] - 2026-04-19
+
+### Fixed
+- incorrect syntax on github release
+
 ## [0.1.25] - 2026-04-19
 
 ### Fixed
