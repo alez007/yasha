@@ -272,14 +272,15 @@ The `llama_cpp` loader uses [llama-cpp-python](https://github.com/abetlen/llama-
 
 ```yaml
 models:
-  - name: llama-3
-    model: meta-llama/Llama-3-8B-Instruct-GGUF
-    usecase: generate
-    loader: llama_cpp
-    num_cpus: 4
+  - name: "qwen-gguf-hf"
+    model: "lmstudio-community/Qwen2.5-7B-Instruct-GGUF"
+    usecase: "generate"
+    loader: "llama_cpp"
+    num_gpus: 0
+    num_cpus: 3
     llama_cpp_config:
       hf_filename: "*Q4_K_M.gguf"
-      n_ctx: 4096
+      n_gpu_layers: -1
 ```
 
 ### Embeddings (GGUF)
