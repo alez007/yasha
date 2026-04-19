@@ -1,7 +1,7 @@
 # Modelship
 
 [![CI](https://github.com/alez007/modelship/actions/workflows/ci.yml/badge.svg)](https://github.com/alez007/modelship/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
 Self-hosted, multi-model AI inference server. Runs LLMs alongside specialized models (TTS, speech-to-text, embeddings, image generation) on GPU or CPU, exposing an OpenAI-compatible API. Built on [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) with pluggable inference backends: [vLLM](https://github.com/vllm-project/vllm) for high-throughput GPU inference, [HuggingFace Transformers](https://github.com/huggingface/transformers) for CPU and lightweight GPU workloads, [llama.cpp](https://github.com/abetlen/llama-cpp-python) for high-efficiency GGUF models on CPU, [Diffusers](https://github.com/huggingface/diffusers) for image generation, and a plugin system for custom backends.
