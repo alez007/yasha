@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.29] - 2026-04-20
+
+### Added
+- make kokoroonnx plugin engine-agnostic
+- add whispercpp STT plugin, expand custom plugin system to all usecases
+
+### Changed
+- relicense from MIT to Apache-2.0
+
 ## [0.1.28] - 2026-04-19
 
 ## [0.1.27] - 2026-04-19
