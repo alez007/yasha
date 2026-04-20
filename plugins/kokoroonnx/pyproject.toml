@@ -5,9 +5,8 @@ description = "Kokoro ONNX TTS plugin for Modelship"
 requires-python = "==3.12.10"
 dependencies = [
     "modelship",
-    "kokoro-onnx[gpu]>=0.4.9",
+    "kokoro-onnx>=0.4.9",
     "numpy>=2.2.6",
-    "onnxruntime-gpu>=1.20.1",
     "scipy>=1.16.1",
 ]
 

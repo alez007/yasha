@@ -1263,29 +1263,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/00/48311d88757b160634af7626324fe8a95cae186952bf25baad831381d50f/kokoro_onnx-0.4.9-py3-none-any.whl", hash = "sha256:e0b51d62525166af795db715c7f0efb80233621b5ddc0766ed68995545589d9e", size = 17794, upload-time = "2025-05-10T22:49:03.156Z" },
 ]
 
-[package.optional-dependencies]
-gpu = [
-    { name = "onnxruntime-gpu", marker = "(platform_machine == 'x86_64' and sys_platform != 'darwin') or (platform_machine != 'x86_64' and extra == 'extra-9-modelship-cpu' and extra == 'extra-9-modelship-gpu') or (sys_platform == 'darwin' and extra == 'extra-9-modelship-cpu' and extra == 'extra-9-modelship-gpu')" },
-]
-
 [[package]]
 name = "kokoroonnx"
 version = "0.1.0"
 source = { editable = "plugins/kokoroonnx" }
 dependencies = [
-    { name = "kokoro-onnx", extra = ["gpu"] },
+    { name = "kokoro-onnx" },
     { name = "modelship" },
     { name = "numpy" },
-    { name = "onnxruntime-gpu" },
     { name = "scipy" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "kokoro-onnx", extras = ["gpu"], specifier = ">=0.4.9" },
+    { name = "kokoro-onnx", specifier = ">=0.4.9" },
     { name = "modelship", editable = "." },
     { name = "numpy", specifier = ">=2.2.6" },
-    { name = "onnxruntime-gpu", specifier = ">=1.20.1" },
     { name = "scipy", specifier = ">=1.16.1" },
 ]
 
@@ -1548,6 +1541,7 @@ bark = [
 ]
 cpu = [
     { name = "llama-cpp-python" },
+    { name = "onnxruntime" },
     { name = "sentence-transformers" },
     { name = "torch", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-9-modelship-cpu') or (extra == 'extra-9-modelship-cpu' and extra == 'extra-9-modelship-gpu')" },
     { name = "torch", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-9-modelship-cpu') or (extra == 'extra-9-modelship-cpu' and extra == 'extra-9-modelship-gpu')" },
@@ -1567,6 +1561,7 @@ gpu = [
     { name = "diffusers" },
     { name = "flashinfer-python" },
     { name = "llama-cpp-python" },
+    { name = "onnxruntime-gpu" },
     { name = "sentence-transformers" },
     { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
     { name = "torchvision", version = "0.25.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
@@ -1602,6 +1597,8 @@ requires-dist = [
     { name = "llama-cpp-python", marker = "extra == 'cpu'", specifier = ">=0.3.6" },
     { name = "llama-cpp-python", marker = "extra == 'gpu'", specifier = ">=0.3.6" },
     { name = "numpy", specifier = ">=2.2.6" },
+    { name = "onnxruntime", marker = "extra == 'cpu'", specifier = ">=1.20.1" },
+    { name = "onnxruntime-gpu", marker = "extra == 'gpu'", specifier = ">=1.20.1" },
     { name = "opentelemetry-exporter-otlp", marker = "extra == 'otel'", specifier = ">=1.20.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20.0" },
     { name = "orpheus", marker = "extra == 'orpheus'", editable = "plugins/orpheus" },
