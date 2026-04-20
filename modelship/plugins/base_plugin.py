@@ -1,9 +1,31 @@
+"""
+Base class for custom model plugins.
+
+Plugins are protocol-agnostic engines. Each `create_*` method takes raw
+inputs and returns raw outputs. OpenAI (or any other) protocol shaping is
+done by the serving wrappers, not the plugin itself. Override only the
+methods matching the plugin's `usecase`; unimplemented methods return a 404
+error.
+"""
+
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
-from typing import Literal, Protocol
+from typing import Protocol
 
 from modelship.infer.infer_config import ModelshipModelConfig
-from modelship.openai.protocol import ErrorResponse, RawSpeechResponse
+from modelship.openai.protocol import (
+    ErrorInfo,
+    ErrorResponse,
+    RawChatCompletion,
+    RawChatDelta,
+    RawSpeechResponse,
+    RawTranscription,
+    RawTranslation,
+)
+
+_NOT_SUPPORTED = ErrorResponse(
+    error=ErrorInfo(message="plugin does not support this action", type="invalid_request_error", code=404)
+)
 
 
 class BasePlugin(ABC):
@@ -15,14 +37,72 @@ class BasePlugin(ABC):
     async def start(self):
         pass
 
-    @abstractmethod
-    async def generate(
-        self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]
-    ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
-        pass
-
     def max_context_length(self) -> int | None:
         return None
+
+    async def create_chat_completion(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_tokens: int | None = None,
+        stop: list[str] | None = None,
+        stream: bool = False,
+        request_id: str | None = None,
+    ) -> RawChatCompletion | AsyncGenerator[RawChatDelta, None] | ErrorResponse:
+        return _NOT_SUPPORTED
+
+    async def create_embedding(
+        self,
+        input: list[str],
+        request_id: str | None = None,
+    ) -> list[list[float]] | ErrorResponse:
+        return _NOT_SUPPORTED
+
+    async def create_transcription(
+        self,
+        audio_data: bytes,
+        language: str | None = None,
+        prompt: str | None = None,
+        temperature: float | None = None,
+        request_id: str | None = None,
+    ) -> RawTranscription | ErrorResponse:
+        return _NOT_SUPPORTED
+
+    async def create_translation(
+        self,
+        audio_data: bytes,
+        prompt: str | None = None,
+        temperature: float | None = None,
+        request_id: str | None = None,
+    ) -> RawTranslation | ErrorResponse:
+        return _NOT_SUPPORTED
+
+    async def create_speech(
+        self,
+        input: str,
+        voice: str | None = None,
+        speed: float | None = None,
+        stream: bool = False,
+        request_id: str | None = None,
+    ) -> RawSpeechResponse | AsyncGenerator[tuple[bytes, int], None] | ErrorResponse:
+        """Synthesize speech. Non-stream returns a full `RawSpeechResponse`;
+        stream yields `(pcm_bytes, sample_rate)` tuples where `pcm_bytes` is
+        signed 16-bit little-endian mono PCM."""
+        return _NOT_SUPPORTED
+
+    async def create_image_generation(
+        self,
+        prompt: str,
+        n: int = 1,
+        size: str | None = None,
+        num_inference_steps: int | None = None,
+        guidance_scale: float | None = None,
+        request_id: str | None = None,
+    ) -> list[bytes] | ErrorResponse:
+        """Returns a list of PNG-encoded image bytes."""
+        return _NOT_SUPPORTED
 
 
 class PluginProto(Protocol):

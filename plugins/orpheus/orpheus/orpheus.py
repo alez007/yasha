@@ -29,12 +29,8 @@ Example request:
       --output speech.wav
 """
 
-import base64
-import io
 import os
-import wave
 from collections.abc import AsyncGenerator
-from typing import Literal
 
 import numpy as np
 import torch
@@ -47,8 +43,9 @@ from vllm.v1.engine.async_llm import AsyncLLM
 
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.logging import get_logger
-from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechResponse
+from modelship.openai.protocol import ErrorResponse, RawSpeechResponse
 from modelship.plugins.base_plugin import BasePlugin
+from modelship.utils.audio import wrap_pcm16_wav
 
 logger = get_logger("plugin.orpheus")
 
@@ -208,40 +205,37 @@ class ModelPlugin(BasePlugin):
         formatted_prompt = f"{voice}: {prompt}"
         return f"<|audio|>{formatted_prompt}<|eot_id|>"
 
-    async def generate(
-        self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]
-    ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
+    async def create_speech(
+        self,
+        input: str,
+        voice: str | None = None,
+        speed: float | None = None,
+        stream: bool = False,
+        request_id: str | None = None,
+    ) -> RawSpeechResponse | AsyncGenerator[tuple[bytes, int], None] | ErrorResponse:
+        voice = voice or "zoe"
+        request_id = request_id or ""
         logger.info("started generation: %s with voice: %s", input, voice)
-        if stream_format == "sse":
-            return self.generate_sse(input, voice, request_id)
-        else:
-            buf = io.BytesIO()
-            with wave.open(buf, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(24000)
-                total_frames = 0
-                async for audio_bytes in self.generate_audio_bytes_async(input, voice, request_id):
-                    logger.debug("audio chunk bytes=%d", len(audio_bytes))
-                    frame_count = len(audio_bytes) // (wf.getsampwidth() * wf.getnchannels())
-                    total_frames += frame_count
-                    wf.writeframes(audio_bytes)
 
-            duration = total_frames / 24000
-            logger.info("audio has total duration of %s seconds", duration)
-            return RawSpeechResponse(audio=buf.getvalue(), media_type="audio/wav")
+        if stream:
+            return self._stream(input, voice, request_id)
 
-    async def generate_sse(self, input: str, voice: str, request_id: str) -> AsyncGenerator[str, None]:
-        async for audio_bytes in self.generate_audio_bytes_async(input, voice, request_id):
+        pcm_chunks: list[bytes] = []
+        async for audio_bytes in self._generate_audio_bytes(input, voice, request_id):
             logger.debug("audio chunk bytes=%d", len(audio_bytes))
-            encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
-            event_data = SpeechResponse(audio=encoded_audio, type="speech.audio.delta")
-            yield f"data: {event_data.model_dump_json()}\n\n"
+            pcm_chunks.append(audio_bytes)
 
-        completion_event = SpeechResponse(audio=None, type="speech.audio.done")
-        yield f"data: {completion_event.model_dump_json()}\n\n"
+        pcm = b"".join(pcm_chunks)
+        duration = (len(pcm) // 2) / 24000
+        logger.info("audio has total duration of %s seconds", duration)
+        return RawSpeechResponse(audio=wrap_pcm16_wav(pcm, 24000), media_type="audio/wav")
 
-    async def generate_audio_bytes_async(self, input: str, voice: str, request_id: str) -> AsyncGenerator[bytes, None]:
+    async def _stream(self, input: str, voice: str, request_id: str) -> AsyncGenerator[tuple[bytes, int], None]:
+        async for audio_bytes in self._generate_audio_bytes(input, voice, request_id):
+            logger.debug("audio chunk bytes=%d", len(audio_bytes))
+            yield audio_bytes, 24000
+
+    async def _generate_audio_bytes(self, input: str, voice: str, request_id: str) -> AsyncGenerator[bytes, None]:
         async for audio_bytes in _tokens_decoder(self.generate_tokens_async(input, voice, request_id)):
             yield audio_bytes
 

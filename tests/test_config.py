@@ -80,9 +80,9 @@ class TestModelshipModelConfig:
             model="some-model",
             usecase=ModelUsecase.tts,
             loader=ModelLoader.custom,
-            plugin="kokoro",
+            plugin="kokoroonnx",
         )
-        assert config.plugin == "kokoro"
+        assert config.plugin == "kokoroonnx"
 
     def test_custom_loader_plugin_only(self):
         config = ModelshipModelConfig(
@@ -90,9 +90,9 @@ class TestModelshipModelConfig:
             model="some-model",
             usecase=ModelUsecase.tts,
             loader=ModelLoader.custom,
-            plugin="kokoro",
+            plugin="kokoroonnx",
         )
-        assert config.plugin == "kokoro"
+        assert config.plugin == "kokoroonnx"
 
     def test_model_required(self):
         with pytest.raises(ValidationError, match="Field required"):
@@ -176,7 +176,7 @@ class TestModelshipConfig:
                     model="some-model",
                     usecase=ModelUsecase.tts,
                     loader=ModelLoader.custom,
-                    plugin="kokoro",
+                    plugin="kokoroonnx",
                     num_gpus=0.05,
                 ),
             ]
@@ -197,7 +197,7 @@ class TestModelshipConfig:
                     model="hexgrad/Kokoro-82M",
                     usecase=ModelUsecase.tts,
                     loader=ModelLoader.custom,
-                    plugin="kokoro",
+                    plugin="kokoroonnx",
                     num_gpus=0.07,
                 ),
                 ModelshipModelConfig(
@@ -205,7 +205,7 @@ class TestModelshipConfig:
                     model="hexgrad/Kokoro-82M",
                     usecase=ModelUsecase.tts,
                     loader=ModelLoader.custom,
-                    plugin="kokoro",
+                    plugin="kokoroonnx",
                     num_gpus=0,
                 ),
             ]

@@ -18,44 +18,40 @@ Example request:
 
     curl http://localhost:8000/v1/audio/speech \\
       -H "Content-Type: application/json" \\
-      -d '{"model": "kokoro", "input": "Hello world", "voice": "af_heart", "response_format": "wav"}' \\
+      -d '{"model": "kokoroonnx", "input": "Hello world", "voice": "af_heart", "response_format": "wav"}' \\
       --output speech.wav
 """
 
-import base64
-import io
 import os
 import shutil
 from collections.abc import AsyncGenerator
-from typing import Literal
 
 import numpy as np
 import onnxruntime as ort  # type: ignore[import-unresolved]
 from kokoro_onnx import Kokoro  # type: ignore[import-unresolved]
-from scipy.io.wavfile import write as write_wav
-from scipy.signal import resample_poly
 
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.logging import get_logger
-from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechResponse
+from modelship.openai.protocol import ErrorResponse, RawSpeechResponse
 from modelship.plugins.base_plugin import BasePlugin
 from modelship.utils import download, plugins_dir
+from modelship.utils.audio import resample, to_pcm16, to_wav
 
-logger = get_logger("plugin.kokoro")
+logger = get_logger("plugin.kokoroonnx")
 
 
 class ModelPlugin(BasePlugin):
     def __init__(self, model_config: ModelshipModelConfig):
         if not shutil.which("espeak-ng") and not shutil.which("espeak"):
             raise RuntimeError(
-                "espeak/espeak-ng is required by kokoro but not found on this system. "
+                "espeak/espeak-ng is required by kokoroonnx but not found on this system. "
                 "Install it with: apt-get install -y espeak-ng (Debian/Ubuntu) "
                 "or brew install espeak (macOS)"
             )
         logger.info("onnxruntime device: %s", ort.get_device())
         logger.info("available providers: %s", ort.get_available_providers())
 
-        plugin_dir = f"{plugins_dir()}/kokoro"
+        plugin_dir = f"{plugins_dir()}/kokoroonnx"
         os.makedirs(plugin_dir, exist_ok=True)
 
         model_path = f"{plugin_dir}/kokoro-v1.0.onnx"
@@ -87,44 +83,37 @@ class ModelPlugin(BasePlugin):
     async def start(self):
         pass
 
-    def _resample(self, audio: np.ndarray, from_rate: int) -> tuple[np.ndarray, int]:
-        if self.target_sample_rate is None or from_rate == self.target_sample_rate:
+    def _maybe_resample(self, audio: np.ndarray, from_rate: int) -> tuple[np.ndarray, int]:
+        if self.target_sample_rate is None:
             return audio, from_rate
-        from math import gcd
+        return resample(audio, from_rate, self.target_sample_rate), self.target_sample_rate
 
-        g = gcd(self.target_sample_rate, from_rate)
-        audio = resample_poly(audio, self.target_sample_rate // g, from_rate // g).astype(audio.dtype)
-        return audio, self.target_sample_rate
-
-    async def generate(
-        self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]
-    ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
+    async def create_speech(
+        self,
+        input: str,
+        voice: str | None = None,
+        speed: float | None = None,
+        stream: bool = False,
+        request_id: str | None = None,
+    ) -> RawSpeechResponse | AsyncGenerator[tuple[bytes, int], None] | ErrorResponse:
+        voice = voice or "af_heart"
+        speed = speed or 1.0
         logger.info("started generation: %s with voice: %s", input, voice)
 
-        if stream_format == "sse":
-            return self.generate_sse(input, voice, request_id)
-        else:
-            chunks = []
-            sample_rate = self.target_sample_rate
-            async for audio_bytes, sr in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):  # type: ignore[union-attr]
-                audio_bytes, sample_rate = self._resample(audio_bytes, sr)
-                chunks.append(audio_bytes)
+        if stream:
+            return self._stream(input, voice, speed)
 
-            logger.info("got %d chunks (sample rate %s) for input: %s", len(chunks), sample_rate, input)
-            audio = np.concatenate(chunks)
-            if np.issubdtype(audio.dtype, np.floating):
-                audio = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
-            buf = io.BytesIO()
-            write_wav(buf, rate=sample_rate, data=audio)
-            return RawSpeechResponse(audio=buf.getvalue(), media_type="audio/wav")
+        chunks: list[np.ndarray] = []
+        sample_rate = self.target_sample_rate or 0
+        async for audio, sr in self.kokoro.create_stream(input, voice=voice, speed=speed, lang="en-us"):  # type: ignore[union-attr]
+            audio, sample_rate = self._maybe_resample(audio, sr)
+            chunks.append(audio)
 
-    async def generate_sse(self, input: str, voice: str, request_id: str) -> AsyncGenerator[str, None]:
-        async for audio_bytes, sample_rate in self.kokoro.create_stream(input, voice=voice, speed=1.0, lang="en-us"):  # type: ignore[union-attr]
-            audio_bytes, sample_rate = self._resample(audio_bytes, sample_rate)
-            logger.debug("audio chunk sample_rate=%s bytes=%d", sample_rate, len(audio_bytes))
-            encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
-            event_data = SpeechResponse(audio=encoded_audio, type="speech.audio.delta")
-            yield f"data: {event_data.model_dump_json()}\n\n"
+        logger.info("got %d chunks (sample rate %s) for input: %s", len(chunks), sample_rate, input)
+        combined = np.concatenate(chunks)
+        return RawSpeechResponse(audio=to_wav(combined, sample_rate), media_type="audio/wav")
 
-        completion_event = SpeechResponse(audio=None, type="speech.audio.done")
-        yield f"data: {completion_event.model_dump_json()}\n\n"
+    async def _stream(self, input: str, voice: str, speed: float) -> AsyncGenerator[tuple[bytes, int], None]:
+        async for audio, sr in self.kokoro.create_stream(input, voice=voice, speed=speed, lang="en-us"):  # type: ignore[union-attr]
+            audio, sr = self._maybe_resample(audio, sr)
+            yield to_pcm16(audio), sr

@@ -25,18 +25,16 @@ Example request:
       --output speech.wav
 """
 
-import io
 from collections.abc import AsyncGenerator
-from typing import Literal
 
 import torch
-from scipy.io.wavfile import write as write_wav
 from transformers import BarkModel, BarkProcessor
 
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.logging import get_logger
 from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, create_error_response
 from modelship.plugins.base_plugin import BasePlugin
+from modelship.utils.audio import to_wav
 
 logger = get_logger("plugin.bark")
 
@@ -60,18 +58,21 @@ class ModelPlugin(BasePlugin):
     async def start(self):
         pass
 
-    async def generate(
-        self, input: str, voice: str, request_id: str, stream_format: Literal["sse", "audio"]
-    ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
+    async def create_speech(
+        self,
+        input: str,
+        voice: str | None = None,
+        speed: float | None = None,
+        stream: bool = False,
+        request_id: str | None = None,
+    ) -> RawSpeechResponse | AsyncGenerator[tuple[bytes, int], None] | ErrorResponse:
         logger.info("started generation: %s with voice: %s to device %s", input, voice, self.device)
 
-        if stream_format == "sse":
-            return create_error_response("sse stream format not supported")
+        if stream:
+            return create_error_response("bark does not support streaming")
 
         inputs = self.processor(input, voice_preset=voice).to(device=self.device)
         sample_rate = getattr(self.model.generation_config, "sample_rate", 24000)  # type: ignore[union-attr]
         speech_output = self.model.generate(**inputs).cpu().numpy().squeeze()  # type: ignore[call-arg]
 
-        buf = io.BytesIO()
-        write_wav(buf, rate=sample_rate, data=speech_output)
-        return RawSpeechResponse(audio=buf.getvalue(), media_type="audio/wav")
+        return RawSpeechResponse(audio=to_wav(speech_output, sample_rate), media_type="audio/wav")

@@ -1,17 +1,17 @@
-# Kokoro TTS Plugin
+# Kokoro ONNX TTS Plugin
 
 ONNX-based text-to-speech using [Kokoro](https://github.com/thewh1teagle/kokoro-onnx). Fast, lightweight, supports GPU and CPU inference.
 
 ## Installation
 
 ```bash
-uv sync --extra kokoro
+uv sync --extra kokoroonnx
 ```
 
 Or via Docker:
 
 ```
-MSHIP_PLUGINS=kokoro
+MSHIP_PLUGINS=kokoroonnx
 ```
 
 ## Requirements
@@ -26,7 +26,7 @@ models:
     model: hexgrad/Kokoro-82M
     usecase: tts
     loader: custom
-    plugin: kokoro
+    plugin: kokoroonnx
     num_gpus: 0.07
     plugin_config:
       onnx_provider: CUDAExecutionProvider
@@ -47,7 +47,7 @@ models:
     model: hexgrad/Kokoro-82M
     usecase: tts
     loader: custom
-    plugin: kokoro
+    plugin: kokoroonnx
     num_gpus: 0
     num_cpus: 1
     plugin_config:

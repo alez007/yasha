@@ -1,6 +1,6 @@
 # Full AI stack on a single GPU: chat + TTS + STT + embeddings + image gen.
 # Tune num_gpus fractions to fit your VRAM budget.
-# Plugins (Kokoro) require `MSHIP_PLUGINS=kokoro` or `uv sync --extra kokoro`.
+# Plugins (Kokoro ONNX) require `MSHIP_PLUGINS=kokoroonnx` or `uv sync --extra kokoroonnx`.
 
 models:
   - name: "llm"
@@ -17,7 +17,7 @@ models:
     model: "hexgrad/Kokoro-82M"
     usecase: "tts"
     loader: "custom"
-    plugin: "kokoro"
+    plugin: "kokoroonnx"
     num_gpus: 0.07
     plugin_config:
       onnx_provider: "CUDAExecutionProvider"

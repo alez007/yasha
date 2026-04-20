@@ -14,7 +14,7 @@ The recommended way to develop Modelship is with VS Code Dev Containers. The con
 
    ```bash
    export HF_TOKEN=your_token_here
-   export MSHIP_PLUGINS=kokoro  # optional — comma-separated list of plugins to install
+   export MSHIP_PLUGINS=kokoroonnx  # optional — comma-separated list of plugins to install
    ```
 
 2. Open the repo in VS Code and run **Dev Containers: Reopen in Container** from the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
@@ -67,7 +67,7 @@ The following environment variables are set in the dev image with sensible defau
 Plugin packages (e.g. `kokoro_onnx`, `onnxruntime`) are only installed when their extra is enabled. If you're working on a plugin and want full IntelliSense, sync the extras inside the container:
 
 ```bash
-uv sync --extra kokoro --extra dev
+uv sync --extra kokoroonnx --extra dev
 ```
 
 ## Manual setup (without Dev Containers)
@@ -94,7 +94,7 @@ The dev image does not bake in source files. Mount the repo root so changes take
 ```bash
 docker run -it --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token_here \
-  -e MSHIP_PLUGINS=kokoro \
+  -e MSHIP_PLUGINS=kokoroonnx \
   -e RAY_HEAD_GPU_NUM=1 \
   --mount type=bind,src=./,dst=/modelship \
   -v ./models-cache:/.cache \

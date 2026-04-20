@@ -21,9 +21,10 @@ conflicts = [[
 [manifest]
 members = [
     "bark",
-    "kokoro",
+    "kokoroonnx",
     "modelship",
     "orpheus",
+    "whispercpp",
 ]
 
 [[package]]
@@ -1247,27 +1248,6 @@ wheels = [
 ]
 
 [[package]]
-name = "kokoro"
-version = "0.1.0"
-source = { editable = "plugins/kokoro" }
-dependencies = [
-    { name = "kokoro-onnx", extra = ["gpu"] },
-    { name = "modelship" },
-    { name = "numpy" },
-    { name = "onnxruntime-gpu" },
-    { name = "scipy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "kokoro-onnx", extras = ["gpu"], specifier = ">=0.4.9" },
-    { name = "modelship", editable = "." },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "onnxruntime-gpu", specifier = ">=1.20.1" },
-    { name = "scipy", specifier = ">=1.16.1" },
-]
-
-[[package]]
 name = "kokoro-onnx"
 version = "0.4.9"
 source = { registry = "https://pypi.org/simple" }
@@ -1286,6 +1266,27 @@ wheels = [
 [package.optional-dependencies]
 gpu = [
     { name = "onnxruntime-gpu", marker = "(platform_machine == 'x86_64' and sys_platform != 'darwin') or (platform_machine != 'x86_64' and extra == 'extra-9-modelship-cpu' and extra == 'extra-9-modelship-gpu') or (sys_platform == 'darwin' and extra == 'extra-9-modelship-cpu' and extra == 'extra-9-modelship-gpu')" },
+]
+
+[[package]]
+name = "kokoroonnx"
+version = "0.1.0"
+source = { editable = "plugins/kokoroonnx" }
+dependencies = [
+    { name = "kokoro-onnx", extra = ["gpu"] },
+    { name = "modelship" },
+    { name = "numpy" },
+    { name = "onnxruntime-gpu" },
+    { name = "scipy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "kokoro-onnx", extras = ["gpu"], specifier = ">=0.4.9" },
+    { name = "modelship", editable = "." },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "onnxruntime-gpu", specifier = ">=1.20.1" },
+    { name = "scipy", specifier = ">=1.16.1" },
 ]
 
 [[package]]
@@ -1537,6 +1538,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "ray", extra = ["data", "default", "serve-grpc"] },
     { name = "requests" },
+    { name = "scipy" },
     { name = "soundfile" },
 ]
 
@@ -1571,8 +1573,8 @@ gpu = [
     { name = "transformers" },
     { name = "vllm", extra = ["audio"], marker = "extra == 'extra-9-modelship-gpu'" },
 ]
-kokoro = [
-    { name = "kokoro" },
+kokoroonnx = [
+    { name = "kokoroonnx" },
 ]
 orpheus = [
     { name = "orpheus" },
@@ -1580,6 +1582,9 @@ orpheus = [
 otel = [
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-sdk" },
+]
+whispercpp = [
+    { name = "whispercpp" },
 ]
 
 [package.metadata]
@@ -1592,7 +1597,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "flashinfer-python", marker = "extra == 'gpu'", specifier = ">=0.6.1" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "kokoro", marker = "extra == 'kokoro'", editable = "plugins/kokoro" },
+    { name = "kokoroonnx", marker = "extra == 'kokoroonnx'", editable = "plugins/kokoroonnx" },
     { name = "librosa", specifier = ">=0.11.0" },
     { name = "llama-cpp-python", marker = "extra == 'cpu'", specifier = ">=0.3.6" },
     { name = "llama-cpp-python", marker = "extra == 'gpu'", specifier = ">=0.3.6" },
@@ -1610,6 +1615,7 @@ requires-dist = [
     { name = "ray", extras = ["data", "default", "serve-grpc"], specifier = ">=2.51.1" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
+    { name = "scipy", specifier = ">=1.16.1" },
     { name = "sentence-transformers", marker = "extra == 'cpu'", specifier = ">=3.0.0" },
     { name = "sentence-transformers", marker = "extra == 'gpu'", specifier = ">=3.0.0" },
     { name = "soundfile", specifier = ">=0.13.0" },
@@ -1621,8 +1627,9 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'gpu'", specifier = ">=4.57.5" },
     { name = "vllm", marker = "extra == 'gpu'", specifier = "==0.18.0" },
     { name = "vllm", extras = ["audio"], marker = "extra == 'gpu'", specifier = "==0.18.0" },
+    { name = "whispercpp", marker = "extra == 'whispercpp'", editable = "plugins/whispercpp" },
 ]
-provides-extras = ["gpu", "cpu", "kokoro", "bark", "orpheus", "otel", "dev"]
+provides-extras = ["gpu", "cpu", "kokoroonnx", "bark", "orpheus", "whispercpp", "otel", "dev"]
 
 [[package]]
 name = "mpmath"
@@ -2974,6 +2981,27 @@ wheels = [
 ]
 
 [[package]]
+name = "pywhispercpp"
+version = "1.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "platformdirs" },
+    { name = "requests" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f6/7d/fe4b2b190d6cdcf0d5e4ca2b946d73bc449a586606a24d25ff50ffec5a5c/pywhispercpp-1.4.1.tar.gz", hash = "sha256:520ce9275bb6fc81e0daa2e08144a80ee006b117a18058a77860c5b1c9c122f4", size = 1812704, upload-time = "2025-12-30T03:02:12.54Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/93/81/a4ca043b96a1cd05659af556223de31ce336f5c88f1decd9ca4def8b8f42/pywhispercpp-1.4.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:92168783736e23e9e274e4496024a7a25d670601a130a35befd627b6f717a98a", size = 2207307, upload-time = "2025-12-30T03:01:22.876Z" },
+    { url = "https://files.pythonhosted.org/packages/77/63/7f3f7af598bfaa0fd4836cbd16716a7098c521a76404d5f7bac6211ec725/pywhispercpp-1.4.1-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ed46e7469feaad4a03e25a9f75fe54da791d161489ca02c160540135f21ac481", size = 2378182, upload-time = "2025-12-30T03:01:24.115Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/5f/6ad9e807bf705c053a87078aec118f1d154247418a592a2ac0a7622b0539/pywhispercpp-1.4.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:aef812596e4726a76c8b5a090d3e4f0ad9e2ebc70f004164ec754a60aaf56446", size = 2630413, upload-time = "2025-12-30T03:01:25.915Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/06/9dac4ebee6fb436650965161082e7de674c68a959fd4ee530cbb231eb4f4/pywhispercpp-1.4.1-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:b0dd76b28359f7cb82b999627acd4b6a6c1f7aa8106810601d80712d873e3f90", size = 3285003, upload-time = "2025-12-30T03:01:27.676Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/91/72c3b3f85239816d5414b12b190b474e9e7e37472fb0b1cfdff75d42448b/pywhispercpp-1.4.1-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:8f7f2cd5a0f876134d7ee85c7603e55d0df830ca2e8d910cc11d7e8c0423b739", size = 3556791, upload-time = "2025-12-30T03:01:29.417Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/77/bc7c07353afcf31c81817fcced7a09457aadfe2f825d6243664189955715/pywhispercpp-1.4.1-cp312-cp312-win32.whl", hash = "sha256:dfe69c89c830aad506685c460d5115e6a52159150b86ee2b9a2618e7786767be", size = 1041447, upload-time = "2025-12-30T03:01:30.686Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/b0/ffcb3e797d80b02e77a174e60f80cd94e851491647e64227ca76b4e2bcf8/pywhispercpp-1.4.1-cp312-cp312-win_amd64.whl", hash = "sha256:4beb57ec35dc0457188470ab4ef673620ce9a49a99ddecd0ae76567986dba908", size = 1222302, upload-time = "2025-12-30T03:01:32.631Z" },
+]
+
+[[package]]
 name = "pywin32"
 version = "311"
 source = { registry = "https://pypi.org/simple" }
@@ -4151,6 +4179,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/91/d6/7d4553ad4bf1c0421e1ebd4b18de5d9098383b5caa1d937b63df8d04b565/websockets-16.0-cp312-cp312-win32.whl", hash = "sha256:eaded469f5e5b7294e2bdca0ab06becb6756ea86894a47806456089298813c89", size = 178261, upload-time = "2026-01-10T09:22:56.251Z" },
     { url = "https://files.pythonhosted.org/packages/c3/f0/f3a17365441ed1c27f850a80b2bc680a0fa9505d733fe152fdf5e98c1c0b/websockets-16.0-cp312-cp312-win_amd64.whl", hash = "sha256:5569417dc80977fc8c2d43a86f78e0a5a22fee17565d78621b6bb264a115d4ea", size = 178693, upload-time = "2026-01-10T09:22:57.478Z" },
     { url = "https://files.pythonhosted.org/packages/6f/28/258ebab549c2bf3e64d2b0217b973467394a9cea8c42f70418ca2c5d0d2e/websockets-16.0-py3-none-any.whl", hash = "sha256:1637db62fad1dc833276dded54215f2c7fa46912301a24bd94d45d46a011ceec", size = 171598, upload-time = "2026-01-10T09:23:45.395Z" },
+]
+
+[[package]]
+name = "whispercpp"
+version = "0.1.0"
+source = { editable = "plugins/whispercpp" }
+dependencies = [
+    { name = "modelship" },
+    { name = "pywhispercpp" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "modelship", editable = "." },
+    { name = "pywhispercpp", specifier = ">=1.3.0" },
 ]
 
 [[package]]

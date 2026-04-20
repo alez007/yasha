@@ -58,7 +58,7 @@ Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/i
 | **llama.cpp** | High-efficiency quantized GGUF models (chat, embeddings) | No |
 | **Transformers** | Chat, embeddings, transcription, TTS on CPU or lightweight GPU | No |
 | **Diffusers** | Image generation | Yes |
-| **Custom (plugins)** | TTS backends (Kokoro, Bark, Orpheus) | No |
+| **Custom (plugins)** | TTS backends (Kokoro ONNX, Bark, Orpheus), STT backends (whisper.cpp) | No |
 
 Models can be deployed across multiple GPUs, run on CPU-only, or both — multiple deployments of the same model (e.g. one on GPU via vLLM, one on CPU via Transformers) are load-balanced with round-robin routing. Each deployment can also scale horizontally with `num_replicas`.
 ...
@@ -79,7 +79,7 @@ Models can be deployed across multiple GPUs, run on CPU-only, or both — multip
 - **OpenAI-compatible API** — drop-in replacement for any OpenAI SDK client
 - **Streaming** — SSE streaming for chat completions and TTS audio
 - **Tool/function calling** — auto tool choice with configurable parsers
-- **Plugin system** — opt-in TTS backends installed as isolated uv workspace packages
+- **Plugin system** — opt-in TTS and STT backends installed as isolated uv workspace packages
 - **Multi-GPU & hybrid routing** — assign models to specific GPUs or run them on CPU-only; deploy the same model on both GPU and CPU and requests are load-balanced via round-robin; full tensor parallelism support for large models spanning multiple GPUs
 - **Client disconnect detection** — cancels in-flight inference when the client disconnects, freeing GPU resources immediately
 - **Prometheus metrics & Grafana dashboard** — built-in observability with custom `modelship:*` metrics, vLLM engine stats, and Ray cluster metrics on a single scrape endpoint; pre-built Grafana dashboard included
@@ -161,19 +161,26 @@ Hitting an error? Check [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Plugin Support
 
-Modelship's TTS system is built around a plugin architecture — each TTS backend is an opt-in package with its own isolated dependencies. Plugins ship inside this repo (`plugins/`) or can be installed from PyPI.
+Modelship's TTS and STT systems are built around a plugin architecture — each backend is an opt-in package with its own isolated dependencies. Plugins ship inside this repo (`plugins/`) or can be installed from PyPI.
+
+Built-in plugins:
+
+- [Kokoro ONNX](plugins/kokoroonnx/README.md) — lightweight TTS via ONNX Runtime (CPU or GPU)
+- [Bark](plugins/bark/README.md) — multilingual TTS by Suno (GPU recommended)
+- [Orpheus](plugins/orpheus/README.md) — expressive TTS
+- [whisper.cpp](plugins/whispercpp/README.md) — CPU-only STT via `pywhispercpp`
 
 To enable plugins, pass them as extras at sync time:
 
 ```bash
-uv sync --extra kokoro
-uv sync --extra kokoro --extra orpheus  # multiple plugins
+uv sync --extra kokoroonnx
+uv sync --extra kokoroonnx --extra whispercpp  # multiple plugins
 ```
 
 When using Docker, set the `MSHIP_PLUGINS` environment variable:
 
 ```
-MSHIP_PLUGINS=kokoro,orpheus
+MSHIP_PLUGINS=kokoroonnx,whispercpp
 ```
 
 For a full guide on writing your own plugin, see [Plugin Development](docs/plugins.md).
@@ -183,7 +190,7 @@ For a full guide on writing your own plugin, see [Plugin Development](docs/plugi
 - [Development](docs/development.md) — dev environment setup, building, and running locally
 - [Model Configuration](docs/model-configuration.md) — full `models.yaml` reference, GPU pinning, environment variables
 - [Architecture](docs/architecture.md) — system design, request lifecycle, plugin loading
-- [Plugin Development](docs/plugins.md) — writing custom TTS backends
+- [Plugin Development](docs/plugins.md) — writing custom TTS/STT backends
 - [Home Assistant Integration](docs/home-assistant.md) — Wyoming protocol setup for voice automation
 - [Monitoring & Logging](docs/monitoring.md) — Prometheus metrics, Grafana dashboard, structured logging, health checks
 - [Troubleshooting](docs/troubleshooting.md) — common first-run errors and fixes
