@@ -72,6 +72,41 @@ class TestAddModels:
         assert "qwen" not in api.models
         assert len(api.model_list) == 0
 
+    @pytest.mark.asyncio
+    async def test_records_per_model_load_times_and_ready_timestamp(self, api):
+        await api.set_expected_models(["qwen", "kokoro"])
+        assert api._expected_set_at is not None
+        assert api._all_ready_at is None
+
+        mock_handle = MagicMock()
+        with patch("modelship.openai.api.serve.get_app_handle", return_value=mock_handle):
+            await api.add_models({"qwen-a3f9k": "qwen"})
+            assert "qwen" in api._model_load_times
+            assert api._model_load_times["qwen"] >= 0
+            assert api._all_ready_at is None
+
+            await api.add_models({"kokoro-c1m4n": "kokoro"})
+            assert "kokoro" in api._model_load_times
+            assert api._all_ready_at is not None
+
+    @pytest.mark.asyncio
+    async def test_status_body_ready_flag(self, api):
+        await api.set_expected_models(["qwen"])
+        body = api._status_body()
+        assert body["ready"] is False
+        assert body["models_pending"] == ["qwen"]
+        assert body["time_to_ready_s"] is None
+
+        mock_handle = MagicMock()
+        with patch("modelship.openai.api.serve.get_app_handle", return_value=mock_handle):
+            await api.add_models({"qwen-a3f9k": "qwen"})
+
+        body = api._status_body()
+        assert body["ready"] is True
+        assert body["models_pending"] == []
+        assert body["time_to_ready_s"] is not None
+        assert "qwen" in body["model_load_times_s"]
+
 
 class TestGetHandle:
     @pytest.mark.asyncio

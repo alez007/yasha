@@ -269,6 +269,28 @@ def main(argv: list[str] | None = None):
     signal.signal(signal.SIGTERM, _cleanup)
 
     try:
+        # Start the gateway FIRST on fresh install so /health, /v1/models, and
+        # /readyz are reachable while models are still loading. Models register
+        # with the gateway as they come up (incremental add_models calls).
+        if fresh_install:
+            logger.info("Starting API gateway...")
+            serve.run(
+                ModelshipAPI.options(
+                    name=gateway_name,
+                    num_replicas=1,
+                    ray_actor_options={"num_cpus": 0},
+                ).bind(),
+                name=gateway_name,
+                route_prefix="/",
+            )
+            logger.info("Gateway up — /health and /readyz now serving.")
+
+        gateway_handle = serve.get_app_handle(gateway_name)
+        try:
+            gateway_handle.set_expected_models.remote([c.name for c in sorted_models]).result()
+        except Exception:
+            logger.exception("Failed to seed expected model list on gateway (non-fatal).")
+
         # Deploy models one at a time. serve.run() blocks until the deployment reaches
         # RUNNING, ensuring each model fully initialises (and releases its load-time
         # memory spike) before the next one starts.
@@ -291,23 +313,11 @@ def main(argv: list[str] | None = None):
             )
             logger.info("Model ready: %s (deployment: %s)", config.name, deployment_name)
 
-        # Ensure the gateway is running, then register the new models with it.
-        if fresh_install:
-            logger.info("Starting API gateway...")
-            serve.run(
-                ModelshipAPI.options(
-                    name=gateway_name,
-                    num_replicas=1,
-                    ray_actor_options={"num_cpus": 0},
-                ).bind(),
-                name=gateway_name,
-                route_prefix="/",
-            )
-
-        if deployed_this_run:
-            gateway_handle = serve.get_app_handle(gateway_name)
-            gateway_handle.add_models.remote(deployed_this_run).result()
-            logger.info("Registered %d deployment(s) with gateway.", len(deployed_this_run))
+            # Register immediately so /v1/models reflects progress.
+            try:
+                gateway_handle.add_models.remote({deployment_name: config.name}).result()
+            except Exception:
+                logger.exception("Failed to register %s with gateway", deployment_name)
 
         logger.info("Deploy complete. %d new deployment(s) from this run.", len(deployed_this_run))
 

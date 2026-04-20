@@ -238,14 +238,37 @@ All thresholds are starting points. Adjust based on your deployment:
 - **TTFT**: 5s is generous. For interactive chat, consider 2-3s.
 - **GPU memory**: 1 GB threshold assumes you're not running anything else on the GPU. Raise if you have shared workloads.
 
-## Health Check
+## Health and readiness
 
-A health endpoint is always available regardless of the metrics toggle:
+Two endpoints are always available regardless of the metrics toggle.
+
+**`/health`** — cheap liveness probe. Returns 200 as soon as the gateway is up (before model deployments finish):
 
 ```bash
 curl http://localhost:8000/health
-# {"status": "ok"}
+# {"status": "ok", "uptime_s": 12.3}
 ```
+
+**`/status`** — readiness + timing. Returns 200 when every expected model has a registered deployment; 503 with the same JSON body while any model is still pending. Bodies carry full state so a single poll tells you what's loaded, what's outstanding, and how long each model took to come up:
+
+```bash
+curl http://localhost:8000/status
+# 200 when ready:
+# {
+#   "status": "ok",
+#   "ready": true,
+#   "uptime_s": 420.5,
+#   "time_to_ready_s": 215.3,
+#   "models_loaded":   ["kokoro", "llm", "nomic-embed", "whisper"],
+#   "models_expected": ["llm", "kokoro", "whisper", "nomic-embed"],
+#   "models_pending":  [],
+#   "model_load_times_s": {"llm": 50.2, "kokoro": 8.1, "whisper": 120.5, "nomic-embed": 36.5}
+# }
+```
+
+Per-model timings are gateway-measured: the gap between one model registering and the next (models deploy sequentially in `start.py`), so the first model's entry includes any framework-level setup time preceding it.
+
+Use `/health` for Kubernetes liveness probes and `/status` for readiness probes — `/status` returning 503 prevents a service from flipping traffic onto the pod before models are loaded.
 
 ## Modelship Metrics Reference
 
