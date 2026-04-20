@@ -1,0 +1,76 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+`AGENTS.md` is the canonical operational guide — read it first for toolchain, commands, gotchas, release flow, and plugin authoring. This file summarizes the points most often needed mid-task.
+
+## Toolchain essentials
+
+- Python is pinned exactly to `3.12.10` (not `>=`). Dependency manager is **uv** with a workspace; `plugins/*` are workspace members. Never use `pip install`.
+- `gpu` and `cpu` extras are **mutually exclusive** (declared in `[tool.uv] conflicts`) — `torch`/`torchvision` come from different indexes per extra.
+- Line length is **120**, not 88. Ruff owns formatting (`E501` disabled); don't hand-sort imports (isort via `I` rule handles it). `plugins/*` are third-party to isort; `modelship` is first-party.
+- Pyright runs in `basic` mode, scoped to `modelship`, `plugins`, `start.py`. Pre-commit only runs ruff — don't rely on it to catch type errors.
+
+## Common commands
+
+```bash
+# Install (choose gpu XOR cpu, plus dev, plus optional plugin extras)
+uv sync --extra dev --extra gpu                        # what CI uses
+uv sync --extra dev --extra cpu --extra kokoroonnx     # CPU + a plugin
+
+make lint        # ruff check + ruff format --check + pyright — all three MUST pass
+make lint-fix    # auto-fix ruff issues
+make test        # uv run pytest tests/ -v
+
+# Single test
+uv run pytest tests/test_config.py::TestLlamaCppConfig::test_defaults -v
+```
+
+CI mirrors `make lint` + `pytest tests/ -v`. Match it locally before pushing.
+
+## Running the server
+
+`start.py` is the entry point (not a console script, not `python -m`). It:
+
+1. Reads `config/models.yaml` (gitignored — copy from `config/examples/`; `start.py` errors out pointing there if missing).
+2. Connects to a **running** Ray cluster (`ray.init(address="auto")`). Outside Docker you must `ray start --head ...` first.
+3. Deploys models **additively** by default (each gets a random suffix like `qwen-a3f9k`). Use `--redeploy` to tear everything down first.
+4. Starts a FastAPI Ray Serve app named `modelship api` on port 8000. Override via `--gateway-name` (multiple gateways can coexist on one cluster).
+
+Docker's `scripts/start.sh` auto-runs `uv sync` (extras chosen from `MSHIP_PLUGINS` + `RAY_HEAD_GPU_NUM`), `ray start`, then `uv run start.py`. The Dev Container overrides this — inside it you must run those steps manually.
+
+## Architecture map
+
+- `start.py` — Ray init + deploy loop. `build_actor_options` has non-obvious GPU allocation for vLLM `tensor_parallel_size > 1` (mp vs ray backend differ; `num_gpus` is sometimes replaced by `VLLM_RAY_PER_WORKER_GPUS`). `llama_cpp` loader is CPU-only — `num_gpus > 0` is silently forced to 0.
+- `modelship/openai/api.py` — FastAPI gateway. Uses `RequestWatcher` + `DisconnectEvent` Ray actor to propagate client disconnects across process boundaries and cancel in-flight inference.
+- `modelship/infer/model_deployment.py` — the single `@serve.deployment` actor class; lazily imports the right backend from `config.loader`.
+- `modelship/infer/infer_config.py` — pydantic config schemas plus `RawRequestProxy` / `DisconnectEvent`. `RawRequestProxy` exists because FastAPI `Request` can't cross Ray process boundaries. **Any new attribute vLLM reads from `raw_request` must be added there.**
+- `modelship/infer/{vllm,transformers,diffusers,llama_cpp,custom}/` — one subdir per loader, each with an `*_infer.py` and (for non-custom) an `openai/` adapter subpackage.
+- `modelship/plugins/base_plugin.py` — `BasePlugin` ABC that each plugin package subclasses as `ModelPlugin`.
+- `plugins/*` — workspace packages, each opt-in via a matching root extra. The plugin module name and extra name **must match** (`ensure_plugin()` does `importlib.import_module(config.plugin)`).
+
+Multiple deployments with the same model name are round-robin load-balanced by the gateway. Each deployment can also scale with `num_replicas` via Ray Serve.
+
+## Tests
+
+Under `tests/`, `pytest-asyncio` for async. Tests **mock out Ray Serve** — they don't spin up a real cluster. Pattern: access the wrapped class via `ModelshipAPI.func_or_class` to bypass the `@serve.deployment` wrapper (see `tests/test_api.py`). There are no GPU/real-model integration tests; keep it that way unless added behind an opt-in marker.
+
+## Releases
+
+`make release-{patch,minor,major}` is the only supported path — refuses off `main` or dirty tree, bumps `pyproject.toml`, runs `uv lock`, generates CHANGELOG from Conventional Commits, commits, tags `vX.Y.Z`, pushes. `release.yml` then publishes Docker + PyPI. **Don't bump versions by hand.** Commit message prefixes (`feat:`, `fix:`, `refactor:|perf:|docs:|chore:|build:|ci:|style:|test:`) are parsed into CHANGELOG sections, so use them.
+
+## Sharp edges
+
+- `vllm==0.18.0` is pinned. Don't bump casually — TP scheduling in `start.py:build_actor_options` is tied to its behaviour.
+- Metrics live on port **8079** (not 8000). `MSHIP_METRICS=false` or `--no-metrics` disables.
+- `TRACE` is a custom log level below `DEBUG`; it logs full request/response payloads.
+- Docker CPU image is a separate `Dockerfile.cpu` with `:latest-cpu` tag suffix.
+
+## Further reading
+
+- `AGENTS.md` — the full operational guide
+- `docs/architecture.md` — request lifecycle, loaders, plugin system
+- `docs/development.md` — dev-container + manual-Docker setup, env vars
+- `docs/model-configuration.md` — `models.yaml` reference
+- `docs/plugins.md` — plugin authoring
+- `config/examples/` — working `models.yaml` files for each backend

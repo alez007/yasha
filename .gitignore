@@ -6,4 +6,5 @@ __pycache__
 *.DS_Store
 .cache
 local_models
+models-cache
 config/models.yaml
