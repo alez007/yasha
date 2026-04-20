@@ -299,9 +299,10 @@ models:
 The `custom` loader delegates to a plugin module. The `plugin` field is required and must match an installed plugin package. Plugin-specific options are passed via `plugin_config`.
 
 See each plugin's README for configuration details:
-- [Kokoro TTS](../plugins/kokoro/README.md)
+- [Kokoro ONNX TTS](../plugins/kokoroonnx/README.md)
 - [Bark TTS](../plugins/bark/README.md)
 - [Orpheus TTS](../plugins/orpheus/README.md)
+- [whisper.cpp STT](../plugins/whispercpp/README.md)
 
 For writing your own plugin, see [Plugin Development](plugins.md).
 
@@ -318,7 +319,7 @@ models:
     model: "hexgrad/Kokoro-82M"
     usecase: "tts"
     loader: "custom"
-    plugin: "kokoro"
+    plugin: "kokoroonnx"
     num_gpus: 0.07
     num_replicas: 2
     plugin_config:
@@ -329,7 +330,7 @@ models:
     model: "hexgrad/Kokoro-82M"
     usecase: "tts"
     loader: "custom"
-    plugin: "kokoro"
+    plugin: "kokoroonnx"
     num_gpus: 0
     plugin_config:
       onnx_provider: "CPUExecutionProvider"
@@ -342,7 +343,7 @@ In this example, requests to model `kokoro` are distributed across three backend
 | Variable | Description | Default |
 |---|---|---|
 | `HF_TOKEN` | HuggingFace access token | — |
-| `MSHIP_PLUGINS` | Comma-separated list of plugins to install at startup (e.g. `kokoro,orpheus`) | — |
+| `MSHIP_PLUGINS` | Comma-separated list of plugins to install at startup (e.g. `kokoroonnx,whispercpp`) | — |
 | `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace + plugins) | `/.cache` |
 | `MSHIP_GATEWAY_NAME` | Name for the API gateway app | `modelship api` |
 | `MSHIP_MAX_REQUEST_BODY_BYTES` | Maximum allowed request body size in bytes | `52428800` (50 MB) |

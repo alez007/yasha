@@ -1,8 +1,3 @@
-import io
-
-import librosa
-import numpy as np
-import soundfile as sf
 from transformers import Pipeline
 
 from modelship.infer.base_infer import MINIMAL_WAV
@@ -21,22 +16,15 @@ from modelship.openai.protocol import (
     create_error_response,
 )
 from modelship.utils import base_request_id
+from modelship.utils.audio import decode_audio
+
+
+def _pipeline_input(audio_data: bytes, target_sr: int) -> tuple[dict, int]:
+    samples, duration_seconds = decode_audio(audio_data, target_sr)
+    return {"raw": samples, "sampling_rate": target_sr}, duration_seconds
+
 
 logger = get_logger("infer.transformers.transcription")
-
-
-def _decode_audio(audio_data: bytes, target_sr: int) -> tuple[dict, int]:
-    """Decode audio bytes and resample to *target_sr*.
-
-    Returns the pipeline input dict and the duration in whole seconds.
-    """
-    samples, source_sr = sf.read(io.BytesIO(audio_data), dtype="float32")
-    if samples.ndim > 1:
-        samples = np.mean(samples, axis=1)
-    duration_seconds = int(len(samples) / source_sr)
-    if source_sr != target_sr:
-        samples = librosa.resample(samples, orig_sr=source_sr, target_sr=target_sr)
-    return {"raw": samples, "sampling_rate": target_sr}, duration_seconds
 
 
 class OpenAIServingTranscription(OpenAIServing):
@@ -53,7 +41,7 @@ class OpenAIServingTranscription(OpenAIServing):
 
     async def warmup(self) -> None:
         logger.info("Warming up transcription model: %s", self.model_name)
-        audio_input, _ = _decode_audio(MINIMAL_WAV, self._target_sr)
+        audio_input, _ = _pipeline_input(MINIMAL_WAV, self._target_sr)
         await self.run_in_executor(self._run, audio_input, None)
         logger.info("Warmup transcription done for %s", self.model_name)
 
@@ -68,7 +56,7 @@ class OpenAIServingTranscription(OpenAIServing):
         )
 
         try:
-            audio_input, duration_seconds = _decode_audio(audio_data, self._target_sr)
+            audio_input, duration_seconds = _pipeline_input(audio_data, self._target_sr)
             result = await self.run_in_executor(self._run, audio_input, language)
         except Exception:
             logger.exception("transcription inference failed for %s", request_id)
@@ -104,7 +92,7 @@ class OpenAIServingTranslation(OpenAIServing):
 
     async def warmup(self) -> None:
         logger.info("Warming up translation model: %s", self.model_name)
-        audio_input, _ = _decode_audio(MINIMAL_WAV, self._target_sr)
+        audio_input, _ = _pipeline_input(MINIMAL_WAV, self._target_sr)
         await self.run_in_executor(self._run, audio_input)
         logger.info("Warmup translation done for %s", self.model_name)
 
@@ -116,7 +104,7 @@ class OpenAIServingTranslation(OpenAIServing):
         logger.log(TRACE, "translation request %s: audio_bytes=%d", request_id, len(audio_data))
 
         try:
-            audio_input, _ = _decode_audio(audio_data, self._target_sr)
+            audio_input, _ = _pipeline_input(audio_data, self._target_sr)
             result = await self.run_in_executor(self._run, audio_input)
         except Exception:
             logger.exception("translation inference failed for %s", request_id)

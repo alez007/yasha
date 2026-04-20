@@ -7,7 +7,7 @@ Modelship is built on [Ray Serve](https://docs.ray.io/en/latest/serve/) for depl
 - **[vLLM](https://github.com/vllm-project/vllm)** — high-throughput GPU inference with continuous batching and PagedAttention
 - **[HuggingFace Transformers](https://github.com/huggingface/transformers)** — CPU and lightweight GPU inference for chat, embeddings, transcription, and TTS
 - **[HuggingFace Diffusers](https://github.com/huggingface/diffusers)** — image generation via `AutoPipelineForText2Image`
-- **Plugin system** — custom TTS backends (Kokoro, Bark, Orpheus)
+- **Plugin system** — custom TTS and STT backends (Kokoro ONNX, Bark, Orpheus, whisper.cpp)
 
 ## Request Lifecycle
 
@@ -40,7 +40,7 @@ Each deployment uses one of the following loaders:
 | `llama_cpp` | llama-cpp-python | Chat/generation, embeddings (GGUF models) | No — currently CPU-only |
 | `transformers` | PyTorch + HuggingFace | Chat/generation, embeddings, transcription, translation, TTS | No — runs on CPU or GPU |
 | `diffusers` | HuggingFace Diffusers | Image generation (any `AutoPipelineForText2Image` model) | Yes |
-| `custom` | Plugin system | TTS backends (Kokoro, Bark, Orpheus) | No |
+| `custom` | Plugin system | TTS backends (Kokoro ONNX, Bark, Orpheus), STT backends (whisper.cpp) | No |
 
 The `transformers` loader is ideal for CPU-only deployments, smaller models, or development/testing without a GPU. It uses HuggingFace `pipeline()` under the hood and handles audio resampling automatically for speech-to-text models. The `llama_cpp` loader provides high-efficiency inference for quantized GGUF models on CPU. The `vllm` loader provides higher throughput on GPU with continuous batching and PagedAttention.
 
@@ -50,12 +50,12 @@ Ray automatically schedules model deployments across available GPUs based on the
 
 ## Plugin System
 
-TTS backends are isolated `uv` workspace packages under `plugins/`. Each plugin:
+Custom backends are isolated `uv` workspace packages under `plugins/`. Each plugin:
 
-- Implements `BasePlugin` with `start()` and `generate()` methods
+- Implements `BasePlugin` and overrides the `create_*` method(s) matching its `usecase` (e.g. `create_speech` for TTS, `create_transcription` for STT)
 - Has its own dependencies, isolated from the main project
 - Is opt-in via `uv sync --extra <plugin>` or the `MSHIP_PLUGINS` env var
-- Returns audio as a single response or as an SSE async generator
+- Returns raw, protocol-agnostic outputs; OpenAI-shape adaptation is handled by the serving wrappers in `modelship/infer/custom/openai/`
 
 See [Plugin Development](plugins.md) for details.
 

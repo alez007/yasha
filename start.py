@@ -298,7 +298,7 @@ def main(argv: list[str] | None = None):
                 ModelshipAPI.options(
                     name=gateway_name,
                     num_replicas=1,
-                    ray_actor_options={"num_cpus": 1},
+                    ray_actor_options={"num_cpus": 0},
                 ).bind(),
                 name=gateway_name,
                 route_prefix="/",

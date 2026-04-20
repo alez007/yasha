@@ -1,5 +1,5 @@
-# Kokoro TTS plugin — install with `uv sync --extra kokoro`
-# or set MSHIP_PLUGINS=kokoro for Docker.
+# Kokoro ONNX TTS plugin — install with `uv sync --extra kokoroonnx`
+# or set MSHIP_PLUGINS=kokoroonnx for Docker.
 #
 # The same model name can appear twice with different configs; requests are
 # load-balanced round-robin across all matching deployments.
@@ -10,7 +10,7 @@ models:
     model: "hexgrad/Kokoro-82M"
     usecase: "tts"
     loader: "custom"
-    plugin: "kokoro"
+    plugin: "kokoroonnx"
     num_gpus: 0.07
     num_replicas: 3
     plugin_config:
@@ -21,7 +21,7 @@ models:
     model: "hexgrad/Kokoro-82M"
     usecase: "tts"
     loader: "custom"
-    plugin: "kokoro"
+    plugin: "kokoroonnx"
     num_gpus: 0
     num_cpus: 1
     num_replicas: 1

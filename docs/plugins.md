@@ -1,18 +1,27 @@
 # Plugin Development
 
-Plugins are Python packages that extend Modelship with new TTS backends. Each plugin is a self-contained uv workspace package with its own dependencies, installed on demand.
+Plugins are Python packages that extend Modelship with custom inference backends. Each plugin is a self-contained uv workspace package with its own dependencies, installed on demand.
+
+Plugins can implement any usecase — TTS, STT, chat, embeddings, translation, image generation — not just speech synthesis.
 
 ## How plugins work
 
 When `loader: custom` is set in `models.yaml`, Modelship imports the module named by `plugin` and expects it to expose a `ModelPlugin` class extending `BasePlugin`.
 
-`BasePlugin` requires three methods:
+A plugin overrides only the `create_*` method(s) matching its `usecase`:
 
-| Method | Description |
-|---|---|
-| `__init__(model_config: ModelshipModelConfig)` | Initialize the plugin; store config and set up state |
-| `async start()` | Load models into memory; called once before the first request |
-| `async generate(input, voice, request_id, stream_format)` | Generate audio; return a `RawSpeechResponse` or an SSE `AsyncGenerator[str, None]` |
+| Usecase | Method to override | Raw return type |
+|---|---|---|
+| `tts` | `create_speech` | `RawSpeechResponse` or `AsyncGenerator[(bytes, int), None]` |
+| `transcription` | `create_transcription` | `RawTranscription` |
+| `translation` | `create_translation` | `RawTranslation` |
+| `generate` | `create_chat_completion` | `RawChatCompletion` or `AsyncGenerator[RawChatDelta, None]` |
+| `embed` | `create_embedding` | `list[list[float]]` |
+| `image` | `create_image_generation` | `list[bytes]` (PNG-encoded) |
+
+Plugins return protocol-agnostic raw outputs. The serving wrappers in `modelship/infer/custom/openai/` translate these into OpenAI-compatible responses, so a different protocol adapter (e.g. Anthropic, gRPC) could be added later without touching any plugin.
+
+Unimplemented methods fall back to a 404 "plugin does not support this action" error.
 
 ## Creating a plugin
 
@@ -33,18 +42,31 @@ plugins/
 [project]
 name = "myplugin"
 version = "0.1.0"
+requires-python = "==3.12.10"
 dependencies = [
     "modelship",
     # your plugin's dependencies
 ]
+
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+modelship = { workspace = true }
+
+[tool.uv.build-backend]
+module-name = "myplugin"
+module-root = ""
 ```
 
 ### 3. Implement `ModelPlugin`
 
+#### TTS example
+
 ```python
 # plugins/myplugin/myplugin/myplugin.py
 from collections.abc import AsyncGenerator
-from typing import Literal
 
 from modelship.plugins.base_plugin import BasePlugin
 from modelship.infer.infer_config import ModelshipModelConfig
@@ -60,15 +82,43 @@ class ModelPlugin(BasePlugin):
         # load your model here
         pass
 
-    async def generate(
+    async def create_speech(
         self,
         input: str,
-        voice: str,
-        request_id: str,
-        stream_format: Literal["sse", "audio"],
-    ) -> RawSpeechResponse | AsyncGenerator[str, None] | ErrorResponse:
+        voice: str | None = None,
+        speed: float | None = None,
+        stream: bool = False,
+        request_id: str | None = None,
+    ) -> RawSpeechResponse | AsyncGenerator[tuple[bytes, int], None] | ErrorResponse:
         audio_bytes = b"..."  # your synthesis here
         return RawSpeechResponse(audio=audio_bytes)
+```
+
+#### STT example
+
+```python
+from modelship.plugins.base_plugin import BasePlugin
+from modelship.infer.infer_config import ModelshipModelConfig
+from modelship.openai.protocol import ErrorResponse, RawTranscription
+
+
+class ModelPlugin(BasePlugin):
+    def __init__(self, model_config: ModelshipModelConfig):
+        self.model_name = model_config.model
+
+    async def start(self):
+        pass
+
+    async def create_transcription(
+        self,
+        audio_data: bytes,
+        language: str | None = None,
+        prompt: str | None = None,
+        temperature: float | None = None,
+        request_id: str | None = None,
+    ) -> RawTranscription | ErrorResponse:
+        text = "..."  # your transcription here
+        return RawTranscription(text=text, language=language, duration_seconds=0.0)
 ```
 
 ### 4. Export `ModelPlugin` from `__init__.py`
@@ -85,6 +135,9 @@ __all__ = ["ModelPlugin"]
 ```toml
 [project.optional-dependencies]
 myplugin = ["myplugin"]
+
+[tool.uv.sources]
+myplugin = { workspace = true }
 ```
 
 ### 6. Install and configure
@@ -97,29 +150,27 @@ In `models.yaml`:
 
 ```yaml
 - name: myplugin
-  usecase: tts
+  usecase: tts        # or transcription, translation, generate, embed, image
   loader: custom
   plugin: myplugin
   num_gpus: 0.1
 ```
 
-## SSE streaming
+## SSE streaming (TTS)
 
-To support streaming, yield SSE-formatted strings instead of returning a `RawSpeechResponse`:
+For streaming speech, yield `(pcm_bytes, sample_rate)` tuples from an async generator. `pcm_bytes` must be signed 16-bit little-endian mono PCM — the serving wrapper base64-encodes each chunk into SSE `speech.audio.delta` events.
 
 ```python
-async def generate(self, input, voice, request_id, stream_format):
-    if stream_format == "sse":
-        async def _stream():
-            for chunk in self._synthesize_chunks(input):
-                import base64, json
-                b64 = base64.b64encode(chunk).decode()
-                yield f"data: {json.dumps({'type': 'speech.audio.delta', 'audio': b64})}\n\n"
-            yield f"data: {json.dumps({'type': 'speech.audio.done'})}\n\n"
-        return _stream()
-    else:
-        audio = self._synthesize_full(input)
-        return RawSpeechResponse(audio=audio)
+async def create_speech(self, input, voice=None, speed=None, stream=False, request_id=None):
+    if stream:
+        return self._stream(input, voice, speed)
+    # non-stream path
+    audio = self._synthesize_full(input)
+    return RawSpeechResponse(audio=audio)
+
+async def _stream(self, input, voice, speed):
+    for pcm_chunk, sample_rate in self._synthesize_chunks(input):
+        yield pcm_chunk, sample_rate
 ```
 
 ## Plugin README
@@ -131,7 +182,7 @@ Every plugin must include a `README.md` in its package root (`plugins/myplugin/R
 - **Voices / options** — any model-specific choices (voice presets, providers, etc.)
 - **Example request** — a working `curl` command
 
-See the built-in plugins for reference: [Kokoro](../plugins/kokoro/README.md), [Bark](../plugins/bark/README.md), [Orpheus](../plugins/orpheus/README.md).
+See the built-in plugins for reference: [Kokoro ONNX](../plugins/kokoroonnx/README.md), [Bark](../plugins/bark/README.md), [Orpheus](../plugins/orpheus/README.md), [whisper.cpp](../plugins/whispercpp/README.md).
 
 ## Submitting to this repo
 

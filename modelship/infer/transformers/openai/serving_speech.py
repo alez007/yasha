@@ -1,6 +1,3 @@
-import struct
-
-import numpy as np
 from transformers import Pipeline
 
 from modelship.infer.base_serving import OpenAIServing
@@ -13,36 +10,9 @@ from modelship.openai.protocol import (
     create_error_response,
 )
 from modelship.utils import base_request_id
+from modelship.utils.audio import to_wav
 
 logger = get_logger("infer.transformers.speech")
-
-
-def _audio_to_wav(audio: np.ndarray, sampling_rate: int) -> bytes:
-    """Convert a float32 numpy audio array to WAV bytes."""
-    if audio.ndim > 1:
-        audio = audio.squeeze()
-
-    pcm = (audio * 32767).astype(np.int16)
-    data_bytes = pcm.tobytes()
-
-    header = struct.pack(
-        "<4sI4s4sIHHIIHH4sI",
-        b"RIFF",
-        36 + len(data_bytes),
-        b"WAVE",
-        b"fmt ",
-        16,
-        1,  # PCM
-        1,  # mono
-        sampling_rate,
-        sampling_rate * 2,  # byte rate
-        2,  # block align
-        16,  # bits per sample
-        b"data",
-        len(data_bytes),
-    )
-
-    return header + data_bytes
 
 
 class OpenAIServingSpeech(OpenAIServing):
@@ -71,7 +41,7 @@ class OpenAIServingSpeech(OpenAIServing):
             logger.exception("speech inference failed for %s", request_id)
             return create_error_response("speech inference failed")
 
-        wav_bytes = _audio_to_wav(result["audio"], result["sampling_rate"])
+        wav_bytes = to_wav(result["audio"], result["sampling_rate"])
         logger.log(
             TRACE,
             "speech response %s: audio_bytes=%d, sample_rate=%d",

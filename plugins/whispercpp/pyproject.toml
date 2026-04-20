@@ -1,14 +1,11 @@
 [project]
-name = "kokoro"
+name = "whispercpp"
 version = "0.1.0"
-description = "Kokoro ONNX TTS plugin for Modelship"
+description = "whisper.cpp STT plugin for Modelship (via pywhispercpp)"
 requires-python = "==3.12.10"
 dependencies = [
     "modelship",
-    "kokoro-onnx[gpu]>=0.4.9",
-    "numpy>=2.2.6",
-    "onnxruntime-gpu>=1.20.1",
-    "scipy>=1.16.1",
+    "pywhispercpp>=1.3.0",
 ]
 
 [build-system]
@@ -19,6 +16,5 @@ build-backend = "uv_build"
 modelship = { workspace = true }
 
 [tool.uv.build-backend]
-module-name = "kokoro"
+module-name = "whispercpp"
 module-root = ""
-
