@@ -1,6 +1,22 @@
 ARG CUDA_VERSION=12.8.1
 ARG PYTHON_VERSION=3.12.10
 
+# =============================================================================
+# base — minimal runtime OS + uv + non-root user + env vars.
+#
+# CUDA strategy: torch cu128 bundles libcublas/libcudnn/libcurand/libnccl/
+# libnvrtc inside the venv (under site-packages/nvidia/*/lib) and the NVIDIA
+# Container Toolkit provides libcuda.so at run time via --gpus. However, vLLM's
+# C extensions (_C.abi3.so, _moe_C.abi3.so, ...) are built with an RPATH that
+# hard-references /usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.12.
+# Without that file, the vLLM registry subprocess that runs before torch has
+# bootstrapped its dlopen paths crashes with malloc_consolidate/SIGABRT while
+# the dynamic loader resolves symbols. We therefore install ONLY the tiny
+# cuda-cudart runtime package (~800 KB) in the base image. libcublas/cudnn/
+# curand/nvrtc are NOT installed — torch's bundled copies are resolved via its
+# own rpath once Python imports torch, so adding system duplicates is wasted
+# space.
+# =============================================================================
 FROM ubuntu:24.04 AS base
 
 ARG CUDA_VERSION
@@ -9,35 +25,32 @@ ARG UID=1000
 ARG GID=1000
 
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        espeak-ng \
+        gcc \
+        gnupg \
+        gosu \
+        libc6-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Register the NVIDIA CUDA apt repo, install cuda-cudart only, then purge the
+# repo+gnupg so apt metadata doesn't bloat the layer. gcc + libc6-dev stay
+# because torch/triton JIT-compile kernels at model-load time and shell out
+# to $CC; without them, vllm crashes in _inductor with "Failed to find C
+# compiler".
+RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && \
     curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
         | gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
-        > /etc/apt/sources.list.d/cuda.list
-
-RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    espeak-ng \
-    git \
-    gosu
-
-RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && CUDA_MAJOR_VERSION=$(echo $CUDA_VERSION | cut -d. -f1) && \
+        > /etc/apt/sources.list.d/cuda.list && \
     apt-get update -y && \
-    apt-get install -y --no-install-recommends \
-        build-essential \
-        cuda-nvcc-${CUDA_VERSION_DASH} \
-        cuda-cudart-${CUDA_VERSION_DASH} \
-        cuda-nvrtc-${CUDA_VERSION_DASH} \
-        cuda-cuobjdump-${CUDA_VERSION_DASH} \
-        libcurand-dev-${CUDA_VERSION_DASH} \
-        libcublas-${CUDA_VERSION_DASH} \
-        cudnn9-cuda-${CUDA_MAJOR_VERSION}
+    apt-get install -y --no-install-recommends cuda-cudart-${CUDA_VERSION_DASH} && \
+    apt-get purge -y --auto-remove gnupg && \
+    rm -f /etc/apt/sources.list.d/cuda.list /usr/share/keyrings/cuda-keyring.gpg && \
+    rm -rf /var/lib/apt/lists/*
 
-# Create non-root user matching host UID/GID
-# If a group with the target GID already exists (e.g. ubuntu:1000), reuse it;
-# if a user with the target UID already exists, reuse and rename it.
 RUN if ! getent group $GID >/dev/null; then groupadd -g $GID modelship; fi && \
     if ! getent passwd $UID >/dev/null; then useradd -m -u $UID -g $GID modelship; \
     else existing=$(getent passwd $UID | cut -d: -f1) && usermod -l modelship -d /home/modelship -m "$existing"; fi
@@ -45,16 +58,10 @@ RUN if ! getent group $GID >/dev/null; then groupadd -g $GID modelship; fi && \
 ENV MSHIP_UID=$UID
 ENV MSHIP_GID=$GID
 
-# Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV UV_LINK_MODE=copy
 
 WORKDIR /modelship
-
-ADD ./pyproject.toml pyproject.toml
-ADD ./README.md README.md
-ADD ./uv.lock uv.lock
-ADD ./plugins plugins
 
 ENV UV_PROJECT_ENVIRONMENT=/.venv
 ENV VIRTUAL_ENV=/.venv
@@ -69,43 +76,104 @@ ENV MSHIP_METRICS=true
 ENV RAY_METRICS_EXPORT_PORT=8079
 ENV MSHIP_LOG_LEVEL=INFO
 ENV MSHIP_LOG_FORMAT=text
-ARG PYTHON_VERSION
 ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv/python
+ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+
+# onnxruntime-gpu (pulled in by the kokoroonnx plugin) dlopen()s
+# libonnxruntime_providers_cuda.so which has plain DT_NEEDED entries for
+# libcublasLt.so.12 / libcudnn.so.9 / etc. Torch cu128 bundles these under
+# site-packages/nvidia/*/lib and resolves them via its own rpath once imported
+# — but onnxruntime doesn't participate in that. Expose the torch-bundled
+# CUDA libs on LD_LIBRARY_PATH so onnxruntime's CUDA provider can load.
+# Python version is pinned via PYTHON_VERSION (see pyproject.toml); we hard-
+# code 3.12 here because UV_PROJECT_ENVIRONMENT is fixed and the ENV cannot
+# shell-evaluate.
+ENV LD_LIBRARY_PATH="/.venv/lib/python3.12/site-packages/nvidia/cublas/lib:/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/.venv/lib/python3.12/site-packages/nvidia/cufft/lib:/.venv/lib/python3.12/site-packages/nvidia/curand/lib:/.venv/lib/python3.12/site-packages/nvidia/nvjitlink/lib"
+
+RUN mkdir -p /.cache /.venv && chown -R $UID:$GID /modelship /.cache /.venv
+
+# =============================================================================
+# builder — adds build toolchain (nvcc, build-essential, dev headers, git) and
+# re-registers the NVIDIA apt repo so we can pull nvcc / dev headers needed to
+# compile wheels from source (flashinfer, llama-cpp-python, etc.). All of this
+# stays in the builder stage and is NOT copied into prod.
+#
+# The venv is resolved with --extra gpu plus every plugin extra so prod doesn't
+# need network access or a compiler at runtime — scripts/start.sh's uv sync
+# just toggles which plugins are "active" via MSHIP_PLUGINS.
+# =============================================================================
+FROM base AS builder
+
+ARG CUDA_VERSION
+ARG PYTHON_VERSION
+
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends gnupg && \
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
+        | gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
+        > /etc/apt/sources.list.d/cuda.list && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && \
+    apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        git \
+        cuda-nvcc-${CUDA_VERSION_DASH} \
+        cuda-cuobjdump-${CUDA_VERSION_DASH} \
+        libcurand-dev-${CUDA_VERSION_DASH} && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN uv python install ${PYTHON_VERSION}
 RUN uv venv
 
-ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
-
-RUN mkdir -p /.cache && chown -R $UID:$GID /modelship /.cache $UV_PROJECT_ENVIRONMENT
-
-# ---------------------------------------------------------------------------
-# Development target
-# ---------------------------------------------------------------------------
-FROM base AS dev
+ADD --chown=$UID:$GID ./pyproject.toml pyproject.toml
+ADD --chown=$UID:$GID ./README.md README.md
+ADD --chown=$UID:$GID ./uv.lock uv.lock
+ADD --chown=$UID:$GID ./plugins plugins
 
 USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --extra dev --extra gpu
+    uv sync --locked --no-install-project --compile-bytecode \
+        --extra gpu \
+        --extra kokoroonnx \
+        --extra bark \
+        --extra orpheus \
+        --extra whispercpp
+
+# =============================================================================
+# dev — inherits builder (keeps toolchain) and adds dev extras.
+# =============================================================================
+FROM builder AS dev
+
+USER modelship
+
+RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
+    uv sync --locked --no-install-project --compile-bytecode --extra dev --extra gpu
 
 ADD --chown=$UID:$GID ./scripts/start_ray.sh /modelship/scripts/start_ray.sh
 
 CMD ["/bin/bash"]
 
-# ---------------------------------------------------------------------------
-# Production target
-# ---------------------------------------------------------------------------
+# =============================================================================
+# prod — minimal runtime. No build tools. Copies the resolved venv and
+# Python interpreter from builder.
+# =============================================================================
 FROM base AS prod
 
+COPY --from=builder --chown=$UID:$GID /usr/local/uv/python /usr/local/uv/python
+COPY --from=builder --chown=$UID:$GID /.venv /.venv
+
+ADD --chown=$UID:$GID ./pyproject.toml pyproject.toml
+ADD --chown=$UID:$GID ./README.md README.md
+ADD --chown=$UID:$GID ./uv.lock uv.lock
+ADD --chown=$UID:$GID ./plugins plugins
 ADD --chown=$UID:$GID ./start.py start.py
 ADD --chown=$UID:$GID ./modelship modelship
 ADD --chown=$UID:$GID ./scripts scripts
-
-USER modelship
-
-# Sync base dependencies only (no gpu extra)
-RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --extra gpu
 
 USER root
 

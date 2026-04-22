@@ -1,5 +1,8 @@
 ARG PYTHON_VERSION=3.12.10
 
+# =============================================================================
+# base — minimal runtime: no build toolchain. Shared by `builder` and `prod`.
+# =============================================================================
 FROM ubuntu:24.04 AS base
 
 ARG PYTHON_VERSION
@@ -8,14 +11,14 @@ ARG GID=1000
 
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    espeak-ng \
-    git \
-    ca-certificates \
-    gosu
+        ca-certificates \
+        curl \
+        espeak-ng \
+        gcc \
+        gosu \
+        libc6-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-# Create non-root user matching host UID/GID
 RUN if ! getent group $GID >/dev/null; then groupadd -g $GID modelship; fi && \
     if ! getent passwd $UID >/dev/null; then useradd -m -u $UID -g $GID modelship; \
     else existing=$(getent passwd $UID | cut -d: -f1) && usermod -l modelship -d /home/modelship -m "$existing"; fi
@@ -23,16 +26,10 @@ RUN if ! getent group $GID >/dev/null; then groupadd -g $GID modelship; fi && \
 ENV MSHIP_UID=$UID
 ENV MSHIP_GID=$GID
 
-# Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV UV_LINK_MODE=copy
 
 WORKDIR /modelship
-
-ADD ./pyproject.toml pyproject.toml
-ADD ./README.md README.md
-ADD ./uv.lock uv.lock
-ADD ./plugins plugins
 
 ENV UV_PROJECT_ENVIRONMENT=/.venv
 ENV VIRTUAL_ENV=/.venv
@@ -46,44 +43,74 @@ ENV MSHIP_METRICS=true
 ENV RAY_METRICS_EXPORT_PORT=8079
 ENV MSHIP_LOG_LEVEL=INFO
 ENV MSHIP_LOG_FORMAT=text
-ARG PYTHON_VERSION
 ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv/python
+ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+
+RUN mkdir -p /.cache /.venv && chown -R $UID:$GID /modelship /.cache /.venv
+
+# =============================================================================
+# builder — adds build toolchain, resolves /.venv with all plugin extras
+# pre-baked so runtime needs no compiler.
+# =============================================================================
+FROM base AS builder
+
+ARG PYTHON_VERSION
+
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        git && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN uv python install ${PYTHON_VERSION}
 RUN uv venv
 
-ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
-
-RUN mkdir -p /.cache && chown -R $UID:$GID /modelship /.cache $UV_PROJECT_ENVIRONMENT
-
-# ---------------------------------------------------------------------------
-# Development target
-# ---------------------------------------------------------------------------
-FROM base AS dev
+ADD --chown=$UID:$GID ./pyproject.toml pyproject.toml
+ADD --chown=$UID:$GID ./README.md README.md
+ADD --chown=$UID:$GID ./uv.lock uv.lock
+ADD --chown=$UID:$GID ./plugins plugins
 
 USER modelship
 
-# Sync with CPU index to ensure torch/torchvision are lightweight
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --extra dev --extra cpu
+    uv sync --locked --no-install-project --compile-bytecode \
+        --extra cpu \
+        --extra kokoroonnx \
+        --extra bark \
+        --extra orpheus \
+        --extra whispercpp
+
+# =============================================================================
+# dev — inherits builder (keeps toolchain) and adds dev extras.
+# =============================================================================
+FROM builder AS dev
+
+USER modelship
+
+RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
+    uv sync --locked --no-install-project --compile-bytecode --extra dev --extra cpu
 
 ADD --chown=$UID:$GID ./scripts/start_ray.sh /modelship/scripts/start_ray.sh
 
 CMD ["/bin/bash"]
 
-# ---------------------------------------------------------------------------
-# Production target
-# ---------------------------------------------------------------------------
+# =============================================================================
+# prod — minimal runtime. No build tools. Copies the resolved venv and
+# Python interpreter from builder.
+# =============================================================================
 FROM base AS prod
 
+COPY --from=builder --chown=$UID:$GID /usr/local/uv/python /usr/local/uv/python
+COPY --from=builder --chown=$UID:$GID /.venv /.venv
+
+ADD --chown=$UID:$GID ./pyproject.toml pyproject.toml
+ADD --chown=$UID:$GID ./README.md README.md
+ADD --chown=$UID:$GID ./uv.lock uv.lock
+ADD --chown=$UID:$GID ./plugins plugins
 ADD --chown=$UID:$GID ./start.py start.py
 ADD --chown=$UID:$GID ./modelship modelship
 ADD --chown=$UID:$GID ./scripts scripts
-
-USER modelship
-
-# Sync base dependencies only (no gpu extra) with CPU index
-RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --no-dev --extra cpu
 
 USER root
 

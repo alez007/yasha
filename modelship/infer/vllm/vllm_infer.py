@@ -65,7 +65,9 @@ class VllmInfer(BaseInfer):
         config_engine_kwargs = model_config.vllm_engine_kwargs.model_dump(exclude_unset=True)
         config_engine_kwargs["model"] = model_config.model
 
-        config_engine_kwargs["gpu_memory_utilization"] = self._get_memory_fraction()
+        mem_fraction = self._get_memory_fraction()
+        if mem_fraction is not None:
+            config_engine_kwargs["gpu_memory_utilization"] = mem_fraction
 
         self.vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
         logger.info("initialising vllm engine with args: %s", self.vllm_engine_kwargs.model_dump())
