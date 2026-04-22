@@ -120,6 +120,21 @@ class ModelshipAPI:
         self.models: dict[str, list[DeploymentHandle]] = {}
         self._round_robin: dict[str, int] = {}
         self.model_list: list[OpenAiModelCard] = []
+        self.expected_models: list[str] = []
+        self._started_at = time.time()
+        # Timing state — set_expected_models stamps a start, each add_models
+        # arrival records the gap since the previous arrival as that model's
+        # load duration (start.py deploys sequentially so the gap ≈ load time).
+        self._expected_set_at: float | None = None
+        self._last_model_at: float | None = None
+        self._all_ready_at: float | None = None
+        self._model_load_times: dict[str, float] = {}
+
+    async def set_expected_models(self, names: list[str]):
+        self.expected_models = list(names)
+        now = time.time()
+        self._expected_set_at = now
+        self._last_model_at = now
 
     async def add_models(self, deployments: dict[str, str]):
         """Register new model deployments with the gateway.
@@ -134,12 +149,22 @@ class ModelshipAPI:
                 logger.exception("Failed to get handle for app: %s", app_name)
                 continue
 
-            if model_name not in self.models:
+            newly_added = model_name not in self.models
+            if newly_added:
                 self.models[model_name] = []
                 self._round_robin[model_name] = 0
                 self.model_list.append(OpenAiModelCard(id=model_name))
             self.models[model_name].append(handle)
             logger.info("Registered deployment: %s (model: %s)", app_name, model_name)
+
+            if newly_added:
+                now = time.time()
+                base = self._last_model_at or self._started_at
+                self._model_load_times[model_name] = round(now - base, 2)
+                self._last_model_at = now
+
+        if self.expected_models and self._all_ready_at is None and all(m in self.models for m in self.expected_models):
+            self._all_ready_at = time.time()
 
         MODELS_LOADED.set(len(self.models))
 
@@ -219,7 +244,35 @@ class ModelshipAPI:
 
     @app.get("/health")
     async def health(self):
-        return {"status": "ok"}
+        return {
+            "status": "ok",
+            "uptime_s": round(time.time() - self._started_at, 1),
+        }
+
+    def _status_body(self) -> dict:
+        expected = list(self.expected_models)
+        pending = [m for m in expected if m not in self.models] if expected else []
+        ready = bool(expected) and len(pending) == 0
+        time_to_ready: float | None = None
+        if self._all_ready_at is not None and self._expected_set_at is not None:
+            time_to_ready = round(self._all_ready_at - self._expected_set_at, 2)
+        return {
+            "status": "ok",
+            "ready": ready,
+            "uptime_s": round(time.time() - self._started_at, 1),
+            "time_to_ready_s": time_to_ready,
+            "models_loaded": sorted(self.models.keys()),
+            "models_expected": expected,
+            "models_pending": pending,
+            "model_load_times_s": dict(self._model_load_times),
+        }
+
+    @app.get("/status")
+    async def status(self):
+        body = self._status_body()
+        if body["ready"]:
+            return body
+        return JSONResponse(status_code=503, content=body)
 
     @app.get("/v1/models", response_model=OpenaiModelList)
     async def list_models(self):
