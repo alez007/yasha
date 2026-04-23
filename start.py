@@ -3,18 +3,24 @@ import importlib
 import os
 import random
 import signal
+import socket
 import string
 import sys
+import time
 
 import ray
 from pydantic_yaml import parse_yaml_raw_as
 from ray import serve
 from ray.serve.config import HTTPOptions
 
+from modelship.infer.deploy_coordinator import OperatorProbe, get_or_create_coordinator
 from modelship.infer.infer_config import ModelLoader, ModelshipConfig, ModelshipModelConfig
 from modelship.infer.model_deployment import ModelDeployment
 from modelship.logging import configure_logging, get_logger
 from modelship.openai.api import ModelshipAPI
+
+_DEPLOY_RETRY_SLEEP_S = 2.0
+_WAITING_LOG_EVERY_N_PASSES = 30  # with 2s sleep, log "still waiting" once per minute
 
 logger = get_logger("startup")
 
@@ -174,6 +180,10 @@ def ensure_plugin(module_name: str):
         raise RuntimeError(f"Plugin '{module_name}' is not installed. Run: uv sync --extra {module_name}") from err
 
 
+def _make_operator_id() -> str:
+    return f"{socket.gethostname()}-{os.getpid()}-{_rand_suffix(4)}"
+
+
 def _get_existing_apps() -> set[str]:
     """Return the set of currently deployed Serve app names."""
     try:
@@ -291,35 +301,93 @@ def main(argv: list[str] | None = None):
         except Exception:
             logger.exception("Failed to seed expected model list on gateway (non-fatal).")
 
-        # Deploy models one at a time. serve.run() blocks until the deployment reaches
-        # RUNNING, ensuring each model fully initialises (and releases its load-time
-        # memory spike) before the next one starts.
-        #
-        # Each deployment gets a unique name with a random suffix (e.g. qwen-a3f9k)
-        # to avoid collisions with existing deployments in additive mode.
-        for config in sorted_models:
-            deployment_name = f"{config.name}-{_rand_suffix()}"
+        # Coordinator actor serialises deploys across operators on the same
+        # cluster; the probe is driver-owned so Ray force-releases the lock
+        # if this process dies ungracefully.
+        operator_id = _make_operator_id()
+        coordinator = get_or_create_coordinator()
+        probe = OperatorProbe.options(num_cpus=0).remote()
+        logger.info("Operator id=%s; coordinator acquired.", operator_id)
 
-            logger.info("Deploying model: %s (deployment: %s)", config.name, deployment_name)
-            deployed_this_run[deployment_name] = config.name
-            serve.run(
-                ModelDeployment.options(
-                    name=deployment_name,
-                    num_replicas=config.num_replicas,
-                    ray_actor_options=build_actor_options(config),
-                ).bind(config),
-                name=deployment_name,
-                route_prefix=None,  # not exposed via HTTP — accessed only via handle
-            )
-            logger.info("Model ready: %s (deployment: %s)", config.name, deployment_name)
+        # Retry-pass loop: each pass tries every not-yet-deployed model. Models
+        # whose resources don't currently fit (or whose reservation is rejected
+        # because another operator holds the lock) are skipped and retried on
+        # the next pass. Placeable models deploy in configured order (TP>1 first).
+        remaining = list(sorted_models)
+        pass_count = 0
+        passes_with_no_progress = 0
 
-            # Register immediately so /v1/models reflects progress.
-            try:
-                gateway_handle.add_models.remote({deployment_name: config.name}).result()
-            except Exception:
-                logger.exception("Failed to register %s with gateway", deployment_name)
+        while remaining:
+            pass_count += 1
+            made_progress = False
 
-        logger.info("Deploy complete. %d new deployment(s) from this run.", len(deployed_this_run))
+            for config in list(remaining):
+                actor_opts = build_actor_options(config)
+                deployment_name = f"{config.name}-{_rand_suffix()}"
+
+                reserved, _reason = ray.get(
+                    coordinator.try_reserve.remote(
+                        operator_id,
+                        deployment_name,
+                        float(actor_opts.get("num_gpus", 0) or 0),
+                        float(actor_opts.get("num_cpus", 0) or 0),
+                        probe,
+                    )
+                )
+                if not reserved:
+                    continue
+
+                try:
+                    logger.info("Deploying model: %s (deployment: %s)", config.name, deployment_name)
+                    deployed_this_run[deployment_name] = config.name
+                    serve.run(
+                        ModelDeployment.options(
+                            name=deployment_name,
+                            num_replicas=config.num_replicas,
+                            ray_actor_options=actor_opts,
+                        ).bind(config),
+                        name=deployment_name,
+                        route_prefix=None,
+                    )
+                    logger.info("Model ready: %s (deployment: %s)", config.name, deployment_name)
+                    try:
+                        gateway_handle.add_models.remote({deployment_name: config.name}).result()
+                    except Exception:
+                        logger.exception("Failed to register %s with gateway", deployment_name)
+                    remaining.remove(config)
+                    made_progress = True
+                except Exception:
+                    logger.exception(
+                        "Deploy failed for %s (deployment=%s); will retry next pass.",
+                        config.name,
+                        deployment_name,
+                    )
+                    deployed_this_run.pop(deployment_name, None)
+                finally:
+                    try:
+                        ray.get(coordinator.release.remote(operator_id))
+                    except Exception:
+                        logger.exception("Failed to release coordinator lock (operator=%s)", operator_id)
+
+            if made_progress:
+                passes_with_no_progress = 0
+            else:
+                passes_with_no_progress += 1
+                if passes_with_no_progress == 1 or passes_with_no_progress % _WAITING_LOG_EVERY_N_PASSES == 0:
+                    logger.info(
+                        "Waiting for capacity for %d model(s): %s",
+                        len(remaining),
+                        [c.name for c in remaining],
+                    )
+
+            if remaining:
+                time.sleep(_DEPLOY_RETRY_SLEEP_S)
+
+        logger.info(
+            "Deploy complete. %d new deployment(s) from this run (over %d pass(es)).",
+            len(deployed_this_run),
+            pass_count,
+        )
 
         if fresh_install:
             # On fresh install, stay alive as the operator process.
