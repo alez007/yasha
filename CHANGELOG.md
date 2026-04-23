@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.30] - 2026-04-23
+
+### Added
+- cluster-wide deploy coordinator and retry-pass deploy loop
+- /status readiness endpoint with per-model load timings
+
+### Changed
+- slim CUDA runtime, MSHIP_SKIP_SYNC fast-path, misc
+
 ## [0.1.29] - 2026-04-20
 
 ### Added
