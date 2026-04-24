@@ -60,12 +60,13 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.cpu
+          file: Dockerfile
           target: prod
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
             PYTHON_VERSION=3.12.10
+            MSHIP_VARIANT=cpu
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-cpu
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-cpu

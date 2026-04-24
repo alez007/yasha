@@ -64,7 +64,7 @@ Under `tests/`, `pytest-asyncio` for async. Tests **mock out Ray Serve** — the
 - `vllm==0.18.0` is pinned. Don't bump casually — TP scheduling in `start.py:build_actor_options` is tied to its behaviour.
 - Metrics live on port **8079** (not 8000). `MSHIP_METRICS=false` or `--no-metrics` disables.
 - `TRACE` is a custom log level below `DEBUG`; it logs full request/response payloads.
-- Docker CPU image is a separate `Dockerfile.cpu` with `:latest-cpu` tag suffix.
+- Docker CPU image uses the unified `Dockerfile` with `--build-arg MSHIP_VARIANT=cpu` and has a `:latest-cpu` tag suffix.
 
 ## Further reading
 

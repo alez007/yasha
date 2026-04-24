@@ -82,7 +82,7 @@ docker build -t modelship_dev --target dev .
 
 **CPU (Lightweight):**
 ```bash
-docker build -t modelship_dev_cpu --target dev -f Dockerfile.cpu .
+docker build -t modelship_dev_cpu --target dev --build-arg MSHIP_VARIANT=cpu .
 ```
 
 ### Running with live source mounting
@@ -126,7 +126,7 @@ docker build -t modelship:latest --target prod .
 
 **CPU:**
 ```bash
-docker build -t modelship:latest-cpu --target prod -f Dockerfile.cpu .
+docker build -t modelship:latest-cpu --target prod --build-arg MSHIP_VARIANT=cpu .
 ```
 
 ## Ports
