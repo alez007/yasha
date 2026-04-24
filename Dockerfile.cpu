@@ -96,13 +96,9 @@ FROM builder AS dev
 USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project \
-        --extra dev \
-        --extra cpu \
-        --extra kokoroonnx \
-        --extra bark \
-        --extra orpheus \
-        --extra whispercpp
+    # Dynamically inject an --extra flag for every plugin directory
+    PLUGIN_EXTRAS=$(find plugins -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | xargs -I {} echo -n "--extra {} ") && \
+    uv sync --locked --no-install-project --extra dev --extra cpu $PLUGIN_EXTRAS
 
 ADD --chown=$UID:$GID ./scripts/start_ray.sh /modelship/scripts/start_ray.sh
 
