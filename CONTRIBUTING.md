@@ -9,7 +9,7 @@ The recommended way to develop is via the VS Code Dev Container. See [docs/devel
 **Quick version:**
 
 1. Install Docker + NVIDIA Container Toolkit
-2. Set `HF_TOKEN` and `MSHIP_PLUGINS` environment variables
+2. Set the `HF_TOKEN` environment variable
 3. Open the project in VS Code and select **Dev Containers: Reopen in Container**
 4. Inside the container:
 

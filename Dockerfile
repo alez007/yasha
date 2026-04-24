@@ -79,6 +79,7 @@ ENV MSHIP_LOG_LEVEL=INFO
 ENV MSHIP_LOG_FORMAT=text
 ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv/python
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+ENV MSHIP_PLUGIN_WHEEL_DIR=/opt/modelship/plugin-wheels
 
 # onnxruntime-gpu (pulled in by the kokoroonnx plugin) dlopen()s
 # libonnxruntime_providers_cuda.so which has plain DT_NEEDED entries for
@@ -91,7 +92,8 @@ ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
 # shell-evaluate.
 ENV LD_LIBRARY_PATH="/.venv/lib/python3.12/site-packages/nvidia/cublas/lib:/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/.venv/lib/python3.12/site-packages/nvidia/cufft/lib:/.venv/lib/python3.12/site-packages/nvidia/curand/lib:/.venv/lib/python3.12/site-packages/nvidia/nvjitlink/lib"
 
-RUN mkdir -p /.cache /.venv && chown -R $UID:$GID /modelship /.cache /.venv
+RUN mkdir -p /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR && \
+    chown -R $UID:$GID /modelship /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR
 
 # =============================================================================
 # builder — adds build toolchain (nvcc, build-essential, dev headers, git) and
@@ -99,9 +101,9 @@ RUN mkdir -p /.cache /.venv && chown -R $UID:$GID /modelship /.cache /.venv
 # compile wheels from source (flashinfer, llama-cpp-python, etc.). All of this
 # stays in the builder stage and is NOT copied into prod.
 #
-# The venv is resolved with --extra gpu plus every plugin extra so prod doesn't
-# need network access or a compiler at runtime — scripts/start.sh's uv sync
-# just toggles which plugins are "active" via MSHIP_PLUGINS.
+# The venv is resolved with --extra gpu only (no plugin extras). Plugin
+# wheels are built separately into $MSHIP_PLUGIN_WHEEL_DIR and shipped to Ray
+# workers per-deployment via runtime_env from start.py.
 # =============================================================================
 FROM base AS builder
 
@@ -133,27 +135,36 @@ RUN uv venv
 ADD --chown=$UID:$GID ./pyproject.toml pyproject.toml
 ADD --chown=$UID:$GID ./README.md README.md
 ADD --chown=$UID:$GID ./uv.lock uv.lock
+ADD --chown=$UID:$GID ./Makefile Makefile
 ADD --chown=$UID:$GID ./plugins plugins
 
 USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project \
-        --extra gpu \
-        --extra kokoroonnx \
-        --extra bark \
-        --extra orpheus \
-        --extra whispercpp
+    uv sync --locked --no-install-project --extra gpu
+
+# Build plugin wheels into $MSHIP_PLUGIN_WHEEL_DIR. Plugins are NOT installed
+# into /.venv — they ship to Ray workers per-deployment via runtime_env, so the
+# prod venv stays lean.
+RUN make plugin-wheels
 
 # =============================================================================
-# dev — inherits builder (keeps toolchain) and adds dev extras.
+# dev — inherits builder (keeps toolchain) and adds dev extras PLUS plugin
+# extras so developers get editable installs for interactive REPL / pytest.
+# Prod does not inherit this stage.
 # =============================================================================
 FROM builder AS dev
 
 USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --extra dev --extra gpu
+    uv sync --locked --no-install-project \
+        --extra dev \
+        --extra gpu \
+        --extra kokoroonnx \
+        --extra bark \
+        --extra orpheus \
+        --extra whispercpp
 
 ADD --chown=$UID:$GID ./scripts/start_ray.sh /modelship/scripts/start_ray.sh
 
@@ -167,6 +178,7 @@ FROM base AS prod
 
 COPY --from=builder --chown=$UID:$GID /usr/local/uv/python /usr/local/uv/python
 COPY --from=builder --chown=$UID:$GID /.venv /.venv
+COPY --from=builder --chown=$UID:$GID $MSHIP_PLUGIN_WHEEL_DIR $MSHIP_PLUGIN_WHEEL_DIR
 
 ADD --chown=$UID:$GID ./pyproject.toml pyproject.toml
 ADD --chown=$UID:$GID ./README.md README.md

@@ -170,18 +170,14 @@ Built-in plugins:
 - [Orpheus](plugins/orpheus/README.md) — expressive TTS
 - [whisper.cpp](plugins/whispercpp/README.md) — CPU-only STT via `pywhispercpp`
 
-To enable plugins, pass them as extras at sync time:
+To enable plugins for local development, pass them as extras at sync time:
 
 ```bash
 uv sync --extra kokoroonnx
 uv sync --extra kokoroonnx --extra whispercpp  # multiple plugins
 ```
 
-When using Docker, set the `MSHIP_PLUGINS` environment variable:
-
-```
-MSHIP_PLUGINS=kokoroonnx,whispercpp
-```
+For deployment, plugins are automatically loaded from wheels via Ray's `runtime_env` when referenced in `models.yaml`.
 
 For a full guide on writing your own plugin, see [Plugin Development](docs/plugins.md).
 

@@ -46,12 +46,15 @@ ENV MSHIP_LOG_LEVEL=INFO
 ENV MSHIP_LOG_FORMAT=text
 ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv/python
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+ENV MSHIP_PLUGIN_WHEEL_DIR=/opt/modelship/plugin-wheels
 
-RUN mkdir -p /.cache /.venv && chown -R $UID:$GID /modelship /.cache /.venv
+RUN mkdir -p /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR && \
+    chown -R $UID:$GID /modelship /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR
 
 # =============================================================================
-# builder — adds build toolchain, resolves /.venv with all plugin extras
-# pre-baked so runtime needs no compiler.
+# builder — adds build toolchain, resolves /.venv with --extra cpu only.
+# Plugin wheels are built separately into $MSHIP_PLUGIN_WHEEL_DIR and shipped
+# to Ray workers per-deployment via runtime_env from start.py.
 # =============================================================================
 FROM base AS builder
 
@@ -70,27 +73,36 @@ RUN uv venv
 ADD --chown=$UID:$GID ./pyproject.toml pyproject.toml
 ADD --chown=$UID:$GID ./README.md README.md
 ADD --chown=$UID:$GID ./uv.lock uv.lock
+ADD --chown=$UID:$GID ./Makefile Makefile
 ADD --chown=$UID:$GID ./plugins plugins
 
 USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project \
-        --extra cpu \
-        --extra kokoroonnx \
-        --extra bark \
-        --extra orpheus \
-        --extra whispercpp
+    uv sync --locked --no-install-project --extra cpu
+
+# Build plugin wheels into $MSHIP_PLUGIN_WHEEL_DIR. Plugins are NOT installed
+# into /.venv — they ship to Ray workers per-deployment via runtime_env, so the
+# prod venv stays lean.
+RUN make plugin-wheels
 
 # =============================================================================
-# dev — inherits builder (keeps toolchain) and adds dev extras.
+# dev — inherits builder (keeps toolchain) and adds dev extras PLUS plugin
+# extras so developers get editable installs for interactive REPL / pytest.
+# Prod does not inherit this stage.
 # =============================================================================
 FROM builder AS dev
 
 USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --extra dev --extra cpu
+    uv sync --locked --no-install-project \
+        --extra dev \
+        --extra cpu \
+        --extra kokoroonnx \
+        --extra bark \
+        --extra orpheus \
+        --extra whispercpp
 
 ADD --chown=$UID:$GID ./scripts/start_ray.sh /modelship/scripts/start_ray.sh
 
@@ -104,6 +116,7 @@ FROM base AS prod
 
 COPY --from=builder --chown=$UID:$GID /usr/local/uv/python /usr/local/uv/python
 COPY --from=builder --chown=$UID:$GID /.venv /.venv
+COPY --from=builder --chown=$UID:$GID $MSHIP_PLUGIN_WHEEL_DIR $MSHIP_PLUGIN_WHEEL_DIR
 
 ADD --chown=$UID:$GID ./pyproject.toml pyproject.toml
 ADD --chown=$UID:$GID ./README.md README.md

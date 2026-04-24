@@ -14,7 +14,6 @@ The recommended way to develop Modelship is with VS Code Dev Containers. The con
 
    ```bash
    export HF_TOKEN=your_token_here
-   export MSHIP_PLUGINS=kokoroonnx  # optional — comma-separated list of plugins to install
    ```
 
 2. Open the repo in VS Code and run **Dev Containers: Reopen in Container** from the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
@@ -94,7 +93,6 @@ The dev image does not bake in source files. Mount the repo root so changes take
 ```bash
 docker run -it --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token_here \
-  -e MSHIP_PLUGINS=kokoroonnx \
   -e RAY_HEAD_GPU_NUM=1 \
   --mount type=bind,src=./,dst=/modelship \
   -v ./models-cache:/.cache \
@@ -111,7 +109,7 @@ docker run -it --rm --shm-size=8g \
   -p 8000:8000 modelship_dev_cpu
 ```
 
-The container's entrypoint (`start.sh`) automatically syncs dependencies (including any plugins listed in `MSHIP_PLUGINS`), starts the Ray head node, and drops into a shell. Then start the server:
+The container's entrypoint (`start.sh`) automatically syncs dependencies, starts the Ray head node, and drops into a shell. Then start the server:
 
 ```bash
 uv run start.py
