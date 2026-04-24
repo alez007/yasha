@@ -138,7 +138,7 @@ ADD --chown=$UID:$GID ./plugins plugins
 USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --compile-bytecode \
+    uv sync --locked --no-install-project \
         --extra gpu \
         --extra kokoroonnx \
         --extra bark \
@@ -153,7 +153,7 @@ FROM builder AS dev
 USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --compile-bytecode --extra dev --extra gpu
+    uv sync --locked --no-install-project --extra dev --extra gpu
 
 ADD --chown=$UID:$GID ./scripts/start_ray.sh /modelship/scripts/start_ray.sh
 
