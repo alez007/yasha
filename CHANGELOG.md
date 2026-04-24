@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.31] - 2026-04-24
+
+### Changed
+- drop --compile-bytecode from uv sync in Docker builds
+
 ## [0.1.30] - 2026-04-23
 
 ### Added
