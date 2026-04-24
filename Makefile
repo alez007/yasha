@@ -5,7 +5,7 @@ PATCH   := $(shell echo $(VERSION) | cut -d. -f3)
 
 MSHIP_PLUGIN_WHEEL_DIR ?= .build/plugin-wheels
 PLUGIN_STAMP_DIR := .build/plugin-stamps
-PLUGINS          := $(notdir $(wildcard plugins/*))
+PLUGINS          := $(notdir $(patsubst %/,%,$(wildcard plugins/*/)))
 
 .PHONY: test lint lint-fix release-patch release-minor release-major _release plugin-wheels plugin-wheels-clean
 
