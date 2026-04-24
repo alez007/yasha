@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "whisper.cpp STT plugin for Modelship (via pywhispercpp)"
 requires-python = "==3.12.10"
 dependencies = [
-    "modelship",
     "pywhispercpp>=1.3.0",
 ]
 

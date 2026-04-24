@@ -1,5 +1,4 @@
 import argparse
-import importlib
 import os
 import random
 import signal
@@ -7,6 +6,15 @@ import socket
 import string
 import sys
 import time
+from pathlib import Path
+
+# Must be set BEFORE `import ray`: ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV
+# is a module-level constant, evaluated at ray's import time. Leaving it on
+# makes Ray auto-inject `py_executable="uv run --python X"` whenever the driver
+# runs under `uv run`, which overrides the per-job virtualenv that
+# runtime_env.pip creates for plugin wheels — breaking plugin imports in the
+# worker. Keep the uv hook off so runtime_env.pip's py_executable survives.
+os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "false")
 
 import ray
 from pydantic_yaml import parse_yaml_raw_as
@@ -120,7 +128,7 @@ def _apply_args_to_env(args: argparse.Namespace) -> None:
         os.environ["MSHIP_OPENAI_API_PORT"] = str(args.openai_api_port)
 
 
-def build_actor_options(config: ModelshipModelConfig) -> dict:
+def build_actor_options(config: ModelshipModelConfig, plugin_wheel: Path | None = None) -> dict:
     env_vars = _build_cache_env_vars()
     for log_var in ("MSHIP_LOG_LEVEL", "MSHIP_LOG_FORMAT", "MSHIP_LOG_TARGET"):
         val = os.environ.get(log_var)
@@ -166,18 +174,38 @@ def build_actor_options(config: ModelshipModelConfig) -> dict:
         else:
             num_gpus = config.num_gpus
 
+    runtime_env: dict = {"env_vars": env_vars}
+    if plugin_wheel is not None:
+        # Ship the plugin to the Ray worker via runtime_env. Ray content-hashes
+        # and caches the resulting per-job venv, so repeat deploys of the same
+        # wheel reuse the install.
+        runtime_env["pip"] = [str(plugin_wheel)]
+
     return {
         "num_gpus": num_gpus,
         "num_cpus": config.num_cpus,
-        "runtime_env": {"env_vars": env_vars},
+        "runtime_env": runtime_env,
     }
 
 
-def ensure_plugin(module_name: str):
-    try:
-        importlib.import_module(module_name)
-    except ImportError as err:
-        raise RuntimeError(f"Plugin '{module_name}' is not installed. Run: uv sync --extra {module_name}") from err
+def _plugin_wheel_dir() -> Path:
+    return Path(os.environ.get("MSHIP_PLUGIN_WHEEL_DIR", ".build/plugin-wheels"))
+
+
+def resolve_plugin_wheel(plugin: str) -> Path:
+    wheel_dir = _plugin_wheel_dir()
+    normalized_name = plugin.replace("-", "_")
+    wheels = sorted(wheel_dir.glob(f"{normalized_name}-*.whl"))
+    if not wheels:
+        raise RuntimeError(
+            f"No wheel found for plugin '{plugin}' (normalized: '{normalized_name}') in {wheel_dir}. "
+            f"Build wheels with `make plugin-wheels` (or rebuild the Docker image), "
+            f"or set MSHIP_PLUGIN_WHEEL_DIR to the directory containing them."
+        )
+    # Absolute path required: Ray workers run with a different cwd
+    # (/tmp/ray/session_*/runtime_resources/.../exec_cwd), so a relative wheel
+    # path in runtime_env.pip would fail to resolve on the worker.
+    return wheels[-1].resolve()
 
 
 def _make_operator_id() -> str:
@@ -247,9 +275,12 @@ def main(argv: list[str] | None = None):
 
     logger.info("Init modelship app with config: %s", yml_conf)
 
+    # Pre-flight: resolve every referenced plugin wheel up front so a missing
+    # wheel fails the whole startup before any Ray deploy is attempted.
+    plugin_wheels: dict[str, Path] = {}
     for config in yml_conf.models:
-        if config.loader == ModelLoader.custom and config.plugin:
-            ensure_plugin(config.plugin)
+        if config.loader == ModelLoader.custom and config.plugin and config.plugin not in plugin_wheels:
+            plugin_wheels[config.plugin] = resolve_plugin_wheel(config.plugin)
 
     # Schedule TP>1 models first so they claim whole GPU units before fractional
     # models consume the pool.
@@ -322,7 +353,8 @@ def main(argv: list[str] | None = None):
             made_progress = False
 
             for config in list(remaining):
-                actor_opts = build_actor_options(config)
+                wheel = plugin_wheels.get(config.plugin) if config.plugin else None
+                actor_opts = build_actor_options(config, plugin_wheel=wheel)
                 deployment_name = f"{config.name}-{_rand_suffix()}"
 
                 reserved, _reason = ray.get(

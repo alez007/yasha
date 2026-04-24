@@ -3,7 +3,11 @@ MAJOR   := $(shell echo $(VERSION) | cut -d. -f1)
 MINOR   := $(shell echo $(VERSION) | cut -d. -f2)
 PATCH   := $(shell echo $(VERSION) | cut -d. -f3)
 
-.PHONY: test lint lint-fix release-patch release-minor release-major _release
+MSHIP_PLUGIN_WHEEL_DIR ?= .build/plugin-wheels
+PLUGIN_STAMP_DIR := .build/plugin-stamps
+PLUGINS          := $(notdir $(patsubst %/,%,$(wildcard plugins/*/)))
+
+.PHONY: test lint lint-fix release-patch release-minor release-major _release plugin-wheels plugin-wheels-clean
 
 test:
 	uv run pytest tests/ -v
@@ -16,6 +20,26 @@ lint:
 lint-fix:
 	uv run ruff check --fix .
 	uv run ruff format .
+
+# Per-plugin source-tracked wheel build. Each plugin gets a stamp file whose
+# prereqs are every file under its source tree; changing a source invalidates
+# only that plugin's stamp, so subsequent `make plugin-wheels` runs are
+# incremental. Stale wheels for the same plugin are purged before each build
+# to keep a single wheel per plugin in the output dir (simplifies lookup from
+# start.py, which globs for <name>-*.whl).
+plugin-wheels: $(foreach p,$(PLUGINS),$(PLUGIN_STAMP_DIR)/$(p).stamp)
+
+PLUGIN_SOURCES = $(shell find plugins/$(1) -type f -not -path '*/.*' -not -path '*/__pycache__/*' 2>/dev/null)
+
+.SECONDEXPANSION:
+$(PLUGIN_STAMP_DIR)/%.stamp: $$(call PLUGIN_SOURCES,%)
+	@mkdir -p $(MSHIP_PLUGIN_WHEEL_DIR) $(PLUGIN_STAMP_DIR)
+	@rm -f $(MSHIP_PLUGIN_WHEEL_DIR)/$(subst -,_,$*)-*.whl
+	uv build --package $* --wheel --out-dir $(MSHIP_PLUGIN_WHEEL_DIR)
+	@touch $@
+
+plugin-wheels-clean:
+	rm -rf $(MSHIP_PLUGIN_WHEEL_DIR) $(PLUGIN_STAMP_DIR)
 
 release-patch:
 	$(eval NEW_VERSION := $(MAJOR).$(MINOR).$(shell echo $$(($(PATCH)+1))))

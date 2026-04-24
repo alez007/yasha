@@ -22,13 +22,16 @@ Example request:
       --output speech.wav
 """
 
+import ctypes.util
 import os
 import shutil
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import numpy as np
-import onnxruntime as ort  # type: ignore[import-unresolved]
+import onnxruntime as ort
 from kokoro_onnx import Kokoro  # type: ignore[import-unresolved]
+from kokoro_onnx.config import EspeakConfig  # type: ignore[import-unresolved]
 
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.logging import get_logger
@@ -36,6 +39,28 @@ from modelship.openai.protocol import ErrorResponse, RawSpeechResponse
 from modelship.plugins.base_plugin import BasePlugin
 from modelship.utils import download, plugins_dir
 from modelship.utils.audio import resample, to_pcm16, to_wav
+
+
+def _resolve_system_espeak() -> EspeakConfig | None:
+    """Locate the system-installed espeak-ng library + data.
+
+    espeakng-loader bundles a library with a CI-runner data path baked in that
+    SIGSEGVs at runtime; prefer the apt-installed espeak-ng when present. Falls
+    back to espeakng-loader's bundled copy if the system install is missing.
+    """
+    lib = ctypes.util.find_library("espeak-ng") or ctypes.util.find_library("espeak")
+    if not lib:
+        return None
+    # Typical Debian/Ubuntu layout: lib in /usr/lib/<triple>/, data next to it.
+    for candidate in (
+        "/usr/lib/x86_64-linux-gnu/espeak-ng-data",
+        "/usr/lib/aarch64-linux-gnu/espeak-ng-data",
+        "/usr/share/espeak-ng-data",
+    ):
+        if Path(candidate, "phontab").is_file():
+            return EspeakConfig(lib_path=lib, data_path=candidate)
+    return None
+
 
 logger = get_logger("plugin.kokoroonnx")
 
@@ -68,7 +93,12 @@ class ModelPlugin(BasePlugin):
         onnx_provider = (model_config.plugin_config or {}).get("onnx_provider", "CUDAExecutionProvider")
         os.environ["ONNX_PROVIDER"] = onnx_provider
         logger.info("ONNX_PROVIDER=%s", onnx_provider)
-        self.kokoro = Kokoro(model_path, voices_path)
+        espeak_config = _resolve_system_espeak()
+        if espeak_config:
+            logger.info("using system espeak-ng: lib=%s data=%s", espeak_config.lib_path, espeak_config.data_path)
+        else:
+            logger.warning("system espeak-ng not found; falling back to bundled espeakng-loader (may crash)")
+        self.kokoro = Kokoro(model_path, voices_path, espeak_config=espeak_config)
         logger.info("kokoro session providers: %s", self.kokoro.sess.get_providers())
         self.target_sample_rate: int | None = (model_config.plugin_config or {}).get("sample_rate")
 

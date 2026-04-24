@@ -68,7 +68,7 @@ python start.py --config config/tts.yaml --gateway-name "tts-api"
 | `model` | string | HuggingFace model ID |
 | `usecase` | string | `generate`, `embed`, `transcription`, `translation`, `tts`, or `image` |
 | `loader` | string | `vllm`, `transformers`, `diffusers`, `llama_cpp`, or `custom` |
-| `plugin` | string | Plugin module name (required when `loader: custom`); must be installed via `uv sync --extra <plugin>` |
+| `plugin` | string | Plugin module name (required when `loader: custom`); automatically loaded from wheels when referenced |
 | `num_gpus` | float | Fraction of a GPU to allocate (0.0-1.0); also sets vLLM `gpu_memory_utilization` |
 | `num_cpus` | float | CPU units to allocate (default `0.1`) |
 | `num_replicas` | int | Number of identical Ray Serve replicas for this deployment (default `1`) |
@@ -343,7 +343,6 @@ In this example, requests to model `kokoro` are distributed across three backend
 | Variable | Description | Default |
 |---|---|---|
 | `HF_TOKEN` | HuggingFace access token | — |
-| `MSHIP_PLUGINS` | Comma-separated list of plugins to install at startup (e.g. `kokoroonnx,whispercpp`) | — |
 | `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace + plugins) | `/.cache` |
 | `MSHIP_GATEWAY_NAME` | Name for the API gateway app | `modelship api` |
 | `MSHIP_MAX_REQUEST_BODY_BYTES` | Maximum allowed request body size in bytes | `52428800` (50 MB) |

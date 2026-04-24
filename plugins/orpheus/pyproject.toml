@@ -4,10 +4,7 @@ version = "0.1.0"
 description = "Orpheus TTS plugin for Modelship"
 requires-python = "==3.12.10"
 dependencies = [
-    "modelship",
-    "snac",
-    "transformers>=4.57.5",
-    "numpy>=2.2.6",
+    "snac>=1.2.1",
 ]
 
 [build-system]
@@ -20,3 +17,6 @@ modelship = { workspace = true }
 [tool.uv.build-backend]
 module-name = "orpheus"
 module-root = ""
+
+[tool.modelship]
+supports = ["gpu"]

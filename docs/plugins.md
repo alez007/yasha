@@ -44,8 +44,7 @@ name = "myplugin"
 version = "0.1.0"
 requires-python = "==3.12.10"
 dependencies = [
-    "modelship",
-    # your plugin's dependencies
+    # only packages unique to your plugin — see "Dependency contract" below
 ]
 
 [build-system]
@@ -59,6 +58,14 @@ modelship = { workspace = true }
 module-name = "myplugin"
 module-root = ""
 ```
+
+#### Dependency contract
+
+Plugins assume the host environment provides `modelship` itself plus the full core/gpu/cpu stack: `torch`, `torchvision`, `transformers`, `sentence-transformers`, `numpy`, `scipy`, `librosa`, `soundfile`, `llama-cpp-python`, `onnxruntime[-gpu]`, `diffusers`, `accelerate`, `vllm`. **Do not redeclare any of these in your plugin's `dependencies`.**
+
+Why: plugin wheels are shipped to Ray workers via `runtime_env`, which installs them into a per-job venv layered over a base image that already has the core stack baked in. Redeclaring `modelship` or `torch` causes pip to either pull a second copy from PyPI (version drift, two packages on `sys.path`) or error on the layered install.
+
+Declare only what's unique to your plugin — e.g. `kokoro-onnx`, `pywhispercpp`, `snac`. Dev-time imports of `modelship.*` resolve because the workspace's shared `.venv` always has the root `modelship` package installed; you don't need to declare it to get IDE/pyright support.
 
 ### 3. Implement `ModelPlugin`
 
@@ -177,7 +184,7 @@ async def _stream(self, input, voice, speed):
 
 Every plugin must include a `README.md` in its package root (`plugins/myplugin/README.md`). This is the primary documentation for users configuring the plugin. It should cover:
 
-- **Installation** — how to install the plugin (`uv sync --extra` and `MSHIP_PLUGINS`)
+- **Installation** — how to install the plugin (`uv sync --extra` for local development; automatic via wheels for deployment)
 - **Configuration** — example `models.yaml` entry with all `plugin_config` options documented in a table
 - **Voices / options** — any model-specific choices (voice presets, providers, etc.)
 - **Example request** — a working `curl` command

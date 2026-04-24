@@ -54,7 +54,7 @@ Custom backends are isolated `uv` workspace packages under `plugins/`. Each plug
 
 - Implements `BasePlugin` and overrides the `create_*` method(s) matching its `usecase` (e.g. `create_speech` for TTS, `create_transcription` for STT)
 - Has its own dependencies, isolated from the main project
-- Is opt-in via `uv sync --extra <plugin>` or the `MSHIP_PLUGINS` env var
+- Is automatically loaded from wheels via Ray's `runtime_env` when referenced in `models.yaml`
 - Returns raw, protocol-agnostic outputs; OpenAI-shape adaptation is handled by the serving wrappers in `modelship/infer/custom/openai/`
 
 See [Plugin Development](plugins.md) for details.
