@@ -34,7 +34,7 @@ PLUGIN_SOURCES = $(shell find plugins/$(1) -type f -not -path '*/.*' -not -path 
 .SECONDEXPANSION:
 $(PLUGIN_STAMP_DIR)/%.stamp: $$(call PLUGIN_SOURCES,%)
 	@mkdir -p $(MSHIP_PLUGIN_WHEEL_DIR) $(PLUGIN_STAMP_DIR)
-	@rm -f $(MSHIP_PLUGIN_WHEEL_DIR)/$*-*.whl
+	@rm -f $(MSHIP_PLUGIN_WHEEL_DIR)/$(subst -,_,$*)-*.whl
 	uv build --package $* --wheel --out-dir $(MSHIP_PLUGIN_WHEEL_DIR)
 	@touch $@
 

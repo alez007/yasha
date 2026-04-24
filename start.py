@@ -194,10 +194,11 @@ def _plugin_wheel_dir() -> Path:
 
 def resolve_plugin_wheel(plugin: str) -> Path:
     wheel_dir = _plugin_wheel_dir()
-    wheels = sorted(wheel_dir.glob(f"{plugin}-*.whl"))
+    normalized_name = plugin.replace("-", "_")
+    wheels = sorted(wheel_dir.glob(f"{normalized_name}-*.whl"))
     if not wheels:
         raise RuntimeError(
-            f"No wheel found for plugin '{plugin}' in {wheel_dir}. "
+            f"No wheel found for plugin '{plugin}' (normalized: '{normalized_name}') in {wheel_dir}. "
             f"Build wheels with `make plugin-wheels` (or rebuild the Docker image), "
             f"or set MSHIP_PLUGIN_WHEEL_DIR to the directory containing them."
         )
