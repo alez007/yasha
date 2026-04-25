@@ -1,6 +1,8 @@
 ARG CUDA_VERSION=12.8.1
 ARG PYTHON_VERSION=3.12.10
 ARG MSHIP_VARIANT=gpu
+ARG UID=1000
+ARG GID=1000
 
 # =============================================================================
 # base — minimal runtime OS + uv + non-root user + env vars.
@@ -23,8 +25,8 @@ FROM ubuntu:24.04 AS base
 ARG CUDA_VERSION
 ARG PYTHON_VERSION
 ARG MSHIP_VARIANT
-ARG UID=1000
-ARG GID=1000
+ARG UID
+ARG GID
 
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
@@ -111,6 +113,8 @@ FROM base AS builder
 ARG CUDA_VERSION
 ARG PYTHON_VERSION
 ARG MSHIP_VARIANT
+ARG UID
+ARG GID
 
 RUN if [ "$MSHIP_VARIANT" = "gpu" ]; then \
     apt-get update -y && \
@@ -153,7 +157,8 @@ RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
 # Build plugin wheels into $MSHIP_PLUGIN_WHEEL_DIR. Plugins are NOT installed
 # into /.venv — they ship to Ray workers per-deployment via runtime_env, so the
 # prod venv stays lean.
-RUN make plugin-wheels
+RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
+    make plugin-wheels
 
 # =============================================================================
 # dev — inherits builder (keeps toolchain) and adds dev extras PLUS plugin
@@ -163,6 +168,8 @@ RUN make plugin-wheels
 FROM builder AS dev
 
 ARG MSHIP_VARIANT
+ARG UID
+ARG GID
 
 USER modelship
 
@@ -180,6 +187,9 @@ CMD ["/bin/bash"]
 # Python interpreter from builder.
 # =============================================================================
 FROM base AS prod
+
+ARG UID
+ARG GID
 
 COPY --from=builder --chown=$UID:$GID /usr/local/uv/python /usr/local/uv/python
 COPY --from=builder --chown=$UID:$GID /.venv /.venv
