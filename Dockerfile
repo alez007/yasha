@@ -1,5 +1,6 @@
 ARG CUDA_VERSION=12.8.1
 ARG PYTHON_VERSION=3.12.10
+ARG MSHIP_VARIANT=gpu
 
 # =============================================================================
 # base — minimal runtime OS + uv + non-root user + env vars.
@@ -21,6 +22,7 @@ FROM ubuntu:24.04 AS base
 
 ARG CUDA_VERSION
 ARG PYTHON_VERSION
+ARG MSHIP_VARIANT
 ARG UID=1000
 ARG GID=1000
 
@@ -35,12 +37,12 @@ RUN apt-get update -y && \
         libc6-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Register the NVIDIA CUDA apt repo, install cuda-cudart only, then purge the
-# repo+gnupg so apt metadata doesn't bloat the layer. gcc + libc6-dev stay
-# because torch/triton JIT-compile kernels at model-load time and shell out
-# to $CC; without them, vllm crashes in _inductor with "Failed to find C
-# compiler".
-RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && \
+# Register the NVIDIA CUDA apt repo and install cuda-cudart (GPU variant only).
+# gcc + libc6-dev stay because torch/triton JIT-compile kernels at model-load
+# time and shell out to $CC; without them, vllm crashes in _inductor with
+# "Failed to find C compiler".
+RUN if [ "$MSHIP_VARIANT" = "gpu" ]; then \
+    CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && \
     curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
         | gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
@@ -49,7 +51,8 @@ RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && \
     apt-get install -y --no-install-recommends cuda-cudart-${CUDA_VERSION_DASH} && \
     apt-get purge -y --auto-remove gnupg && \
     rm -f /etc/apt/sources.list.d/cuda.list /usr/share/keyrings/cuda-keyring.gpg && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/*; \
+    fi
 
 RUN if ! getent group $GID >/dev/null; then groupadd -g $GID modelship; fi && \
     if ! getent passwd $UID >/dev/null; then useradd -m -u $UID -g $GID modelship; \
@@ -71,7 +74,6 @@ ENV UV_CACHE_DIR=${MSHIP_CACHE_DIR}/uv
 ENV RAY_REDIS_PORT=6379
 ENV RAY_CLUSTER_ADDRESS=0.0.0.0
 ENV RAY_HEAD_CPU_NUM=2
-ENV RAY_HEAD_GPU_NUM=1
 ENV MSHIP_USE_EXISTING_RAY_CLUSTER=false
 ENV MSHIP_METRICS=true
 ENV RAY_METRICS_EXPORT_PORT=8079
@@ -80,6 +82,11 @@ ENV MSHIP_LOG_FORMAT=text
 ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv/python
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
 ENV MSHIP_PLUGIN_WHEEL_DIR=/opt/modelship/plugin-wheels
+
+# Set default RAY_HEAD_GPU_NUM based on variant
+ENV RAY_HEAD_GPU_NUM=${MSHIP_VARIANT#cpu}
+ENV RAY_HEAD_GPU_NUM=${RAY_HEAD_GPU_NUM:+1}
+ENV RAY_HEAD_GPU_NUM=${RAY_HEAD_GPU_NUM:-0}
 
 # onnxruntime-gpu (pulled in by the kokoroonnx plugin) dlopen()s
 # libonnxruntime_providers_cuda.so which has plain DT_NEEDED entries for
@@ -101,32 +108,38 @@ RUN mkdir -p /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR && \
 # compile wheels from source (flashinfer, llama-cpp-python, etc.). All of this
 # stays in the builder stage and is NOT copied into prod.
 #
-# The venv is resolved with --extra gpu only (no plugin extras). Plugin
-# wheels are built separately into $MSHIP_PLUGIN_WHEEL_DIR and shipped to Ray
-# workers per-deployment via runtime_env from start.py.
+# The venv is resolved with --extra $MSHIP_VARIANT only (no plugin extras).
+# Plugin wheels are built separately into $MSHIP_PLUGIN_WHEEL_DIR and shipped
+# to Ray workers per-deployment via runtime_env from start.py.
 # =============================================================================
 FROM base AS builder
 
 ARG CUDA_VERSION
 ARG PYTHON_VERSION
+ARG MSHIP_VARIANT
 
-RUN apt-get update -y && \
+RUN if [ "$MSHIP_VARIANT" = "gpu" ]; then \
+    apt-get update -y && \
     apt-get install -y --no-install-recommends gnupg && \
     curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
         | gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
         > /etc/apt/sources.list.d/cuda.list && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/*; \
+    fi
 
-RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && \
-    apt-get update -y && \
+RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
-        git \
+        git && \
+    if [ "$MSHIP_VARIANT" = "gpu" ]; then \
+    CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && \
+    apt-get install -y --no-install-recommends \
         cuda-nvcc-${CUDA_VERSION_DASH} \
         cuda-cuobjdump-${CUDA_VERSION_DASH} \
-        libcurand-dev-${CUDA_VERSION_DASH} && \
+        libcurand-dev-${CUDA_VERSION_DASH}; \
+    fi && \
     rm -rf /var/lib/apt/lists/*
 
 RUN uv python install ${PYTHON_VERSION}
@@ -141,7 +154,7 @@ ADD --chown=$UID:$GID ./plugins plugins
 USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --extra gpu
+    uv sync --locked --no-install-project --extra $MSHIP_VARIANT
 
 # Build plugin wheels into $MSHIP_PLUGIN_WHEEL_DIR. Plugins are NOT installed
 # into /.venv — they ship to Ray workers per-deployment via runtime_env, so the
@@ -155,12 +168,14 @@ RUN make plugin-wheels
 # =============================================================================
 FROM builder AS dev
 
+ARG MSHIP_VARIANT
+
 USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
     # Dynamically inject an --extra flag for every plugin directory
     PLUGIN_EXTRAS=$(find plugins -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | xargs -I {} echo -n "--extra {} ") && \
-    uv sync --locked --no-install-project --extra dev --extra gpu $PLUGIN_EXTRAS
+    uv sync --locked --no-install-project --extra dev --extra $MSHIP_VARIANT $PLUGIN_EXTRAS
 
 ADD --chown=$UID:$GID ./scripts/start_ray.sh /modelship/scripts/start_ray.sh
 

@@ -85,7 +85,7 @@ Commit messages matter: use Conventional Commits prefixes so the changelog gener
 - `llama_cpp` loader is CPU-only today; `num_gpus > 0` is silently warned and forced to 0 in `start.py:build_actor_options`.
 - Metrics are on by default on port **8079** (not 8000). Disable with `--no-metrics` or `MSHIP_METRICS=false`.
 - Log level `TRACE` (below `DEBUG`) is a custom level and logs full request/response payloads.
-- Docker images are multi-arch (amd64 + arm64). The CPU image is a separate `Dockerfile.cpu` with a different tag suffix (`:latest-cpu`).
+- Docker images are multi-arch (amd64 + arm64). The CPU image uses the unified `Dockerfile` with `--build-arg MSHIP_VARIANT=cpu` and has a different tag suffix (`:latest-cpu`).
 
 ## Further reading
 
