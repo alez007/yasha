@@ -19,21 +19,21 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-RAY_FLAGS="--head --dashboard-host=0.0.0.0 --disable-usage-stats"
+RAY_FLAGS=(--head --dashboard-host=0.0.0.0 --disable-usage-stats)
 
 if [ -n "${NUM_CPUS}" ]; then
-    RAY_FLAGS="${RAY_FLAGS} --num-cpus=${NUM_CPUS}"
+    RAY_FLAGS+=(--num-cpus="${NUM_CPUS}")
 fi
 
 if [ -n "${NUM_GPUS}" ]; then
-    RAY_FLAGS="${RAY_FLAGS} --num-gpus=${NUM_GPUS}"
+    RAY_FLAGS+=(--num-gpus="${NUM_GPUS}")
 fi
 
 if [ "${ENABLE_METRICS}" = "true" ]; then
-    RAY_FLAGS="${RAY_FLAGS} --metrics-export-port=${RAY_METRICS_EXPORT_PORT:-8079}"
+    RAY_FLAGS+=(--metrics-export-port="${RAY_METRICS_EXPORT_PORT:-8079}")
 fi
 
-ray start ${RAY_FLAGS}
+ray start "${RAY_FLAGS[@]}"
 
 if ! ray status; then
     echo "ray cluster failed to start"
