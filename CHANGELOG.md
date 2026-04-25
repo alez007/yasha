@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.32] - 2026-04-25
+
+### Added
+- make Ray CPU/GPU allocation auto-detect by default
+- implement dynamic wheel-based plugin deployment
+
+### Fixed
+- restrict plugin discovery to directories in Makefile
+- normalize plugin wheel names to match PEP 427
+
+### Changed
+- refresh roadmap and remove stale MSHIP_PLUGINS references
+- use Bash arrays for safe argument handling in scripts
+- unify GPU/CPU Dockerfiles and update docs for dynamic extras
+- dynamically load plugin extras in dev docker stage
+
 ## [0.1.31] - 2026-04-24
 
 ### Changed
