@@ -4,15 +4,13 @@ ONNX-based text-to-speech using [Kokoro](https://github.com/thewh1teagle/kokoro-
 
 ## Installation
 
+For local development:
+
 ```bash
 uv sync --extra kokoroonnx
 ```
 
-Or via Docker:
-
-```
-MSHIP_PLUGINS=kokoroonnx
-```
+For Docker, no extra setup is needed — plugins referenced in `models.yaml` are loaded automatically from pre-built wheels via Ray's `runtime_env`.
 
 ## Requirements
 

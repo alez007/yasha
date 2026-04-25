@@ -37,7 +37,7 @@ CI mirrors `make lint` + `pytest tests/ -v`. Match it locally before pushing.
 3. Deploys models **additively** by default (each gets a random suffix like `qwen-a3f9k`). Use `--redeploy` to tear everything down first.
 4. Starts a FastAPI Ray Serve app named `modelship api` on port 8000. Override via `--gateway-name` (multiple gateways can coexist on one cluster).
 
-Docker's `scripts/start.sh` auto-runs `uv sync` (extras chosen based on `RAY_HEAD_GPU_NUM`), `ray start`, then `uv run start.py`. The Dev Container overrides this — inside it you must run those steps manually.
+Docker's `scripts/start.sh` starts Ray (auto-detecting CPUs/GPUs unless `RAY_HEAD_CPU_NUM`/`RAY_HEAD_GPU_NUM` set) and runs `uv run --no-sync start.py` against the prebuilt venv (extras chosen by `--build-arg MSHIP_VARIANT=gpu|cpu`). Plugin wheels in `MSHIP_PLUGIN_WHEEL_DIR` ship to Ray workers per-deployment via `runtime_env`, resolved from `models.yaml`. The Dev Container overrides this — inside it you must `uv sync`, `ray start`, and run `start.py` manually.
 
 ## Architecture map
 

@@ -1,7 +1,5 @@
 # Low-resource home-assistant stack for a mini-PC (e.g. Intel N100, 16 GB RAM).
 # CPU-only: quantized chat via llama.cpp, Kokoro ONNX TTS, whisper.cpp STT.
-# Install plugins: `uv sync --extra kokoroonnx --extra whispercpp`
-# Docker: MSHIP_PLUGINS=kokoroonnx,whispercpp
 # Note: kokoroonnx needs espeak-ng on the host (apt-get install -y espeak-ng).
 
 models:

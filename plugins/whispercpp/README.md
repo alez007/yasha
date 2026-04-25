@@ -4,15 +4,13 @@ Speech-to-text using [whisper.cpp](https://github.com/ggerganov/whisper.cpp) via
 
 ## Installation
 
+For local development:
+
 ```bash
 uv sync --extra whispercpp
 ```
 
-Or via Docker:
-
-```
-MSHIP_PLUGINS=whispercpp
-```
+For Docker, no extra setup is needed — plugins referenced in `models.yaml` are loaded automatically from pre-built wheels via Ray's `runtime_env`.
 
 ## Configuration
 

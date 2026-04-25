@@ -46,7 +46,7 @@ Entry point is `start.py` (not a console script, not `python -m`). It:
 3. Deploys models **additively** by default (new deployments get a random suffix, e.g. `qwen-a3f9k`). Pass `--redeploy` to tear everything down first.
 4. Starts a FastAPI gateway Ray Serve app named `modelship api` (override with `--gateway-name`), listening on port `8000`.
 
-The Docker image's `CMD` (`scripts/start.sh`) auto-runs `uv sync` with the right extras based on `RAY_HEAD_GPU_NUM`, then `ray start`, then `uv run start.py`. The Dev Container overrides this, so inside a Dev Container you must run those steps manually (see `docs/development.md`).
+The Docker image's `CMD` (`scripts/start.sh`) starts the Ray head (auto-detecting CPUs/GPUs unless `RAY_HEAD_CPU_NUM` / `RAY_HEAD_GPU_NUM` are set) and runs `uv run --no-sync start.py` against the venv baked at build time (extras selected by `--build-arg MSHIP_VARIANT=gpu|cpu`). Plugin wheels under `MSHIP_PLUGIN_WHEEL_DIR` are injected per-deployment via Ray `runtime_env`, resolved automatically from `models.yaml`. The Dev Container overrides this `CMD`, so inside a Dev Container you must run those steps manually (see `docs/development.md`).
 
 ## Architecture quick map
 

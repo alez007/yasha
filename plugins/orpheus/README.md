@@ -4,15 +4,13 @@ Text-to-speech using [Orpheus TTS](https://github.com/canopylabs/orpheus-tts) by
 
 ## Installation
 
+For local development:
+
 ```bash
 uv sync --extra orpheus
 ```
 
-Or via Docker:
-
-```
-MSHIP_PLUGINS=orpheus
-```
+For Docker, no extra setup is needed — plugins referenced in `models.yaml` are loaded automatically from pre-built wheels via Ray's `runtime_env`.
 
 ## Configuration
 
