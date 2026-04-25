@@ -4,15 +4,13 @@ Text-to-speech using [Bark](https://github.com/suno-ai/bark) by Suno. Supports m
 
 ## Installation
 
+For local development:
+
 ```bash
 uv sync --extra bark
 ```
 
-Or via Docker:
-
-```
-MSHIP_PLUGINS=bark
-```
+For Docker, no extra setup is needed — plugins referenced in `models.yaml` are loaded automatically from pre-built wheels via Ray's `runtime_env`.
 
 ## Configuration
 

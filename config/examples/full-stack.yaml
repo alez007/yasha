@@ -1,6 +1,5 @@
 # Full AI stack on a single GPU: chat + TTS + STT + embeddings + image gen.
 # Tune num_gpus fractions to fit your VRAM budget.
-# Plugins (Kokoro ONNX) require `MSHIP_PLUGINS=kokoroonnx` or `uv sync --extra kokoroonnx`.
 
 models:
   - name: "llm"

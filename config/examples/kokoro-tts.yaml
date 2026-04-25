@@ -1,5 +1,4 @@
-# Kokoro ONNX TTS plugin — install with `uv sync --extra kokoroonnx`
-# or set MSHIP_PLUGINS=kokoroonnx for Docker.
+# Kokoro ONNX TTS plugin.
 #
 # The same model name can appear twice with different configs; requests are
 # load-balanced round-robin across all matching deployments.
