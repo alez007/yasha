@@ -2,11 +2,13 @@
 set -e
 
 usage() {
-    echo "Usage: start_ray.sh --num-cpus <n> --num-gpus <n> [--enable-metrics <true|false>]"
+    echo "Usage: start_ray.sh [--num-cpus <n>] [--num-gpus <n>] [--enable-metrics <true|false>]"
     exit 1
 }
 
 ENABLE_METRICS="true"
+NUM_CPUS=""
+NUM_GPUS=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -17,20 +19,21 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[ -z "${NUM_CPUS}" ] && usage
-[ -z "${NUM_GPUS}" ] && usage
+RAY_FLAGS="--head --dashboard-host=0.0.0.0 --disable-usage-stats"
 
-METRICS_FLAG=""
-if [ "${ENABLE_METRICS}" = "true" ]; then
-    METRICS_FLAG="--metrics-export-port=${RAY_METRICS_EXPORT_PORT:-8079}"
+if [ -n "${NUM_CPUS}" ]; then
+    RAY_FLAGS="${RAY_FLAGS} --num-cpus=${NUM_CPUS}"
 fi
 
-ray start --head \
-    --dashboard-host=0.0.0.0 \
-    --num-cpus="${NUM_CPUS}" \
-    --num-gpus="${NUM_GPUS}" \
-    --disable-usage-stats \
-    ${METRICS_FLAG}
+if [ -n "${NUM_GPUS}" ]; then
+    RAY_FLAGS="${RAY_FLAGS} --num-gpus=${NUM_GPUS}"
+fi
+
+if [ "${ENABLE_METRICS}" = "true" ]; then
+    RAY_FLAGS="${RAY_FLAGS} --metrics-export-port=${RAY_METRICS_EXPORT_PORT:-8079}"
+fi
+
+ray start ${RAY_FLAGS}
 
 if ! ray status; then
     echo "ray cluster failed to start"

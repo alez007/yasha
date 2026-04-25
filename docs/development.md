@@ -18,18 +18,16 @@ The recommended way to develop Modelship is with VS Code Dev Containers. The con
 
 2. Open the repo in VS Code and run **Dev Containers: Reopen in Container** from the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
 
-3. Once inside the container, sync dependencies and start the Ray head node:
+3. Once inside the container, sync dependencies and start the Ray head node. By default, Ray will auto-detect the available CPUs and GPUs. You can restrict its usage by passing `--num-cpus` and `--num-gpus`.
 
    ```bash
    # Sync project deps (add --extra <plugin> for each plugin you need)
    uv sync --extra dev
 
-   # Start the Ray head node
+   # Start the Ray head node (auto-detects resources by default)
    ray start --head \
      --port=${RAY_REDIS_PORT} \
      --dashboard-host=0.0.0.0 \
-     --num-cpus=${RAY_HEAD_CPU_NUM} \
-     --num-gpus=${RAY_HEAD_GPU_NUM} \
      --disable-usage-stats
    ```
 
@@ -56,8 +54,8 @@ The following environment variables are set in the dev image with sensible defau
 |---|---|---|
 | `RAY_REDIS_PORT` | `6379` | Ray GCS port |
 | `RAY_CLUSTER_ADDRESS` | `ray://0.0.0.0` | Ray cluster address |
-| `RAY_HEAD_CPU_NUM` | `2` | CPUs allocated to Ray head |
-| `RAY_HEAD_GPU_NUM` | `1` | GPUs allocated to Ray head (set to `0` for CPU-only development) |
+| `RAY_HEAD_CPU_NUM` | *(unset)* | **Optional override:** CPUs allocated to Ray head. If unset, Ray auto-detects. |
+| `RAY_HEAD_GPU_NUM` | *(unset)* | **Optional override:** GPUs allocated to Ray head. If unset, Ray auto-detects. |
 | `MSHIP_CACHE_DIR` | `/.cache` | Model cache directory |
 | `MSHIP_USE_EXISTING_RAY_CLUSTER` | `false` | Set to `true` to skip starting a Ray head node |
 
@@ -93,7 +91,6 @@ The dev image does not bake in source files. Mount the repo root so changes take
 ```bash
 docker run -it --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token_here \
-  -e RAY_HEAD_GPU_NUM=1 \
   --mount type=bind,src=./,dst=/modelship \
   -v ./models-cache:/.cache \
   -p 8000:8000 modelship_dev
@@ -103,13 +100,12 @@ docker run -it --rm --shm-size=8g --gpus all \
 ```bash
 docker run -it --rm --shm-size=8g \
   -e HF_TOKEN=your_token_here \
-  -e RAY_HEAD_GPU_NUM=0 \
   --mount type=bind,src=./,dst=/modelship \
   -v ./models-cache:/.cache \
   -p 8000:8000 modelship_dev_cpu
 ```
 
-The container's entrypoint (`start.sh`) automatically syncs dependencies, starts the Ray head node, and drops into a shell. Then start the server:
+The container's entrypoint (`start.sh`) automatically starts the Ray head node (auto-detecting resources) and drops into a shell. Then start the server:
 
 ```bash
 uv run start.py
