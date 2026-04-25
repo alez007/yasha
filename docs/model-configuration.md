@@ -351,8 +351,8 @@ In this example, requests to model `kokoro` are distributed across three backend
 | `CUDA_DEVICE_ORDER` | GPU enumeration order; set to `PCI_BUS_ID` for deterministic ordering in multi-GPU systems | `PCI_BUS_ID` |
 | `RAY_REDIS_PORT` | Ray GCS server port | `6379` |
 | `RAY_DASHBOARD_PORT` | Ray dashboard port | `8265` |
-| `RAY_HEAD_CPU_NUM` | CPUs allocated to Ray head | `2` |
-| `RAY_HEAD_GPU_NUM` | GPUs allocated to Ray head | `2` |
+| `RAY_HEAD_CPU_NUM` | Optional override: CPUs allocated to Ray head | — |
+| `RAY_HEAD_GPU_NUM` | Optional override: GPUs allocated to Ray head | — |
 | `RAY_OBJECT_STORE_SHM_SIZE` | Shared memory for Ray object store | `8g` |
 | `VLLM_USE_V1` | Use vLLM v1 API | `1` |
 | `ONNX_PROVIDER` | ONNX Runtime execution provider | `CUDAExecutionProvider` |

@@ -150,7 +150,6 @@ For high-throughput GPU inference, use the standard image and add `--gpus all`. 
 ```bash
 docker run --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token_here \
-  -e RAY_HEAD_GPU_NUM=1 \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 \

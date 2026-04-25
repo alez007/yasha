@@ -73,7 +73,6 @@ ENV MSHIP_CACHE_DIR=/.cache
 ENV UV_CACHE_DIR=${MSHIP_CACHE_DIR}/uv
 ENV RAY_REDIS_PORT=6379
 ENV RAY_CLUSTER_ADDRESS=0.0.0.0
-ENV RAY_HEAD_CPU_NUM=2
 ENV MSHIP_USE_EXISTING_RAY_CLUSTER=false
 ENV MSHIP_METRICS=true
 ENV RAY_METRICS_EXPORT_PORT=8079
@@ -82,11 +81,6 @@ ENV MSHIP_LOG_FORMAT=text
 ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv/python
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
 ENV MSHIP_PLUGIN_WHEEL_DIR=/opt/modelship/plugin-wheels
-
-# Set default RAY_HEAD_GPU_NUM based on variant
-ENV RAY_HEAD_GPU_NUM=${MSHIP_VARIANT#cpu}
-ENV RAY_HEAD_GPU_NUM=${RAY_HEAD_GPU_NUM:+1}
-ENV RAY_HEAD_GPU_NUM=${RAY_HEAD_GPU_NUM:-0}
 
 # onnxruntime-gpu (pulled in by the kokoroonnx plugin) dlopen()s
 # libonnxruntime_providers_cuda.so which has plain DT_NEEDED entries for
