@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.33] - 2026-04-25
+
+### Fixed
+- propagate UID/GID ARGs to all Dockerfile stages
+
 ## [0.1.32] - 2026-04-25
 
 ### Added
