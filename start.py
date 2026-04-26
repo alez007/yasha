@@ -147,6 +147,19 @@ def build_actor_options(config: ModelshipModelConfig, plugin_wheel: Path | None 
         tp = config.vllm_engine_kwargs.tensor_parallel_size if config.vllm_engine_kwargs else 1
         tp_backend = config.vllm_engine_kwargs.distributed_executor_backend if config.vllm_engine_kwargs else None
 
+        # vLLM validates world_size against the outer actor's visible GPUs before consulting
+        # the executor backend. With tp>1 and no backend set, the outer actor has 0 GPUs
+        # (ray-backend path below) and ParallelConfig blows up. Default to mp so the outer
+        # actor owns all tp GPUs and forks workers as subprocesses.
+        if tp > 1 and tp_backend is None:
+            config.vllm_engine_kwargs.distributed_executor_backend = "mp"
+            tp_backend = "mp"
+            logger.info(
+                "Defaulting distributed_executor_backend='mp' for model '%s' (tensor_parallel_size=%d).",
+                config.name,
+                tp,
+            )
+
         if config.num_gpus == 0:
             num_gpus = 0
         elif tp > 1 and tp_backend == "mp":

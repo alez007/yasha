@@ -36,7 +36,7 @@ dependencies = [
 gpu = [
     "torch>=2.10.0",
     "torchvision>=0.25.0",
-    "transformers>=4.57.5",
+    "transformers>=5.5.3",
     "sentence-transformers>=3.0.0",
     "flashinfer-python>=0.6.1",
     "vllm==0.19.1",
@@ -49,7 +49,7 @@ gpu = [
 cpu = [
     "torch>=2.10.0",
     "torchvision>=0.25.0",
-    "transformers>=4.57.5",
+    "transformers>=5.5.3",
     "sentence-transformers>=3.0.0",
     "llama-cpp-python>=0.3.6",
     "onnxruntime>=1.20.1",

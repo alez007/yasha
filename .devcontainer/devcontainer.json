@@ -46,6 +46,7 @@
     "vscode": {
       "extensions": [
         "anthropic.claude-code",
+        "google.gemini-cli-vscode-ide-companion",
         "charliermarsh.ruff",
         "ms-python.python",
         "ms-pyright.pyright"
