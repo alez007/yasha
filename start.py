@@ -406,7 +406,7 @@ def main(argv: list[str] | None = None):
                 except Exception:
                     # Check if the deployment actively reported a fatal init error before dying
                     try:
-                        fatal_err = ray.get(coordinator.pop_fatal_error.remote(config.name), timeout=2.0)
+                        fatal_err = ray.get(coordinator.pop_fatal_error.remote(deployment_name), timeout=2.0)
                     except Exception:
                         fatal_err = None
 

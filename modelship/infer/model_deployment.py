@@ -102,12 +102,11 @@ class ModelDeployment:
 
             err_msg = f"{config.loader.value} engine init failed for '{config.name}': {e}"
             try:
-                import ray
-
                 from modelship.infer.deploy_coordinator import get_or_create_coordinator
 
                 coordinator = get_or_create_coordinator()
-                ray.get(coordinator.report_fatal_error.remote(config.name, err_msg), timeout=2.0)
+                app_name = serve.get_replica_context().app_name
+                await coordinator.report_fatal_error.remote(app_name, err_msg)
             except Exception:
                 logger.exception("Failed to report fatal error to coordinator for %s", config.name)
 
