@@ -434,10 +434,14 @@ def main(argv: list[str] | None = None):
                         )
                         deployed_this_run.pop(deployment_name, None)
                 finally:
-                    try:
-                        ray.get(coordinator.release.remote(operator_id))
-                    except Exception:
-                        logger.exception("Failed to release coordinator lock (operator=%s)", operator_id)
+                    # Ray may already be shut down (e.g. SIGINT cleanup ran
+                    # _shutdown_ray); the OperatorProbe death-detection will
+                    # free the lock either way once the driver dies.
+                    if ray.is_initialized():
+                        try:
+                            ray.get(coordinator.release.remote(operator_id))
+                        except Exception:
+                            logger.exception("Failed to release coordinator lock (operator=%s)", operator_id)
 
             if made_progress:
                 passes_with_no_progress = 0

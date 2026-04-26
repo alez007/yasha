@@ -1,3 +1,8 @@
+import contextlib
+import os
+import subprocess
+import sys
+import textwrap
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -36,8 +41,6 @@ def _reap_child_processes() -> None:
     OOM during graph capture), those workers never get reaped — they reparent
     to PID 1 and hold their full GPU allocation until manually killed.
     """
-    import contextlib
-
     try:
         import psutil
 
@@ -60,11 +63,85 @@ def _reap_child_processes() -> None:
         logger.exception("Failed to reap child subprocesses")
 
 
+# Sidecar program: tracks the actor's descendants while the actor is alive,
+# then SIGKILLs them once the actor's process disappears. Run as a fresh
+# Python interpreter via `python -c` so it has no inherited imports beyond
+# what it imports here. Survives `ray stop` because it's a plain OS
+# subprocess in a new session, not a Ray-managed actor.
+_ORPHAN_REAPER_SOURCE = textwrap.dedent(
+    """
+    import os, signal, sys, time
+    import psutil
+
+    parent_pid = int(sys.argv[1])
+    self_pid = os.getpid()
+
+    try:
+        parent = psutil.Process(parent_pid)
+    except psutil.NoSuchProcess:
+        sys.exit(0)
+
+    # Track (pid, create_time) so we don't kill an unrelated process that
+    # happened to inherit a recycled PID after our descendant exited.
+    tracked: dict[int, float] = {}
+    while True:
+        try:
+            if not parent.is_running() or parent.status() == psutil.STATUS_ZOMBIE:
+                break
+            for c in parent.children(recursive=True):
+                if c.pid == self_pid:
+                    continue
+                try:
+                    tracked[c.pid] = c.create_time()
+                except psutil.NoSuchProcess:
+                    pass
+        except psutil.NoSuchProcess:
+            break
+        time.sleep(0.5)
+
+    for pid, ctime in tracked.items():
+        try:
+            proc = psutil.Process(pid)
+            if proc.create_time() != ctime:
+                continue  # PID was recycled — not our process
+            proc.kill()
+        except (psutil.NoSuchProcess, ProcessLookupError):
+            pass
+    """
+).strip()
+
+
+def _spawn_orphan_reaper() -> subprocess.Popen | None:
+    """Fork a sidecar that SIGKILLs our descendants if we die ungracefully.
+
+    Python signal handlers can't preempt C-extension code, so SIGTERM
+    received during vLLM CUDA init is queued and never serviced before
+    raylet escalates to SIGKILL — leaving Worker_TP* subprocesses
+    orphaned with full GPU memory mapped. The sidecar runs in its own
+    session and watches our PID from the kernel's perspective, so it
+    outlives our death (graceful or not) and reaps the workers.
+    """
+    try:
+        return subprocess.Popen(
+            [sys.executable, "-c", _ORPHAN_REAPER_SOURCE, str(os.getpid())],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except Exception:
+        logger.exception("Failed to spawn orphan reaper sidecar")
+        return None
+
+
 @serve.deployment
 class ModelDeployment:
     async def __init__(self, config: ModelshipModelConfig):
         configure_logging()
         self.config = config
+        # Spawn before loader init so the sidecar exists even if init blocks
+        # in C code and the actor gets SIGKILL'd before __init__ completes.
+        self._orphan_reaper = _spawn_orphan_reaper()
         start = time.monotonic()
         self.infer: BaseInfer
         try:
@@ -93,12 +170,7 @@ class ModelDeployment:
             await self.infer.warmup()
         except Exception as e:
             MODEL_LOAD_FAILURES_TOTAL.inc(tags={"model": config.name, "loader": config.loader.value})
-            if infer := getattr(self, "infer", None):
-                try:
-                    infer.shutdown()
-                except Exception:
-                    logger.exception("infer.shutdown() failed during init cleanup for %s", config.name)
-            _reap_child_processes()
+            self._graceful_teardown()
 
             err_msg = f"{config.loader.value} engine init failed for '{config.name}': {e}"
             try:
@@ -117,11 +189,21 @@ class ModelDeployment:
             )
 
     def __del__(self):
+        self._graceful_teardown()
+
+    def _graceful_teardown(self) -> None:
         if infer := getattr(self, "infer", None):
             try:
                 infer.shutdown()
             except Exception:
                 logger.exception("Failed to shutdown infer for %s", self.config.name)
+        _reap_child_processes()
+        # Cleanup is done — let the sidecar exit. It would auto-die on actor
+        # exit anyway (parent gone), but kill it explicitly so it doesn't sit
+        # around for its next 0.5s poll tick.
+        if reaper := getattr(self, "_orphan_reaper", None):
+            with contextlib.suppress(Exception):
+                reaper.terminate()
 
     @staticmethod
     def _set_request_id(request_id: str | None) -> None:
