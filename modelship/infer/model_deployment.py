@@ -91,7 +91,7 @@ class ModelDeployment:
 
             await self.infer.start()
             await self.infer.warmup()
-        except Exception:
+        except Exception as e:
             MODEL_LOAD_FAILURES_TOTAL.inc(tags={"model": config.name, "loader": config.loader.value})
             if infer := getattr(self, "infer", None):
                 try:
@@ -99,7 +99,18 @@ class ModelDeployment:
                 except Exception:
                     logger.exception("infer.shutdown() failed during init cleanup for %s", config.name)
             _reap_child_processes()
-            raise
+
+            err_msg = f"{config.loader.value} engine init failed for '{config.name}': {e}"
+            try:
+                from modelship.infer.deploy_coordinator import get_or_create_coordinator
+
+                coordinator = get_or_create_coordinator()
+                app_name = serve.get_replica_context().app_name
+                await coordinator.report_fatal_error.remote(app_name, err_msg)
+            except Exception:
+                logger.exception("Failed to report fatal error to coordinator for %s", config.name)
+
+            raise RuntimeError(err_msg) from e
         finally:
             MODEL_LOAD_DURATION_SECONDS.observe(
                 time.monotonic() - start, tags={"model": config.name, "loader": config.loader.value}

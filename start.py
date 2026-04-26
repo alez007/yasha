@@ -358,6 +358,7 @@ def main(argv: list[str] | None = None):
         # because another operator holds the lock) are skipped and retried on
         # the next pass. Placeable models deploy in configured order (TP>1 first).
         remaining = list(sorted_models)
+        fatally_failed: list[tuple[str, str]] = []
         pass_count = 0
         passes_with_no_progress = 0
 
@@ -390,6 +391,7 @@ def main(argv: list[str] | None = None):
                             name=deployment_name,
                             num_replicas=config.num_replicas,
                             ray_actor_options=actor_opts,
+                            max_constructor_retry_count=1,
                         ).bind(config),
                         name=deployment_name,
                         route_prefix=None,
@@ -402,12 +404,35 @@ def main(argv: list[str] | None = None):
                     remaining.remove(config)
                     made_progress = True
                 except Exception:
-                    logger.exception(
-                        "Deploy failed for %s (deployment=%s); will retry next pass.",
-                        config.name,
-                        deployment_name,
-                    )
-                    deployed_this_run.pop(deployment_name, None)
+                    # Check if the deployment actively reported a fatal init error before dying
+                    try:
+                        fatal_err = ray.get(coordinator.pop_fatal_error.remote(deployment_name), timeout=2.0)
+                    except Exception:
+                        fatal_err = None
+
+                    if fatal_err is not None:
+                        # Re-raise to fall into the permanent skip logic instead of retrying
+                        logger.error(
+                            "Skipping model '%s' permanently (deployment=%s): %s",
+                            config.name,
+                            deployment_name,
+                            fatal_err,
+                        )
+                        deployed_this_run.pop(deployment_name, None)
+                        try:
+                            serve.delete(deployment_name)
+                        except Exception:
+                            logger.exception("Failed to delete failed deployment: %s", deployment_name)
+                        fatally_failed.append((config.name, str(fatal_err)))
+                        remaining.remove(config)
+                        made_progress = True
+                    else:
+                        logger.exception(
+                            "Deploy failed for %s (deployment=%s); will retry next pass.",
+                            config.name,
+                            deployment_name,
+                        )
+                        deployed_this_run.pop(deployment_name, None)
                 finally:
                     try:
                         ray.get(coordinator.release.remote(operator_id))
@@ -433,6 +458,14 @@ def main(argv: list[str] | None = None):
             len(deployed_this_run),
             pass_count,
         )
+
+        if fatally_failed:
+            logger.error(
+                "%d model(s) failed to deploy and were skipped — fix config and restart:",
+                len(fatally_failed),
+            )
+            for name, reason in fatally_failed:
+                logger.error("  - %s: %s", name, reason)
 
         if fresh_install:
             # On fresh install, stay alive as the operator process.
