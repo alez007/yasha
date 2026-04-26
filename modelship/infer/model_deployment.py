@@ -47,7 +47,7 @@ def _reap_child_processes() -> None:
         logger.warning(
             "Reaping %d orphan subprocess(es): %s",
             len(children),
-            [(c.pid, c.name()) for c in children],
+            [c.pid for c in children],
         )
         for c in children:
             with contextlib.suppress(psutil.NoSuchProcess):

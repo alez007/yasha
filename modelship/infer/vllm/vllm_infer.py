@@ -329,7 +329,9 @@ class VllmInfer(BaseInfer):
             return TranscriptionResponseVerbose.model_validate(result.model_dump())
         if isinstance(result, VllmTranscriptionResponse):
             return TranscriptionResponse.model_validate(result.model_dump())
-        return cast("AsyncGenerator[str, None]", result)
+        if isinstance(result, AsyncGenerator):
+            return cast("AsyncGenerator[str, None]", result)
+        raise TypeError(f"Unexpected transcription result type: {type(result).__name__}")
 
     async def create_translation(
         self, audio_data: bytes, request: TranslationRequest, raw_request: RawRequestProxy
@@ -346,4 +348,6 @@ class VllmInfer(BaseInfer):
             return TranslationResponseVerbose.model_validate(result.model_dump())
         if isinstance(result, VllmTranslationResponse):
             return TranslationResponse.model_validate(result.model_dump())
-        return cast("AsyncGenerator[str, None]", result)
+        if isinstance(result, AsyncGenerator):
+            return cast("AsyncGenerator[str, None]", result)
+        raise TypeError(f"Unexpected translation result type: {type(result).__name__}")
