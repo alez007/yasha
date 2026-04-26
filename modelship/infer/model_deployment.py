@@ -28,6 +28,38 @@ from modelship.openai.protocol import (
 logger = get_logger("infer.deployment")
 
 
+def _reap_child_processes() -> None:
+    """Kill any subprocesses still alive in this actor process.
+
+    vLLM with distributed_executor_backend='mp' forks Worker_TP* subprocesses
+    before the AsyncLLM constructor returns. If init then raises (e.g. CUDA
+    OOM during graph capture), those workers never get reaped — they reparent
+    to PID 1 and hold their full GPU allocation until manually killed.
+    """
+    import contextlib
+
+    try:
+        import psutil
+
+        children = psutil.Process().children(recursive=True)
+        if not children:
+            return
+        logger.warning(
+            "Reaping %d orphan subprocess(es): %s",
+            len(children),
+            [c.pid for c in children],
+        )
+        for c in children:
+            with contextlib.suppress(psutil.NoSuchProcess):
+                c.terminate()
+        _, alive = psutil.wait_procs(children, timeout=5)
+        for c in alive:
+            with contextlib.suppress(psutil.NoSuchProcess):
+                c.kill()
+    except Exception:
+        logger.exception("Failed to reap child subprocesses")
+
+
 @serve.deployment
 class ModelDeployment:
     async def __init__(self, config: ModelshipModelConfig):
@@ -61,6 +93,12 @@ class ModelDeployment:
             await self.infer.warmup()
         except Exception:
             MODEL_LOAD_FAILURES_TOTAL.inc(tags={"model": config.name, "loader": config.loader.value})
+            if infer := getattr(self, "infer", None):
+                try:
+                    infer.shutdown()
+                except Exception:
+                    logger.exception("infer.shutdown() failed during init cleanup for %s", config.name)
+            _reap_child_processes()
             raise
         finally:
             MODEL_LOAD_DURATION_SECONDS.observe(

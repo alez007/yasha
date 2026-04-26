@@ -12,14 +12,32 @@ from vllm.entrypoints.logger import RequestLogger
 from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionRequest as VllmChatCompletionRequest,
 )
+from vllm.entrypoints.openai.chat_completion.protocol import (
+    ChatCompletionResponse as VllmChatCompletionResponse,
+)
 from vllm.entrypoints.openai.chat_completion.serving import OpenAIServingChat
+from vllm.entrypoints.openai.engine.protocol import (
+    ErrorResponse as VllmErrorResponse,
+)
 from vllm.entrypoints.openai.models.protocol import BaseModelPath
 from vllm.entrypoints.openai.models.serving import OpenAIServingModels
 from vllm.entrypoints.openai.speech_to_text.protocol import (
     TranscriptionRequest as VllmTranscriptionRequest,
 )
 from vllm.entrypoints.openai.speech_to_text.protocol import (
+    TranscriptionResponse as VllmTranscriptionResponse,
+)
+from vllm.entrypoints.openai.speech_to_text.protocol import (
+    TranscriptionResponseVerbose as VllmTranscriptionResponseVerbose,
+)
+from vllm.entrypoints.openai.speech_to_text.protocol import (
     TranslationRequest as VllmTranslationRequest,
+)
+from vllm.entrypoints.openai.speech_to_text.protocol import (
+    TranslationResponse as VllmTranslationResponse,
+)
+from vllm.entrypoints.openai.speech_to_text.protocol import (
+    TranslationResponseVerbose as VllmTranslationResponseVerbose,
 )
 from vllm.entrypoints.openai.speech_to_text.serving import OpenAIServingTranscription, OpenAIServingTranslation
 from vllm.entrypoints.pooling.embed.protocol import (
@@ -279,7 +297,11 @@ class VllmInfer(BaseInfer):
             return await super().create_chat_completion(request, raw_request)
         vllm_request = VllmChatCompletionRequest(**request.model_dump())
         result = await self.serving_chat.create_chat_completion(vllm_request, cast("Request", raw_request))
-        return cast("ErrorResponse | ChatCompletionResponse | AsyncGenerator[str, None]", result)
+        if isinstance(result, VllmErrorResponse):
+            return ErrorResponse.model_validate(result.model_dump())
+        if isinstance(result, VllmChatCompletionResponse):
+            return ChatCompletionResponse.model_validate(result.model_dump())
+        return cast("AsyncGenerator[str, None]", result)
 
     async def create_embedding(
         self, request: EmbeddingRequest, raw_request: RawRequestProxy
@@ -301,9 +323,15 @@ class VllmInfer(BaseInfer):
         result = await self.serving_transcription.create_transcription(
             audio_data, vllm_request, cast("Request", raw_request)
         )
-        return cast(
-            "ErrorResponse | TranscriptionResponse | TranscriptionResponseVerbose | AsyncGenerator[str, None]", result
-        )
+        if isinstance(result, VllmErrorResponse):
+            return ErrorResponse.model_validate(result.model_dump())
+        if isinstance(result, VllmTranscriptionResponseVerbose):
+            return TranscriptionResponseVerbose.model_validate(result.model_dump())
+        if isinstance(result, VllmTranscriptionResponse):
+            return TranscriptionResponse.model_validate(result.model_dump())
+        if isinstance(result, AsyncGenerator):
+            return cast("AsyncGenerator[str, None]", result)
+        raise TypeError(f"Unexpected transcription result type: {type(result).__name__}")
 
     async def create_translation(
         self, audio_data: bytes, request: TranslationRequest, raw_request: RawRequestProxy
@@ -314,6 +342,12 @@ class VllmInfer(BaseInfer):
         result = await self.serving_translation.create_translation(
             audio_data, vllm_request, cast("Request", raw_request)
         )
-        return cast(
-            "ErrorResponse | TranslationResponse | TranslationResponseVerbose | AsyncGenerator[str, None]", result
-        )
+        if isinstance(result, VllmErrorResponse):
+            return ErrorResponse.model_validate(result.model_dump())
+        if isinstance(result, VllmTranslationResponseVerbose):
+            return TranslationResponseVerbose.model_validate(result.model_dump())
+        if isinstance(result, VllmTranslationResponse):
+            return TranslationResponse.model_validate(result.model_dump())
+        if isinstance(result, AsyncGenerator):
+            return cast("AsyncGenerator[str, None]", result)
+        raise TypeError(f"Unexpected translation result type: {type(result).__name__}")
