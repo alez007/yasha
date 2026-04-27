@@ -17,6 +17,7 @@ from modelship.openai.protocol import (
     ErrorResponse,
     create_error_response,
 )
+from modelship.utils.openai import flatten_message_content
 
 logger = get_logger("infer.llama_cpp")
 
@@ -144,14 +145,7 @@ class LlamaCppInfer(BaseInfer):
 
         # Pre-process messages: llama-cpp-python's Jinja templates often expect 'content'
         # to be a string. If it's a list (OpenAI multi-modal format), flatten it to text.
-        messages = []
-        for msg in request.messages:
-            processed_msg = msg.copy()
-            content = msg.get("content")
-            if isinstance(content, list):
-                text_parts = [part["text"] for part in content if isinstance(part, dict) and part.get("type") == "text"]
-                processed_msg["content"] = " ".join(text_parts)
-            messages.append(processed_msg)
+        messages = flatten_message_content(request.messages)
 
         all_params = request.model_dump(exclude_none=True)
         all_params["messages"] = messages
