@@ -55,7 +55,9 @@ wait_ready() {
     local name="$1"
     local deadline=$(( $(date +%s) + READY_TIMEOUT ))
     while (( $(date +%s) < deadline )); do
-        if curl -fsS http://localhost:8000/v1/models >/dev/null 2>&1; then
+        # /v1/models reachable AND lists the served model id
+        if curl -fsS http://localhost:8000/v1/models 2>/dev/null \
+            | grep -q "\"id\":\"$SERVED_NAME\""; then
             return 0
         fi
         if ! docker ps --filter "name=^${name}$" --format '{{.Names}}' | grep -q "$name"; then
@@ -65,7 +67,7 @@ wait_ready() {
         fi
         sleep 2
     done
-    echo "timeout waiting for $name to be ready" >&2
+    echo "timeout waiting for $name to be ready (served=$SERVED_NAME)" >&2
     docker logs --tail 80 "$name" >&2 || true
     return 1
 }
@@ -143,7 +145,11 @@ run_sweep() {
 start_modelship() {
     docker run -d --gpus all --ipc=host --network host \
         -e MSHIP_METRICS=true \
+        -e MSHIP_GATEWAY_REPLICAS="${MSHIP_GATEWAY_REPLICAS:-1}" \
+        -e MSHIP_GATEWAY_MAX_ONGOING="${MSHIP_GATEWAY_MAX_ONGOING:-1024}" \
         -v "$BENCH_DIR/configs/bench.yaml:/modelship/config/models.yaml:ro" \
+        -v "$REPO_ROOT/start.py:/modelship/start.py:ro" \
+        -v "$REPO_ROOT/modelship:/modelship/modelship:ro" \
         -v "$CACHE_DIR:/.cache:rw" \
         --name bench-modelship "$IMAGE" >/dev/null
 }
@@ -163,7 +169,8 @@ start_rawvllm() {
 scrape_prom() {
     local out="$1"
     curl -fsS http://localhost:8079/metrics 2>/dev/null \
-        | awk '/^ray_modelship_(request|generation)_duration_seconds_(sum|count)/' \
+        | awk '/^ray_modelship_(request|generation)_duration_seconds_(sum|count)/ \
+              || /^ray_serve_request_router_fulfillment_time_ms_(sum|count)/' \
         > "$out" || true
 }
 
@@ -271,20 +278,27 @@ PY
         python3 - "$RESULTS_DIR/modelship/prom.txt" <<'PY'
 import sys, re
 sums = {}; counts = {}
+pat = re.compile(
+    r'(ray_modelship_(?:request|generation)_duration_seconds'
+    r'|ray_serve_request_router_fulfillment_time_ms)'
+    r'_(sum|count)\S*\s+([0-9eE+\-.]+)'
+)
 for line in open(sys.argv[1]):
-    m = re.match(r'(ray_modelship_(?:request|generation)_duration_seconds)_(sum|count)\S*\s+([0-9eE+\-.]+)', line)
+    m = pat.match(line)
     if not m: continue
     name, kind, val = m.group(1), m.group(2), float(m.group(3))
     (sums if kind=="sum" else counts).setdefault(name, 0.0)
     if kind == "sum": sums[name] += val
     else: counts[name] += val
-def mean(n):
-    return sums.get(n, 0.0) / counts[n] if counts.get(n) else float("nan")
-e2e = mean("ray_modelship_request_duration_seconds")
-eng = mean("ray_modelship_generation_duration_seconds")
-print(f"- mean E2E (gateway): **{e2e*1000:.1f} ms**")
-print(f"- mean engine (vllm): **{eng*1000:.1f} ms**")
-print(f"- internal overhead: **{(e2e-eng)*1000:.1f} ms** ({(e2e-eng)/e2e*100:.1f}% of E2E)" if e2e else "- no data")
+def mean(n, scale=1.0):
+    return (sums.get(n, 0.0) / counts[n] * scale) if counts.get(n) else float("nan")
+e2e = mean("ray_modelship_request_duration_seconds")            # seconds
+eng = mean("ray_modelship_generation_duration_seconds")         # seconds
+qms = mean("ray_serve_request_router_fulfillment_time_ms")      # already ms
+print(f"- mean E2E (gateway):       **{e2e*1000:.1f} ms**")
+print(f"- mean engine (vllm):       **{eng*1000:.1f} ms**")
+print(f"- mean router queue wait:   **{qms:.1f} ms**")
+print(f"- gateway internal overhead: **{(e2e-eng)*1000:.1f} ms** ({(e2e-eng)/e2e*100:.1f}% of E2E)" if e2e else "- no data")
 PY
     else
         echo "_no metrics scraped_"
