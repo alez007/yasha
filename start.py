@@ -7,6 +7,7 @@ import string
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 # Must be set BEFORE `import ray`: ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV
 # is a module-level constant, evaluated at ray's import time. Leaving it on
@@ -328,16 +329,28 @@ def main(argv: list[str] | None = None):
         # with the gateway as they come up (incremental add_models calls).
         if fresh_install:
             logger.info("Starting API gateway...")
+            # Ray Serve's default `max_ongoing_requests` is 100 per replica. For a
+            # streaming LLM gateway that's a hard throttle: each concurrent client
+            # holds a slot for the entire generation, so under bursty load the
+            # gateway becomes the bottleneck long before the engine. 1024 is
+            # generous and matches typical engine-side concurrency budgets.
+            gateway_replicas = int(os.environ.get("MSHIP_GATEWAY_REPLICAS", "1"))
+            gateway_max_ongoing = int(os.environ.get("MSHIP_GATEWAY_MAX_ONGOING", "1024"))
             serve.run(
                 ModelshipAPI.options(
                     name=gateway_name,
-                    num_replicas=1,
+                    num_replicas=gateway_replicas,
+                    max_ongoing_requests=gateway_max_ongoing,
                     ray_actor_options={"num_cpus": 0},
                 ).bind(),
                 name=gateway_name,
                 route_prefix="/",
             )
-            logger.info("Gateway up — /health and /readyz now serving.")
+            logger.info(
+                "Gateway up — /health and /readyz now serving. (replicas=%d, max_ongoing=%d)",
+                gateway_replicas,
+                gateway_max_ongoing,
+            )
 
         gateway_handle = serve.get_app_handle(gateway_name)
         try:
@@ -386,13 +399,16 @@ def main(argv: list[str] | None = None):
                 try:
                     logger.info("Deploying model: %s (deployment: %s)", config.name, deployment_name)
                     deployed_this_run[deployment_name] = config.name
+                    deploy_options: dict[str, Any] = {
+                        "name": deployment_name,
+                        "num_replicas": config.num_replicas,
+                        "ray_actor_options": actor_opts,
+                        "max_constructor_retry_count": 1,
+                    }
+                    if config.max_ongoing_requests is not None:
+                        deploy_options["max_ongoing_requests"] = config.max_ongoing_requests
                     serve.run(
-                        ModelDeployment.options(
-                            name=deployment_name,
-                            num_replicas=config.num_replicas,
-                            ray_actor_options=actor_opts,
-                            max_constructor_retry_count=1,
-                        ).bind(config),
+                        ModelDeployment.options(**deploy_options).bind(config),
                         name=deployment_name,
                         route_prefix=None,
                     )
