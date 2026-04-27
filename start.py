@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import random
 import signal
@@ -16,16 +17,26 @@ from pathlib import Path
 # worker. Keep the uv hook off so runtime_env.pip's py_executable survives.
 os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "false")
 
-import ray
-from pydantic_yaml import parse_yaml_raw_as
-from ray import serve
-from ray.serve.config import HTTPOptions
+# Set RAY_LOG_LEVEL/RAY_SERVE_LOG_LEVEL/VLLM_LOGGING_LEVEL/TRANSFORMERS_VERBOSITY
+# from MSHIP_LOG_LEVEL BEFORE `import ray` — Ray's loggers latch the env value
+# at import time, so configuring them later (in configure_logging) is too late
+# for the driver process. The level is env-var-only (no CLI flag) since argv
+# is parsed inside main(), well after `import ray`.
+from modelship.logging import propagate_lib_log_env
 
-from modelship.infer.deploy_coordinator import OperatorProbe, get_or_create_coordinator
-from modelship.infer.infer_config import ModelLoader, ModelshipConfig, ModelshipModelConfig
-from modelship.infer.model_deployment import ModelDeployment
-from modelship.logging import configure_logging, get_logger
-from modelship.openai.api import ModelshipAPI
+propagate_lib_log_env()
+
+import ray  # noqa: E402
+from pydantic_yaml import parse_yaml_raw_as  # noqa: E402
+from ray import serve  # noqa: E402
+from ray.serve.config import HTTPOptions  # noqa: E402
+from ray.serve.schema import LoggingConfig  # noqa: E402
+
+from modelship.infer.deploy_coordinator import OperatorProbe, get_or_create_coordinator  # noqa: E402
+from modelship.infer.infer_config import ModelLoader, ModelshipConfig, ModelshipModelConfig  # noqa: E402
+from modelship.infer.model_deployment import ModelDeployment  # noqa: E402
+from modelship.logging import configure_logging, get_lib_log_config, get_logger  # noqa: E402
+from modelship.openai.api import ModelshipAPI  # noqa: E402
 
 _DEPLOY_RETRY_SLEEP_S = 2.0
 _WAITING_LOG_EVERY_N_PASSES = 30  # with 2s sleep, log "still waiting" once per minute
@@ -64,11 +75,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Connect to an existing Ray cluster (env: MSHIP_USE_EXISTING_RAY_CLUSTER)",
     )
-    parser.add_argument(
-        "--log-level",
-        choices=["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Log level (env: MSHIP_LOG_LEVEL)",
-    )
     parser.add_argument("--log-format", choices=["text", "json"], help="Log format (env: MSHIP_LOG_FORMAT)")
     parser.add_argument(
         "--log-target",
@@ -103,7 +109,6 @@ def _apply_args_to_env(args: argparse.Namespace) -> None:
         "ray_cluster_address": "RAY_CLUSTER_ADDRESS",
         "ray_redis_port": "RAY_REDIS_PORT",
         "cache_dir": "MSHIP_CACHE_DIR",
-        "log_level": "MSHIP_LOG_LEVEL",
         "log_format": "MSHIP_LOG_FORMAT",
         "log_target": "MSHIP_LOG_TARGET",
         "otel_endpoint": "OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -257,14 +262,26 @@ def main(argv: list[str] | None = None):
     gateway_name = os.environ.get("MSHIP_GATEWAY_NAME", "modelship api")
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
 
+    # Library log level (one step above app level). Used to silence Ray Serve's
+    # system actors (controller/proxy/replica access logs) and Ray's driver
+    # logger, which both ignore Python-level setLevel from the parent process.
+    lib_level, lib_level_name = get_lib_log_config()
+    serve_logging_config = LoggingConfig(log_level=lib_level_name)
+
     if args.redeploy:
         logger.info("--redeploy: tearing down existing deployments...")
         _shutdown_ray()
 
     ray_address = f"{ray_cluster_address}:{ray_redis_port}" if use_existing_cluster else "auto"
-    ray.init(address=ray_address, ignore_reinit_error=True)
+    ray.init(address=ray_address, ignore_reinit_error=True, logging_level=lib_level)
+    # ray.init re-sets ray.* loggers, so re-pin them after init.
+    logging.getLogger("ray").setLevel(lib_level)
+    logging.getLogger("ray._private.worker").setLevel(lib_level)
     openai_api_port = int(os.environ.get("MSHIP_OPENAI_API_PORT", "8000"))
-    serve.start(http_options=HTTPOptions(host="0.0.0.0", port=openai_api_port))
+    serve.start(
+        http_options=HTTPOptions(host="0.0.0.0", port=openai_api_port),
+        logging_config=serve_logging_config,
+    )
 
     existing_apps = set() if args.redeploy else _get_existing_apps()
     fresh_install = gateway_name not in existing_apps
@@ -333,6 +350,7 @@ def main(argv: list[str] | None = None):
                     name=gateway_name,
                     num_replicas=1,
                     ray_actor_options={"num_cpus": 0},
+                    logging_config=serve_logging_config,
                 ).bind(),
                 name=gateway_name,
                 route_prefix="/",
@@ -392,6 +410,7 @@ def main(argv: list[str] | None = None):
                             num_replicas=config.num_replicas,
                             ray_actor_options=actor_opts,
                             max_constructor_retry_count=1,
+                            logging_config=serve_logging_config,
                         ).bind(config),
                         name=deployment_name,
                         route_prefix=None,
