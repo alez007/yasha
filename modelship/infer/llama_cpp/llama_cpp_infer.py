@@ -15,6 +15,7 @@ from modelship.openai.protocol import (
     EmbeddingRequest,
     EmbeddingResponse,
     ErrorResponse,
+    create_error_response,
 )
 
 logger = get_logger("infer.llama_cpp")
@@ -42,6 +43,7 @@ class LlamaCppInfer(BaseInfer):
         self.llamacpp: Llama | None = None
         self._chat_params: set[str] = set()
         self._embed_params: set[str] = set()
+        self._lock = asyncio.Lock()  # llama-cpp-python Llama object is not thread-safe for concurrent calls
         logger.info(
             "initialising llama.cpp engine (verbose=%s) with config: %s",
             self._verbose,
@@ -140,7 +142,20 @@ class LlamaCppInfer(BaseInfer):
         llamacpp = self.llamacpp
         assert llamacpp is not None
 
+        # Pre-process messages: llama-cpp-python's Jinja templates often expect 'content'
+        # to be a string. If it's a list (OpenAI multi-modal format), flatten it to text.
+        messages = []
+        for msg in request.messages:
+            processed_msg = msg.copy()
+            content = msg.get("content")
+            if isinstance(content, list):
+                text_parts = [part["text"] for part in content if isinstance(part, dict) and part.get("type") == "text"]
+                processed_msg["content"] = " ".join(text_parts)
+            messages.append(processed_msg)
+
         all_params = request.model_dump(exclude_none=True)
+        all_params["messages"] = messages
+
         # Handle 'max_completion_tokens' mapping to 'max_tokens' if needed.
         if "max_tokens" not in all_params and "max_completion_tokens" in all_params:
             all_params["max_tokens"] = all_params["max_completion_tokens"]
@@ -150,23 +165,29 @@ class LlamaCppInfer(BaseInfer):
         if request.stream:
 
             async def stream_generator() -> AsyncGenerator[str, None]:
-                # Run the synchronous generator in a thread
-                iterator = await loop.run_in_executor(
-                    None,
-                    lambda: llamacpp.create_chat_completion(**kwargs, stream=True),  # type: ignore
-                )
-                for chunk in iterator:
-                    yield f"data: {json.dumps(chunk)}\n\n"
-                    await asyncio.sleep(0)
-                yield "data: [DONE]\n\n"
+                async with self._lock:
+                    # Run the synchronous generator in a thread
+                    iterator = await loop.run_in_executor(
+                        None,
+                        lambda: llamacpp.create_chat_completion(**kwargs, stream=True),  # type: ignore
+                    )
+                    for chunk in iterator:
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                        await asyncio.sleep(0)
+                    yield "data: [DONE]\n\n"
 
             return stream_generator()
         else:
-            result = await loop.run_in_executor(
-                None,
-                lambda: llamacpp.create_chat_completion(**kwargs, stream=False),  # type: ignore
-            )
-            return ChatCompletionResponse.model_validate(result)
+            async with self._lock:
+                try:
+                    result = await loop.run_in_executor(
+                        None,
+                        lambda: llamacpp.create_chat_completion(**kwargs, stream=False),  # type: ignore
+                    )
+                    return ChatCompletionResponse.model_validate(result)
+                except Exception as e:
+                    logger.warning("llama_cpp chat inference failed: %s", e)
+                    return create_error_response(e)
 
     async def create_embedding(
         self, request: EmbeddingRequest, raw_request: RawRequestProxy
@@ -184,5 +205,10 @@ class LlamaCppInfer(BaseInfer):
         all_params = request.model_dump(exclude_none=True)
         kwargs = {k: v for k, v in all_params.items() if k in self._embed_params}
 
-        result = await loop.run_in_executor(None, lambda: llamacpp.create_embedding(**kwargs))
-        return EmbeddingResponse.model_validate(result)
+        async with self._lock:
+            try:
+                result = await loop.run_in_executor(None, lambda: llamacpp.create_embedding(**kwargs))
+                return EmbeddingResponse.model_validate(result)
+            except Exception as e:
+                logger.warning("llama_cpp embedding failed: %s", e)
+                return create_error_response(e)

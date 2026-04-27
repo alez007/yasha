@@ -35,6 +35,7 @@ class OpenAIServingChat(OpenAIServing):
         self.config = config
         assert pipeline.tokenizer is not None, "text-generation pipeline must have a tokenizer"
         self.tokenizer: PreTrainedTokenizerBase = pipeline.tokenizer
+        self._lock = asyncio.Lock()
 
     async def warmup(self) -> None:
         logger.info("Warming up chat model: %s", self.model_name)
@@ -57,13 +58,14 @@ class OpenAIServingChat(OpenAIServing):
         messages = [{"role": m["role"], "content": m["content"]} for m in request.messages]  # type: ignore[index]
 
         if request.stream:
-            return self._stream(request_id, messages, request.max_tokens)
+            return self._locked_stream(request_id, messages, request.max_tokens)
 
-        try:
-            result = await self.run_in_executor(self._run, messages, request.max_tokens)
-        except Exception:
-            logger.exception("chat completion inference failed for %s", request_id)
-            return create_error_response("chat completion inference failed")
+        async with self._lock:
+            try:
+                result = await self.run_in_executor(self._run, messages, request.max_tokens)
+            except Exception:
+                logger.exception("chat completion inference failed for %s", request_id)
+                return create_error_response("chat completion inference failed")
 
         prompt_tokens = len(self.tokenizer.apply_chat_template(messages))
         generated = result[0]["generated_text"]
@@ -102,6 +104,13 @@ class OpenAIServingChat(OpenAIServing):
         if max_tokens is not None:
             kwargs["max_new_tokens"] = max_tokens
         return self.pipeline(messages, return_full_text=False, **kwargs)  # type: ignore[return-value]
+
+    async def _locked_stream(
+        self, request_id: str, messages: list[dict], max_tokens: int | None
+    ) -> AsyncGenerator[str, None]:
+        async with self._lock:
+            async for chunk in self._stream(request_id, messages, max_tokens):
+                yield chunk
 
     async def _stream(self, request_id: str, messages: list[dict], max_tokens: int | None) -> AsyncGenerator[str, None]:
         streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)  # type: ignore[arg-type]

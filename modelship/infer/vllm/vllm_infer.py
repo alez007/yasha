@@ -104,6 +104,9 @@ class VllmInfer(BaseInfer):
             enable_log_requests=self.vllm_engine_kwargs.enable_log_requests
             if self.vllm_engine_kwargs.enable_log_requests is not None
             else False,
+            disable_log_stats=self.vllm_engine_kwargs.disable_log_stats
+            if self.vllm_engine_kwargs.disable_log_stats is not None
+            else False,
             quantization=self.vllm_engine_kwargs.quantization,
             kv_cache_dtype=self.vllm_engine_kwargs.kv_cache_dtype or "auto",  # type: ignore[arg-type]
             enforce_eager=self.vllm_engine_kwargs.enforce_eager or False,
@@ -121,8 +124,6 @@ class VllmInfer(BaseInfer):
         self.engine = AsyncLLM.from_vllm_config(
             vllm_config=vllm_config,
             usage_context=usage_context,
-            enable_log_requests=engine_args.enable_log_requests,
-            disable_log_stats=engine_args.disable_log_stats,
             stat_loggers=stat_loggers,
         )
 
