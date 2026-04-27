@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.34] - 2026-04-27
+
+### Added
+- upgrade vllm to 0.19.1
+
+### Fixed
+- propagate log levels before ray import and add pip for runtime_env
+- reap orphan vLLM workers on actor death and quiet shutdown noise
+- use async fatal error reporting and unique deployment keys
+- handle fatal deployment initialization errors to prevent infinite retries
+- harden orphan reaping and vllm audio response handling
+- vllm 0.19.1 response types, tp>1 init, orphan workers
+
 ## [0.1.33] - 2026-04-25
 
 ### Fixed
