@@ -30,6 +30,7 @@ dependencies = [
     "scipy>=1.16.1",
     "soundfile>=0.13.0",
     "requests>=2.32.5",
+    "pip>=25.0",
 ]
 
 [project.optional-dependencies]

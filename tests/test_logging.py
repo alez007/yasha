@@ -12,6 +12,7 @@ import pytest
 from modelship.logging import (
     _LIB_ENV_VARS,
     _LIB_LOGGERS,
+    _LOWERCASE_LEVEL_LIBS,
     ModelshipJsonFormatter,
     ModelshipTextFormatter,
     RequestIdFilter,
@@ -35,6 +36,11 @@ def _reset_logging():
     root.propagate = True
     saved_lib_levels = {name: logging.getLogger(name).level for name in _LIB_LOGGERS}
     saved_env = {k: os.environ.get(k) for k in _LIB_ENV_VARS}
+    # Clear so each test exercises a clean setdefault path. Importing start.py
+    # in another test runs propagate_lib_log_env() and pollutes os.environ for
+    # the rest of the pytest session.
+    for k in _LIB_ENV_VARS:
+        os.environ.pop(k, None)
     token = request_id_var.set(None)
     yield
     request_id_var.reset(token)
@@ -84,7 +90,7 @@ class TestConfigureLogging:
         for name in _LIB_LOGGERS:
             assert logging.getLogger(name).level == logging.WARNING
         for env_var, lib_name in _LIB_ENV_VARS.items():
-            expected = "warning" if lib_name == "transformers" else "WARNING"
+            expected = "warning" if lib_name in _LOWERCASE_LEVEL_LIBS else "WARNING"
             assert os.environ.get(env_var) == expected
 
     @patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "DEBUG"})
@@ -103,7 +109,7 @@ class TestConfigureLogging:
         for name in _LIB_LOGGERS:
             assert logging.getLogger(name).level == logging.DEBUG
         for env_var, lib_name in _LIB_ENV_VARS.items():
-            expected = "debug" if lib_name == "transformers" else "DEBUG"
+            expected = "debug" if lib_name in _LOWERCASE_LEVEL_LIBS else "DEBUG"
             assert os.environ.get(env_var) == expected
 
     @patch.dict(os.environ, {"MSHIP_LOG_FORMAT": "json"})

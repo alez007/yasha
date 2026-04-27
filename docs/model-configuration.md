@@ -15,7 +15,7 @@ Models are configured in a YAML file (default: `config/models.yaml`). Each entry
 | `--use-existing-ray-cluster` | `MSHIP_USE_EXISTING_RAY_CLUSTER` | `false` | Connect to an existing Ray cluster |
 | `--redeploy` | — | `false` | Tear down all existing deployments before deploying |
 | `--cache-dir` | `MSHIP_CACHE_DIR` | `/.cache` | Base cache directory |
-| `--log-level` | `MSHIP_LOG_LEVEL` | `INFO` | Log level |
+| — | `MSHIP_LOG_LEVEL` | `INFO` | Log level (env-var-only: must be set before `import ray` so library loggers latch the right level) |
 | `--log-format` | `MSHIP_LOG_FORMAT` | `text` | Log format (`text` or `json`) |
 | `--log-target` | `MSHIP_LOG_TARGET` | `console` | Log target: `console` or syslog URI (e.g. `syslog://host:514`, `syslog+tcp://host:514`) |
 | `--otel-endpoint` | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OpenTelemetry OTLP endpoint (e.g. `http://collector:4317`) |

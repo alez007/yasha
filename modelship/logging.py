@@ -48,16 +48,66 @@ class ModelshipTextFormatter(logging.Formatter):
 TRACE = 5
 logging.addLevelName(TRACE, "TRACE")
 
-_LIB_LOGGERS = ("ray", "ray.serve", "vllm", "transformers", "diffusers", "llama_cpp")
+_LIB_LOGGERS = (
+    "ray",
+    "ray.serve",
+    "vllm",
+    "transformers",
+    "diffusers",
+    "llama_cpp",
+    "flashinfer",
+    "huggingface_hub",
+)
 
 # Env vars that libraries check internally when creating their own loggers.
 # Setting these ensures the level sticks even when a library re-configures
 # its loggers after our configure_logging() call (e.g. vLLM's init_logger).
 _LIB_ENV_VARS = {
     "RAY_LOG_LEVEL": "ray",
+    "RAY_SERVE_LOG_LEVEL": "ray",
     "VLLM_LOGGING_LEVEL": "vllm",
     "TRANSFORMERS_VERBOSITY": "transformers",
+    "DIFFUSERS_VERBOSITY": "diffusers",
+    "HF_HUB_VERBOSITY": "huggingface_hub",
 }
+
+# HuggingFace-style libraries expect lowercase verbosity values
+# ("debug"/"info"/"warning"/"error"/"critical") rather than the standard
+# logging-module names.
+_LOWERCASE_LEVEL_LIBS = frozenset({"transformers", "diffusers", "huggingface_hub"})
+
+_LEVELS = [TRACE, logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL]
+
+
+def _resolve_app_level(level_name: str) -> int:
+    name = level_name.upper()
+    return TRACE if name == "TRACE" else getattr(logging, name, logging.INFO)
+
+
+def compute_lib_level(app_level: int) -> tuple[int, str]:
+    """Library log level is one step above the app level (with CRITICAL as ceiling)."""
+    lib_level = next((lv for lv in _LEVELS if lv > app_level), logging.CRITICAL)
+    return lib_level, logging.getLevelName(lib_level)
+
+
+def get_lib_log_config() -> tuple[int, str]:
+    """Return (lib_level_int, lib_level_name) for the currently-configured app level."""
+    return compute_lib_level(logging.getLogger("modelship").getEffectiveLevel())
+
+
+def propagate_lib_log_env(level_name: str | None = None) -> None:
+    """Set library-native log env vars from MSHIP_LOG_LEVEL.
+
+    Must run BEFORE the libraries are imported so their module-level loggers
+    pick up the right level. Uses setdefault so explicit user overrides win.
+    Safe to call multiple times.
+    """
+    name = (level_name or os.environ.get("MSHIP_LOG_LEVEL", "INFO")).upper()
+    app_level = _resolve_app_level(name)
+    _, lib_level_name = compute_lib_level(app_level)
+    for env_var, lib_name in _LIB_ENV_VARS.items():
+        val = lib_level_name.lower() if lib_name in _LOWERCASE_LEVEL_LIBS else lib_level_name
+        os.environ.setdefault(env_var, val)
 
 
 def _parse_syslog_target(target: str) -> SysLogHandler:
@@ -87,10 +137,8 @@ def configure_logging() -> None:
     log_format = os.environ.get("MSHIP_LOG_FORMAT", "text").lower()
     log_target = os.environ.get("MSHIP_LOG_TARGET", "console").lower()
 
-    levels = [TRACE, logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL]
-    app_level = TRACE if level_name == "TRACE" else getattr(logging, level_name, logging.INFO)
-    lib_level = next((lv for lv in levels if lv > app_level), logging.CRITICAL)
-    lib_level_name = logging.getLevelName(lib_level)
+    app_level = _resolve_app_level(level_name)
+    lib_level, _ = compute_lib_level(app_level)
 
     root_logger = logging.getLogger("modelship")
     root_logger.setLevel(app_level)
@@ -120,9 +168,7 @@ def configure_logging() -> None:
     # re-configures its own loggers later, e.g. vLLM's init_logger).
     for name in _LIB_LOGGERS:
         logging.getLogger(name).setLevel(lib_level)
-    for env_var, lib_name in _LIB_ENV_VARS.items():
-        val = lib_level_name.lower() if lib_name == "transformers" else lib_level_name
-        os.environ.setdefault(env_var, val)
+    propagate_lib_log_env(level_name)
 
 
 # pyright: reportMissingImports=false
