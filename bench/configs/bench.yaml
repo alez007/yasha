@@ -1,0 +1,11 @@
+models:
+  - name: "llm"
+    model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    usecase: "generate"
+    loader: "vllm"
+    num_gpus: 0.9
+    max_ongoing_requests: 256
+    vllm_engine_kwargs:
+      tensor_parallel_size: 1
+      max_model_len: 8192
+      gpu_memory_utilization: 0.85
