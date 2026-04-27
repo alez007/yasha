@@ -163,7 +163,7 @@ start_rawvllm() {
 scrape_prom() {
     local out="$1"
     curl -fsS http://localhost:8079/metrics 2>/dev/null \
-        | awk '/^modelship_(request|generation)_duration_seconds_(sum|count)/' \
+        | awk '/^ray_modelship_(request|generation)_duration_seconds_(sum|count)/' \
         > "$out" || true
 }
 
@@ -272,7 +272,7 @@ PY
 import sys, re
 sums = {}; counts = {}
 for line in open(sys.argv[1]):
-    m = re.match(r'(modelship_(?:request|generation)_duration_seconds)_(sum|count)\S*\s+([0-9eE+\-.]+)', line)
+    m = re.match(r'(ray_modelship_(?:request|generation)_duration_seconds)_(sum|count)\S*\s+([0-9eE+\-.]+)', line)
     if not m: continue
     name, kind, val = m.group(1), m.group(2), float(m.group(3))
     (sums if kind=="sum" else counts).setdefault(name, 0.0)
@@ -280,8 +280,8 @@ for line in open(sys.argv[1]):
     else: counts[name] += val
 def mean(n):
     return sums.get(n, 0.0) / counts[n] if counts.get(n) else float("nan")
-e2e = mean("modelship_request_duration_seconds")
-eng = mean("modelship_generation_duration_seconds")
+e2e = mean("ray_modelship_request_duration_seconds")
+eng = mean("ray_modelship_generation_duration_seconds")
 print(f"- mean E2E (gateway): **{e2e*1000:.1f} ms**")
 print(f"- mean engine (vllm): **{eng*1000:.1f} ms**")
 print(f"- internal overhead: **{(e2e-eng)*1000:.1f} ms** ({(e2e-eng)/e2e*100:.1f}% of E2E)" if e2e else "- no data")
