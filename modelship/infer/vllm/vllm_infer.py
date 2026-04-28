@@ -210,7 +210,6 @@ class VllmInfer(BaseInfer):
         openai_serving_render = OpenAIServingRender(
             model_config=self.engine.model_config,
             renderer=self.engine.renderer,
-            io_processor=self.engine.io_processor,
             model_registry=models.registry,
             request_logger=RequestLogger(max_log_len=None),
             chat_template=None,
