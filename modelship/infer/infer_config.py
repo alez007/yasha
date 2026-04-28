@@ -39,12 +39,14 @@ class VllmEngineConfig(BaseModel):
     task: str = "auto"
     model_impl: str | None = None
     enable_log_requests: bool | None = False
+    disable_log_stats: bool | None = False
     kv_cache_dtype: str | None = None
     quantization: str | None = None
     enable_auto_tool_choice: bool | None = None
     tool_call_parser: str | None = None
     chat_template_content_format: ChatTemplateContentFormatOption = "auto"
     enforce_eager: bool | None = None
+    max_num_batched_tokens: int | None = None
 
 
 class TransformersConfig(BaseModel):

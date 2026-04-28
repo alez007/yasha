@@ -40,8 +40,8 @@ gpu = [
     "transformers>=5.5.3",
     "sentence-transformers>=3.0.0",
     "flashinfer-python>=0.6.1",
-    "vllm==0.19.1",
-    "vllm[audio]==0.19.1",
+    "vllm==0.20.0",
+    "vllm[audio]==0.20.0",
     "accelerate>=1.6.0",
     "diffusers>=0.31.0",
     "llama-cpp-python>=0.3.6",
@@ -90,8 +90,8 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [tool.uv.sources]
@@ -100,11 +100,11 @@ bark = { workspace = true }
 orpheus = { workspace = true }
 whispercpp = { workspace = true }
 torch = [
-  { index = "pytorch-cu128", extra = "gpu" },
+  { index = "pytorch-cu130", extra = "gpu" },
   { index = "pytorch-cpu", extra = "cpu" },
 ]
 torchvision = [
-  { index = "pytorch-cu128", extra = "gpu" },
+  { index = "pytorch-cu130", extra = "gpu" },
   { index = "pytorch-cpu", extra = "cpu" },
 ]
 

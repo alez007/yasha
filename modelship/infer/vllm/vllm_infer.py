@@ -104,9 +104,13 @@ class VllmInfer(BaseInfer):
             enable_log_requests=self.vllm_engine_kwargs.enable_log_requests
             if self.vllm_engine_kwargs.enable_log_requests is not None
             else False,
+            disable_log_stats=self.vllm_engine_kwargs.disable_log_stats
+            if self.vllm_engine_kwargs.disable_log_stats is not None
+            else False,
             quantization=self.vllm_engine_kwargs.quantization,
             kv_cache_dtype=self.vllm_engine_kwargs.kv_cache_dtype or "auto",  # type: ignore[arg-type]
             enforce_eager=self.vllm_engine_kwargs.enforce_eager or False,
+            max_num_batched_tokens=self.vllm_engine_kwargs.max_num_batched_tokens,
         )
 
         usage_context = UsageContext.OPENAI_API_SERVER
@@ -121,8 +125,6 @@ class VllmInfer(BaseInfer):
         self.engine = AsyncLLM.from_vllm_config(
             vllm_config=vllm_config,
             usage_context=usage_context,
-            enable_log_requests=engine_args.enable_log_requests,
-            disable_log_stats=engine_args.disable_log_stats,
             stat_loggers=stat_loggers,
         )
 
@@ -209,7 +211,6 @@ class VllmInfer(BaseInfer):
         openai_serving_render = OpenAIServingRender(
             model_config=self.engine.model_config,
             renderer=self.engine.renderer,
-            io_processor=self.engine.io_processor,
             model_registry=models.registry,
             request_logger=RequestLogger(max_log_len=None),
             chat_template=None,
@@ -309,9 +310,10 @@ class VllmInfer(BaseInfer):
         if self.serving_embedding is None:
             return await super().create_embedding(request, raw_request)
         vllm_request = VllmEmbeddingCompletionRequest(**request.model_dump())
-        return cast(
-            "ErrorResponse | Response", await self.serving_embedding(vllm_request, cast("Request", raw_request))
-        )
+        result = await self.serving_embedding(vllm_request, cast("Request", raw_request))
+        if isinstance(result, VllmErrorResponse):
+            return ErrorResponse.model_validate(result.model_dump())
+        return cast("ErrorResponse | Response", result)
 
     async def create_transcription(
         self, audio_data: bytes, request: TranscriptionRequest, raw_request: RawRequestProxy

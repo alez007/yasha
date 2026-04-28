@@ -65,6 +65,7 @@ class TransformersInfer(BaseInfer):
         if usecase is ModelUsecase.generate:
             from transformers import pipeline
 
+            from modelship.infer.transformers.capabilities import TransformersCapabilities
             from modelship.infer.transformers.openai.serving_chat import OpenAIServingChat
 
             pipe = pipeline(
@@ -75,7 +76,10 @@ class TransformersInfer(BaseInfer):
                 trust_remote_code=self.config.trust_remote_code,
                 model_kwargs=self.config.model_kwargs,
             )
-            self.serving_chat = OpenAIServingChat(pipe, self.model_config.name, self.config)
+            capabilities = TransformersCapabilities.detect(pipe)
+            if capabilities.supports_image:
+                logger.info("Multimodal (vision) capability detected for model: %s", self.model_config.name)
+            self.serving_chat = OpenAIServingChat(pipe, self.model_config.name, self.config, capabilities)
             self._serving.append(self.serving_chat)
 
         elif usecase is ModelUsecase.embed:

@@ -39,7 +39,6 @@
   "remoteUser": "modelship",
   "remoteEnv": {
     "HF_TOKEN": "${localEnv:HF_TOKEN}",
-    "MSHIP_PLUGINS": "${localEnv:MSHIP_PLUGINS}",
     "MSHIP_METRICS": "true"
   },
   "customizations": {

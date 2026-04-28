@@ -193,13 +193,26 @@ class ModelshipAPI:
         start = time.monotonic()
         REQUEST_IN_PROGRESS.set(1, tags={"model": model, "endpoint": endpoint})
         try:
-            first = await response_gen.__anext__()
+            try:
+                first = await response_gen.__anext__()
+            except Exception as e:
+                # Catch failures during initial generator creation or the very first yield
+                REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "unhandled"})
+                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
+                logger.exception("Initial response generation failed for model=%s", model)
+                watcher.stop()
+                return JSONResponse(status_code=500, content={"detail": str(e)})
 
             if isinstance(first, ErrorResponse):
                 REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "inference_error"})
                 REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
                 watcher.stop()
                 return _error_response(first)
+
+            if isinstance(first, Response):
+                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
+                watcher.stop()
+                return first
 
             if isinstance(first, RawSpeechResponse):
                 REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
@@ -229,13 +242,16 @@ class ModelshipAPI:
                     REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
                 except Exception:
                     REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "stream_error"})
+                    REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
                     raise
                 finally:
                     watcher.stop()
 
             return StreamingResponse(content=_stream(), media_type=stream_media_type)
         except Exception:
+            # Fallback for anything else not caught above
             REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "unhandled"})
+            REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
             raise
         finally:
             duration = time.monotonic() - start
