@@ -110,6 +110,7 @@ class VllmInfer(BaseInfer):
             quantization=self.vllm_engine_kwargs.quantization,
             kv_cache_dtype=self.vllm_engine_kwargs.kv_cache_dtype or "auto",  # type: ignore[arg-type]
             enforce_eager=self.vllm_engine_kwargs.enforce_eager or False,
+            max_num_batched_tokens=self.vllm_engine_kwargs.max_num_batched_tokens,
         )
 
         usage_context = UsageContext.OPENAI_API_SERVER

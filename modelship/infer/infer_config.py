@@ -46,6 +46,7 @@ class VllmEngineConfig(BaseModel):
     tool_call_parser: str | None = None
     chat_template_content_format: ChatTemplateContentFormatOption = "auto"
     enforce_eager: bool | None = None
+    max_num_batched_tokens: int | None = None
 
 
 class TransformersConfig(BaseModel):
