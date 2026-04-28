@@ -1,4 +1,4 @@
-ARG CUDA_VERSION=12.8.1
+ARG CUDA_VERSION=13.0.2
 ARG PYTHON_VERSION=3.12.10
 ARG MSHIP_VARIANT=gpu
 ARG UID=1000
@@ -7,11 +7,11 @@ ARG GID=1000
 # =============================================================================
 # base — minimal runtime OS + uv + non-root user + env vars.
 #
-# CUDA strategy: torch cu128 bundles libcublas/libcudnn/libcurand/libnccl/
+# CUDA strategy: torch cu130 bundles libcublas/libcudnn/libcurand/libnccl/
 # libnvrtc inside the venv (under site-packages/nvidia/*/lib) and the NVIDIA
 # Container Toolkit provides libcuda.so at run time via --gpus. However, vLLM's
 # C extensions (_C.abi3.so, _moe_C.abi3.so, ...) are built with an RPATH that
-# hard-references /usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.12.
+# hard-references /usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.13.
 # Without that file, the vLLM registry subprocess that runs before torch has
 # bootstrapped its dlopen paths crashes with malloc_consolidate/SIGABRT while
 # the dynamic loader resolves symbols. We therefore install ONLY the tiny
@@ -86,17 +86,17 @@ ENV MSHIP_PLUGIN_WHEEL_DIR=/opt/modelship/plugin-wheels
 
 # onnxruntime-gpu (pulled in by the kokoroonnx plugin) dlopen()s
 # libonnxruntime_providers_cuda.so which has plain DT_NEEDED entries for
-# libcublasLt.so.12 / libcudnn.so.9 / etc. Torch cu128 bundles these under
+# libcublasLt.so.13 / libcudnn.so.9 / etc. Torch cu130 bundles these under
 # site-packages/nvidia/*/lib and resolves them via its own rpath once imported
 # — but onnxruntime doesn't participate in that. Expose the torch-bundled
 # CUDA libs on LD_LIBRARY_PATH so onnxruntime's CUDA provider can load.
 # Python version is pinned via PYTHON_VERSION (see pyproject.toml); we hard-
 # code 3.12 here because UV_PROJECT_ENVIRONMENT is fixed and the ENV cannot
 # shell-evaluate.
-ENV LD_LIBRARY_PATH="/.venv/lib/python3.12/site-packages/nvidia/cublas/lib:/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/.venv/lib/python3.12/site-packages/nvidia/cufft/lib:/.venv/lib/python3.12/site-packages/nvidia/curand/lib:/.venv/lib/python3.12/site-packages/nvidia/nvjitlink/lib"
+ENV LD_LIBRARY_PATH="/.venv/lib/python3.12/site-packages/nvidia/cu13/lib:/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/.venv/lib/python3.12/site-packages/nvidia/nccl/lib:/.venv/lib/python3.12/site-packages/nvidia/cusparselt/lib:/.venv/lib/python3.12/site-packages/nvidia/nvshmem/lib"
 
-RUN mkdir -p /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR && \
-    chown -R $UID:$GID /modelship /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR
+RUN mkdir -p /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR /usr/local/uv/python && \
+    chown -R $UID:$GID /modelship /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR /usr/local/uv/python
 
 # =============================================================================
 # builder — adds build toolchain (nvcc, build-essential, dev headers, git) and
@@ -140,16 +140,18 @@ RUN apt-get update -y && \
     fi && \
     rm -rf /var/lib/apt/lists/*
 
-RUN uv python install ${PYTHON_VERSION}
-RUN uv venv
+USER modelship
+
+RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
+    uv python install ${PYTHON_VERSION}
+RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
+    uv venv
 
 ADD --chown=$UID:$GID ./pyproject.toml pyproject.toml
 ADD --chown=$UID:$GID ./README.md README.md
 ADD --chown=$UID:$GID ./uv.lock uv.lock
 ADD --chown=$UID:$GID ./Makefile Makefile
 ADD --chown=$UID:$GID ./plugins plugins
-
-USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
     uv sync --locked --no-install-project --extra $MSHIP_VARIANT
@@ -174,13 +176,13 @@ ARG GID
 USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    # Dynamically inject an --extra flag for every plugin directory
-    PLUGIN_EXTRAS=$(find plugins -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | xargs -I {} echo -n "--extra {} ") && \
-    uv sync --locked --no-install-project --extra dev --extra $MSHIP_VARIANT $PLUGIN_EXTRAS
+    uv sync --locked --no-install-project --extra dev --extra $MSHIP_VARIANT
 
 ADD --chown=$UID:$GID ./scripts/start_ray.sh /modelship/scripts/start_ray.sh
 
-CMD ["/bin/bash"]
+USER root
+
+ENTRYPOINT ["/modelship/scripts/entrypoint.sh"]
 
 # =============================================================================
 # prod — minimal runtime. No build tools. Copies the resolved venv and

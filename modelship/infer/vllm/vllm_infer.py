@@ -309,9 +309,10 @@ class VllmInfer(BaseInfer):
         if self.serving_embedding is None:
             return await super().create_embedding(request, raw_request)
         vllm_request = VllmEmbeddingCompletionRequest(**request.model_dump())
-        return cast(
-            "ErrorResponse | Response", await self.serving_embedding(vllm_request, cast("Request", raw_request))
-        )
+        result = await self.serving_embedding(vllm_request, cast("Request", raw_request))
+        if isinstance(result, VllmErrorResponse):
+            return ErrorResponse.model_validate(result.model_dump())
+        return cast("ErrorResponse | Response", result)
 
     async def create_transcription(
         self, audio_data: bytes, request: TranscriptionRequest, raw_request: RawRequestProxy

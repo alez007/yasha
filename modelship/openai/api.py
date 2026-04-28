@@ -209,6 +209,11 @@ class ModelshipAPI:
                 watcher.stop()
                 return _error_response(first)
 
+            if isinstance(first, Response):
+                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
+                watcher.stop()
+                return first
+
             if isinstance(first, RawSpeechResponse):
                 REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
                 watcher.stop()

@@ -131,3 +131,55 @@ class TestGetHandle:
 
         with pytest.raises(HTTPException):
             api._get_handle(None)
+
+
+class TestHandleResponse:
+    @pytest.mark.asyncio
+    async def test_handle_json_response_directly(self, api):
+        from fastapi.responses import JSONResponse
+
+        async def mock_gen():
+            yield JSONResponse(content={"data": "test"})
+
+        watcher = MagicMock()
+        result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_handle_embedding_response(self, api):
+        from fastapi.responses import JSONResponse
+
+        from modelship.openai.protocol import EmbeddingResponse, UsageInfo
+
+        resp = EmbeddingResponse(
+            model="test",
+            data=[],
+            usage=UsageInfo(prompt_tokens=10, total_tokens=10),
+            created=123,
+        )
+
+        async def mock_gen():
+            yield resp
+
+        watcher = MagicMock()
+        result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
+
+        assert isinstance(result, JSONResponse)
+        # Check if content matches the model dump
+        assert b'"model":"test"' in result.body
+
+    @pytest.mark.asyncio
+    async def test_handle_streaming_chat(self, api):
+        from fastapi.responses import StreamingResponse
+
+        async def mock_gen():
+            yield "data: chunk1\n\n"
+            yield "data: chunk2\n\n"
+            yield "data: [DONE]\n\n"
+
+        watcher = MagicMock()
+        result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
+
+        assert isinstance(result, StreamingResponse)
