@@ -1,7 +1,8 @@
 import asyncio
 import inspect
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
+from typing import cast
 
 from llama_cpp import Llama
 
@@ -65,12 +66,13 @@ class OpenAIServingChat(OpenAIServing):
 
             async def stream_generator() -> AsyncGenerator[str, None]:
                 async with self._lock:
-                    iterator = await loop.run_in_executor(
+                    raw = await loop.run_in_executor(
                         None,
                         lambda: llama.create_chat_completion(**kwargs, stream=True),  # type: ignore[arg-type]
                     )
+                    iterator = cast(Iterator[dict], raw)
                     while True:
-                        chunk = await loop.run_in_executor(None, next, iterator, None)
+                        chunk = await loop.run_in_executor(None, lambda: next(iterator, None))
                         if chunk is None:
                             break
                         yield f"data: {json.dumps(chunk)}\n\n"
