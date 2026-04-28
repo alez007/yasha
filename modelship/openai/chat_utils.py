@@ -1,0 +1,158 @@
+"""Validation and normalization helpers for OpenAI chat-completion messages."""
+
+from typing import Any
+
+from modelship.logging import get_logger
+
+logger = get_logger("openai.chat_utils")
+
+
+class UnsupportedContentError(ValueError):
+    """A chat-completion message contains a part the model cannot accept.
+
+    Subclasses ``ValueError`` so :func:`modelship.openai.protocol.create_error_response`
+    maps it to a 400 BadRequestError automatically.
+    """
+
+
+# Part types that collapse to plain text (mirrors vllm's chat_utils text aliases).
+_TEXT_TYPES = frozenset({"text", "input_text", "output_text", "refusal", "thinking"})
+
+_IMAGE_TYPES = frozenset({"image_url", "input_image"})
+_AUDIO_TYPES = frozenset({"input_audio", "audio_url"})
+
+
+def normalize_chat_messages(
+    messages: list[dict],
+    *,
+    supports_image: bool = False,
+    supports_audio: bool = False,
+) -> list[dict]:
+    """Validate and normalize OpenAI chat-completion messages.
+
+    Aimed at backends that consume the OpenAI message shape directly (e.g. llama.cpp),
+    where the underlying chat template is strict about input structure.
+
+    Behavior:
+
+    - String / ``None`` content passes through unchanged.
+    - List content is validated part-by-part:
+        - Plain strings inside the list are accepted as text.
+        - Text-like parts (``text`` / ``input_text`` / ``output_text`` /
+          ``refusal`` / ``thinking``) are normalized to ``{"type": "text", "text": ...}``.
+        - Image parts (``image_url`` / ``input_image``) require ``supports_image``;
+          otherwise :class:`UnsupportedContentError` is raised.
+        - Audio parts (``input_audio`` / ``audio_url``) require ``supports_audio``;
+          otherwise :class:`UnsupportedContentError` is raised.
+        - Parts with empty / missing content are dropped with a warning
+          (matches vllm's tolerant behavior).
+        - Unknown part types raise :class:`UnsupportedContentError`.
+        - Malformed parts (wrong types for required fields) raise :class:`UnsupportedContentError`.
+    - List content that ends up text-only is collapsed to a single string
+      joined with ``"\\n"`` so loaders whose Jinja templates only accept string
+      content keep working.
+    """
+    normalized: list[dict] = []
+    for idx, msg in enumerate(messages):
+        out = dict(msg)
+        content = msg.get("content")
+        if not isinstance(content, list):
+            normalized.append(out)
+            continue
+
+        validated: list[dict] = []
+        all_text = True
+        for part in content:
+            v = _validate_part(part, idx, supports_image=supports_image, supports_audio=supports_audio)
+            if v is None:
+                continue
+            validated.append(v)
+            if v.get("type") != "text":
+                all_text = False
+
+        if all_text:
+            out["content"] = "\n".join(p["text"] for p in validated)
+        else:
+            out["content"] = validated
+        normalized.append(out)
+    return normalized
+
+
+def _validate_part(
+    part: Any,
+    msg_idx: int,
+    *,
+    supports_image: bool,
+    supports_audio: bool,
+) -> dict | None:
+    if isinstance(part, str):
+        return {"type": "text", "text": part}
+
+    if not isinstance(part, dict):
+        raise UnsupportedContentError(
+            f"messages[{msg_idx}].content: each part must be an object or string, got {type(part).__name__}"
+        )
+
+    ptype = part.get("type")
+    if ptype is None:
+        raise UnsupportedContentError(f"messages[{msg_idx}].content: part is missing required 'type' field")
+
+    if ptype in _TEXT_TYPES:
+        text = part.get("text") or part.get(ptype)
+        if text is None:
+            logger.warning("messages[%d].content: skipping empty %r part", msg_idx, ptype)
+            return None
+        if not isinstance(text, str):
+            raise UnsupportedContentError(f"messages[{msg_idx}].content: {ptype!r} part must carry string content")
+        return {"type": "text", "text": text}
+
+    if ptype in _IMAGE_TYPES:
+        if not supports_image:
+            raise UnsupportedContentError(f"messages[{msg_idx}].content: this model does not support image input")
+        img = part.get("image_url") if ptype == "image_url" else part.get("input_image")
+        if img is None:
+            logger.warning("messages[%d].content: skipping empty %r part", msg_idx, ptype)
+            return None
+        if isinstance(img, str):
+            url = img
+        elif isinstance(img, dict):
+            url = img.get("url")
+        else:
+            raise UnsupportedContentError(
+                f"messages[{msg_idx}].content: {ptype!r} must be a URL string or an object with a 'url' field"
+            )
+        if not isinstance(url, str) or not url:
+            raise UnsupportedContentError(
+                f"messages[{msg_idx}].content: {ptype!r}.url must be a non-empty string (http(s) URL or data: URI)"
+            )
+        return part
+
+    if ptype in _AUDIO_TYPES:
+        if not supports_audio:
+            raise UnsupportedContentError(f"messages[{msg_idx}].content: this model does not support audio input")
+        if ptype == "audio_url":
+            audio = part.get("audio_url")
+            if audio is None:
+                logger.warning("messages[%d].content: skipping empty 'audio_url' part", msg_idx)
+                return None
+            url = audio if isinstance(audio, str) else (audio.get("url") if isinstance(audio, dict) else None)
+            if not isinstance(url, str) or not url:
+                raise UnsupportedContentError(
+                    f"messages[{msg_idx}].content: 'audio_url.url' must be a non-empty string"
+                )
+            return part
+        audio = part.get("input_audio")
+        if audio is None:
+            logger.warning("messages[%d].content: skipping empty 'input_audio' part", msg_idx)
+            return None
+        if (
+            not isinstance(audio, dict)
+            or not isinstance(audio.get("data"), str)
+            or not isinstance(audio.get("format"), str)
+        ):
+            raise UnsupportedContentError(
+                f"messages[{msg_idx}].content: 'input_audio' must be an object with string 'data' and 'format' fields"
+            )
+        return part
+
+    raise UnsupportedContentError(f"messages[{msg_idx}].content: unsupported content part type {ptype!r}")
