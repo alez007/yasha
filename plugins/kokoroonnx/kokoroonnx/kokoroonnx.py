@@ -73,8 +73,8 @@ class ModelPlugin(BasePlugin):
                 "Install it with: apt-get install -y espeak-ng (Debian/Ubuntu) "
                 "or brew install espeak (macOS)"
             )
-        logger.info("onnxruntime device: %s", ort.get_device())
-        logger.info("available providers: %s", ort.get_available_providers())
+        logger.info("onnxruntime device: %s", ort.get_device())  # pyright: ignore[reportAttributeAccessIssue]
+        logger.info("available providers: %s", ort.get_available_providers())  # pyright: ignore[reportAttributeAccessIssue]
 
         plugin_dir = f"{plugins_dir()}/kokoroonnx"
         os.makedirs(plugin_dir, exist_ok=True)

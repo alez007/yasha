@@ -100,7 +100,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Tear down all existing deployments before deploying (default: additive)",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--reconcile",
+        action="store_true",
+        default=False,
+        help=(
+            "Diff models.yaml against the cluster: add new models, remove dropped ones, "
+            "replace those whose config changed (matched by name + fingerprint). "
+            "Mutually exclusive with --redeploy."
+        ),
+    )
+    parser.add_argument(
+        "--replace-strategy",
+        choices=["blue_green", "stop_start"],
+        default="blue_green",
+        help=(
+            "How to replace a model whose config changed. blue_green (default): deploy "
+            "new alongside old, then drop old (no request loss, peak resource = old+new). "
+            "stop_start: drop old first, then deploy new (brief unavailability, no overlap)."
+        ),
+    )
+    args = parser.parse_args(argv)
+    if args.redeploy and args.reconcile:
+        parser.error("--redeploy and --reconcile are mutually exclusive")
+    return args
 
 
 def _apply_args_to_env(args: argparse.Namespace) -> None:
@@ -251,6 +274,26 @@ def _shutdown_ray():
         logger.exception("ray.shutdown() failed")
 
 
+def _remove_apps(gateway_handle, app_names: list[str]) -> None:
+    """Unregister the given deployment apps from the gateway (so new requests
+    stop routing) and then delete them from Ray Serve. `serve.delete` drains
+    in-flight requests before tearing the deployment down. The deploy
+    coordinator is intentionally not involved — it gates admission, not
+    teardown; freed resources show up on the next try_reserve."""
+    if not app_names:
+        return
+    try:
+        gateway_handle.remove_deployments.remote(app_names).result()
+    except Exception:
+        logger.exception("Failed to unregister deployments from gateway: %s", app_names)
+    for app_name in app_names:
+        try:
+            logger.info("Deleting deployment: %s", app_name)
+            serve.delete(app_name)
+        except Exception:
+            logger.exception("Failed to delete deployment: %s", app_name)
+
+
 def main(argv: list[str] | None = None):
     args = parse_args(argv)
     _apply_args_to_env(args)
@@ -320,6 +363,30 @@ def main(argv: list[str] | None = None):
         reverse=True,
     )
 
+    # Diff desired (models.yaml) against deployed (serve.status). Deployment
+    # names are `{model_name}-{fingerprint}`, so a pure set comparison detects
+    # both renames and config drift: a model whose num_gpus changed gets a new
+    # fingerprint -> new deployment_name -> shows up as both an add and a
+    # remove (handled as a replace below).
+    #
+    # `existing_apps` includes the gateway app itself; exclude it so reconcile
+    # never targets the gateway for removal.
+    desired_apps = {c.deployment_name(): c for c in sorted_models}
+    currently_deployed_apps = existing_apps - {gateway_name}
+    if args.reconcile:
+        if fresh_install:
+            logger.info("--reconcile: no existing gateway — equivalent to a fresh deploy.")
+        apps_to_remove: list[str] = sorted(currently_deployed_apps - desired_apps.keys())
+        if apps_to_remove:
+            logger.info("--reconcile: %d deployment(s) to remove: %s", len(apps_to_remove), apps_to_remove)
+    else:
+        apps_to_remove = []
+    # In all modes, skip configs already deployed under their fingerprint —
+    # makes plain `start.py` idempotent on re-run instead of double-deploying.
+    sorted_models = [c for c in sorted_models if c.deployment_name() not in currently_deployed_apps]
+    if sorted_models:
+        logger.info("%d deployment(s) to add: %s", len(sorted_models), [c.deployment_name() for c in sorted_models])
+
     # Track deployments created by this invocation: deployment_name -> model_name.
     # Used for both model registration with the gateway and cleanup on interrupt.
     deployed_this_run: dict[str, str] = {}
@@ -359,9 +426,18 @@ def main(argv: list[str] | None = None):
 
         gateway_handle = serve.get_app_handle(gateway_name)
         try:
-            gateway_handle.set_expected_models.remote([c.name for c in sorted_models]).result()
+            # Pass the full desired set, not the filtered sorted_models —
+            # kept (already-deployed) models also count toward "ready".
+            gateway_handle.set_expected_models.remote([c.name for c in yml_conf.models]).result()
         except Exception:
             logger.exception("Failed to seed expected model list on gateway (non-fatal).")
+
+        # stop_start: drop old deployments BEFORE deploying new ones, so the
+        # freed resources are available for the deploy loop. Used when the
+        # cluster can't fit old + new at the same time.
+        if args.replace_strategy == "stop_start":
+            _remove_apps(gateway_handle, apps_to_remove)
+            apps_to_remove = []
 
         # Coordinator actor serialises deploys across operators on the same
         # cluster; the probe is driver-owned so Ray force-releases the lock
@@ -387,7 +463,7 @@ def main(argv: list[str] | None = None):
             for config in list(remaining):
                 wheel = plugin_wheels.get(config.plugin) if config.plugin else None
                 actor_opts = build_actor_options(config, plugin_wheel=wheel)
-                deployment_name = f"{config.name}-{_rand_suffix()}"
+                deployment_name = config.deployment_name()
 
                 reserved, _reason = ray.get(
                     coordinator.try_reserve.remote(
@@ -481,6 +557,14 @@ def main(argv: list[str] | None = None):
             len(deployed_this_run),
             pass_count,
         )
+
+        # blue_green: drop old deployments AFTER new ones are live and
+        # registered with the gateway. During the brief overlap the gateway
+        # round-robins across both old and new handles for the same model,
+        # so no requests are lost.
+        if apps_to_remove:
+            _remove_apps(gateway_handle, apps_to_remove)
+            apps_to_remove = []
 
         if fatally_failed:
             logger.error(

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -6,6 +7,17 @@ import ray
 from fastapi import Request
 from pydantic import BaseModel, Field, model_validator
 from starlette.datastructures import Headers, State
+
+# Length (hex chars) of the per-deployment fingerprint suffix. 10 hex chars =
+# 40 bits, collision-resistant for the realistic universe of model configs.
+FINGERPRINT_LEN = 10
+
+# Fields excluded from the fingerprint hash. `name` is the deployment prefix,
+# not part of the fingerprint payload. `num_replicas` is excluded so scaling
+# replicas in/out doesn't force a full deployment replacement — Ray Serve
+# updates replica count in place when serve.run() is re-bound with the same
+# app name.
+_FINGERPRINT_EXCLUDED_FIELDS = {"name", "num_replicas"}
 
 ChatTemplateContentFormatOption = Literal["auto", "string", "openai"]
 
@@ -93,9 +105,33 @@ class ModelshipModelConfig(BaseModel):
             raise ValueError("loader='custom' requires plugin to be set")
         return self
 
+    def fingerprint(self) -> str:
+        """Stable hash of the config fields that determine actor placement and
+        runtime behavior. Used as the deployment-name suffix so reconcile can
+        detect drift via a pure name comparison against `serve.status()`."""
+        payload = self.model_dump_json(exclude=_FINGERPRINT_EXCLUDED_FIELDS)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:FINGERPRINT_LEN]
+
+    def deployment_name(self) -> str:
+        return f"{self.name}-{self.fingerprint()}"
+
 
 class ModelshipConfig(BaseModel):
     models: list[ModelshipModelConfig]
+
+    @model_validator(mode="after")
+    def check_unique_deployment_names(self):
+        seen: dict[str, int] = {}
+        for cfg in self.models:
+            key = cfg.deployment_name()
+            seen[key] = seen.get(key, 0) + 1
+        dupes = [name for name, count in seen.items() if count > 1]
+        if dupes:
+            raise ValueError(
+                f"Duplicate model entries (same name + identical fingerprint): {dupes}. "
+                f"Each model name must be unique; for multiple identical replicas use num_replicas."
+            )
+        return self
 
 
 @ray.remote(num_cpus=0)
