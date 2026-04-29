@@ -59,8 +59,8 @@ class TestAddModels:
             await api.add_models({"qwen-b7x2p": "qwen"})
 
         assert len(api.models["qwen"]) == 2
-        assert api.models["qwen"][0] is handle_1
-        assert api.models["qwen"][1] is handle_2
+        assert api.models["qwen"]["qwen-a3f9k"] is handle_1
+        assert api.models["qwen"]["qwen-b7x2p"] is handle_2
         # Only one model card despite two deployments
         assert len(api.model_list) == 1
 
@@ -106,6 +106,69 @@ class TestAddModels:
         assert body["models_pending"] == []
         assert body["time_to_ready_s"] is not None
         assert "qwen" in body["model_load_times_s"]
+
+
+class TestRemoveDeployments:
+    @pytest.mark.asyncio
+    async def test_remove_last_deployment_drops_model(self, api):
+        with patch("modelship.openai.api.serve.get_app_handle", return_value=MagicMock()):
+            await api.add_models({"qwen-a3f9k1b2c4": "qwen"})
+        assert "qwen" in api.models
+
+        removed = await api.remove_deployments(["qwen-a3f9k1b2c4"])
+
+        assert removed == ["qwen"]
+        assert "qwen" not in api.models
+        assert api.model_list == []
+        assert "qwen" not in api._round_robin
+
+    @pytest.mark.asyncio
+    async def test_remove_one_of_many_keeps_model(self, api):
+        h1, h2 = MagicMock(), MagicMock()
+        with patch("modelship.openai.api.serve.get_app_handle", side_effect=[h1, h2]):
+            await api.add_models({"qwen-aaaaaaaaaa": "qwen", "qwen-bbbbbbbbbb": "qwen"})
+
+        removed = await api.remove_deployments(["qwen-aaaaaaaaaa"])
+
+        assert removed == []  # model still has a deployment
+        assert "qwen" in api.models
+        assert list(api.models["qwen"].keys()) == ["qwen-bbbbbbbbbb"]
+        assert len(api.model_list) == 1
+
+    @pytest.mark.asyncio
+    async def test_remove_unknown_deployment_is_warning(self, api):
+        # Should not raise; just logs a warning.
+        removed = await api.remove_deployments(["nonexistent-1234567890"])
+        assert removed == []
+
+    @pytest.mark.asyncio
+    async def test_remove_drops_from_expected_models(self, api):
+        await api.set_expected_models(["qwen", "kokoro"])
+        with patch("modelship.openai.api.serve.get_app_handle", return_value=MagicMock()):
+            await api.add_models({"qwen-a3f9k1b2c4": "qwen"})
+
+        await api.remove_deployments(["qwen-a3f9k1b2c4"])
+
+        assert api.expected_models == ["kokoro"]
+
+
+class TestListDeployments:
+    @pytest.mark.asyncio
+    async def test_returns_app_names_per_model(self, api):
+        h1, h2, h3 = MagicMock(), MagicMock(), MagicMock()
+        with patch("modelship.openai.api.serve.get_app_handle", side_effect=[h1, h2, h3]):
+            await api.add_models(
+                {
+                    "qwen-aaaaaaaaaa": "qwen",
+                    "qwen-bbbbbbbbbb": "qwen",
+                    "kokoro-cccccccccc": "kokoro",
+                }
+            )
+
+        listed = await api.list_deployments()
+
+        assert set(listed["qwen"]) == {"qwen-aaaaaaaaaa", "qwen-bbbbbbbbbb"}
+        assert listed["kokoro"] == ["kokoro-cccccccccc"]
 
 
 class TestGetHandle:

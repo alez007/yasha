@@ -117,7 +117,10 @@ def _error_response(result: ErrorResponse) -> JSONResponse:
 @serve.ingress(app)
 class ModelshipAPI:
     def __init__(self):
-        self.models: dict[str, list[DeploymentHandle]] = {}
+        # model_name -> (app_name -> handle). Keyed by app_name so
+        # remove_deployments can drop a specific deployment by its
+        # fingerprint-suffixed app name without scanning handles.
+        self.models: dict[str, dict[str, DeploymentHandle]] = {}
         self._round_robin: dict[str, int] = {}
         self.model_list: list[OpenAiModelCard] = []
         self.expected_models: list[str] = []
@@ -151,10 +154,10 @@ class ModelshipAPI:
 
             newly_added = model_name not in self.models
             if newly_added:
-                self.models[model_name] = []
+                self.models[model_name] = {}
                 self._round_robin[model_name] = 0
                 self.model_list.append(OpenAiModelCard(id=model_name))
-            self.models[model_name].append(handle)
+            self.models[model_name][app_name] = handle
             logger.info("Registered deployment: %s (model: %s)", app_name, model_name)
 
             if newly_added:
@@ -168,6 +171,41 @@ class ModelshipAPI:
 
         MODELS_LOADED.set(len(self.models))
 
+    async def remove_deployments(self, app_names: list[str]) -> list[str]:
+        """Drop the given deployment app names from the routing tables.
+
+        Deployment names follow `{model_name}-{fingerprint}`, so the owning
+        model name is derived by stripping the fingerprint suffix. If a model
+        has no remaining deployments after removal, the model entry, model
+        card, round-robin counter, expected-models entry, and load-time entry
+        are also dropped. Returns the names of fully-removed models.
+        """
+        removed_models: list[str] = []
+        for app_name in app_names:
+            model_name = app_name.rsplit("-", 1)[0]
+            handles = self.models.get(model_name)
+            if handles is None or app_name not in handles:
+                logger.warning("remove_deployments: no deployment named %s", app_name)
+                continue
+
+            del handles[app_name]
+            logger.info("Unregistered deployment: %s (model: %s)", app_name, model_name)
+
+            if not handles:
+                del self.models[model_name]
+                self._round_robin.pop(model_name, None)
+                self.model_list = [c for c in self.model_list if c.id != model_name]
+                self._model_load_times.pop(model_name, None)
+                self.expected_models = [m for m in self.expected_models if m != model_name]
+                removed_models.append(model_name)
+
+        MODELS_LOADED.set(len(self.models))
+        return removed_models
+
+    async def list_deployments(self) -> dict[str, list[str]]:
+        """Return model_name -> list of deployment app_names currently registered."""
+        return {model_name: list(handles.keys()) for model_name, handles in self.models.items()}
+
     @staticmethod
     def _set_request_id(request_id: str) -> None:
         from modelship.logging import request_id_var
@@ -177,7 +215,7 @@ class ModelshipAPI:
     def _get_handle(self, model_name: str | None) -> DeploymentHandle:
         if model_name is None or model_name not in self.models:
             raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
-        handles = self.models[model_name]
+        handles = list(self.models[model_name].values())
         idx = self._round_robin[model_name] % len(handles)
         self._round_robin[model_name] += 1
         return handles[idx]

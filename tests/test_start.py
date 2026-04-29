@@ -2,9 +2,10 @@
 
 import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from start import _rand_suffix, build_actor_options, parse_args, resolve_plugin_wheel
+import pytest
+from start import _rand_suffix, _remove_apps, build_actor_options, parse_args, resolve_plugin_wheel
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase
 
@@ -22,6 +23,20 @@ class TestParseArgs:
     def test_redeploy_flag(self):
         args = parse_args(["--redeploy"])
         assert args.redeploy is True
+
+    def test_reconcile_flag(self):
+        args = parse_args(["--reconcile"])
+        assert args.reconcile is True
+        assert args.replace_strategy == "blue_green"
+
+    def test_reconcile_with_stop_start_strategy(self):
+        args = parse_args(["--reconcile", "--replace-strategy", "stop_start"])
+        assert args.reconcile is True
+        assert args.replace_strategy == "stop_start"
+
+    def test_redeploy_and_reconcile_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            parse_args(["--redeploy", "--reconcile"])
 
     def test_config_path(self):
         args = parse_args(["--config", "/some/path/models.yaml"])
@@ -107,6 +122,35 @@ class TestBuildActorOptions:
         )
         opts = build_actor_options(config)
         assert opts["num_gpus"] == 0
+
+
+class TestRemoveApps:
+    def test_noop_on_empty_list(self):
+        gateway = MagicMock()
+        with patch("start.serve.delete") as mock_delete:
+            _remove_apps(gateway, [])
+        gateway.remove_deployments.remote.assert_not_called()
+        mock_delete.assert_not_called()
+
+    def test_unregisters_then_deletes(self):
+        gateway = MagicMock()
+        gateway.remove_deployments.remote.return_value.result.return_value = ["qwen"]
+        apps = ["qwen-aaaaaaaaaa", "kokoro-bbbbbbbbbb"]
+        with patch("start.serve.delete") as mock_delete:
+            _remove_apps(gateway, apps)
+
+        # Unregister from gateway happens before serve.delete so new requests
+        # stop routing before the deployment is torn down.
+        gateway.remove_deployments.remote.assert_called_once_with(apps)
+        assert mock_delete.call_args_list == [(("qwen-aaaaaaaaaa",),), (("kokoro-bbbbbbbbbb",),)]
+
+    def test_continues_on_serve_delete_error(self):
+        gateway = MagicMock()
+        gateway.remove_deployments.remote.return_value.result.return_value = []
+        with patch("start.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete:
+            _remove_apps(gateway, ["a-1234567890", "b-1234567890"])
+        # Both deletes attempted even though the first raised.
+        assert mock_delete.call_count == 2
 
 
 class TestResolvePluginWheel:

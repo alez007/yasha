@@ -213,6 +213,65 @@ class TestModelshipConfig:
         assert len(config.models) == 2
         assert config.models[0].name == config.models[1].name == "kokoro"
 
+    def test_duplicate_name_and_fingerprint_rejected(self):
+        with pytest.raises(ValidationError, match="Duplicate model entries"):
+            ModelshipConfig(
+                models=[
+                    ModelshipModelConfig(
+                        name="qwen",
+                        model="Qwen/Qwen-7B",
+                        usecase=ModelUsecase.generate,
+                        loader=ModelLoader.vllm,
+                        num_gpus=0.5,
+                    ),
+                    ModelshipModelConfig(
+                        name="qwen",
+                        model="Qwen/Qwen-7B",
+                        usecase=ModelUsecase.generate,
+                        loader=ModelLoader.vllm,
+                        num_gpus=0.5,
+                    ),
+                ]
+            )
+
+
+class TestFingerprint:
+    def _cfg(self, **overrides):
+        base = dict(
+            name="qwen",
+            model="Qwen/Qwen-7B",
+            usecase=ModelUsecase.generate,
+            loader=ModelLoader.vllm,
+            num_gpus=0.5,
+        )
+        base.update(overrides)
+        return ModelshipModelConfig(**base)
+
+    def test_stable_across_instances(self):
+        assert self._cfg().fingerprint() == self._cfg().fingerprint()
+
+    def test_changes_when_num_gpus_differs(self):
+        assert self._cfg(num_gpus=0.7).fingerprint() != self._cfg(num_gpus=0.8).fingerprint()
+
+    def test_unaffected_by_name(self):
+        # Same config under a different name should fingerprint identically;
+        # the name is the deployment-name prefix, not part of the hash.
+        assert self._cfg(name="a").fingerprint() == self._cfg(name="b").fingerprint()
+
+    def test_unaffected_by_num_replicas(self):
+        # Replica count is a Ray Serve in-place rebind, not a config drift.
+        assert self._cfg(num_replicas=1).fingerprint() == self._cfg(num_replicas=4).fingerprint()
+
+    def test_changes_when_loader_differs(self):
+        assert (
+            self._cfg(loader=ModelLoader.vllm).fingerprint() != self._cfg(loader=ModelLoader.transformers).fingerprint()
+        )
+
+    def test_deployment_name_combines_name_and_fingerprint(self):
+        cfg = self._cfg()
+        assert cfg.deployment_name() == f"{cfg.name}-{cfg.fingerprint()}"
+        assert len(cfg.fingerprint()) == 10
+
 
 class TestTransformersConfig:
     def test_defaults(self):
