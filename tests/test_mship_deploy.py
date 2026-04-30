@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import mship_deploy
 import pytest
 
-from modelship.actor_options import build_actor_options, resolve_plugin_wheel
+from modelship.deploy.actor_options import build_actor_options, resolve_plugin_wheel
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase
 from modelship.utils import rand_suffix
 from modelship.utils.cli import parse_args
@@ -131,7 +131,7 @@ class TestRemoveApps:
     def test_noop_on_empty_list(self):
         gateway = MagicMock()
         with patch("mship_deploy.serve.delete") as mock_delete:
-            mship_deploy._remove_apps(gateway, [])
+            mship_deploy.remove_apps(gateway, [])
         gateway.remove_deployments.remote.assert_not_called()
         mock_delete.assert_not_called()
 
@@ -140,7 +140,7 @@ class TestRemoveApps:
         gateway.remove_deployments.remote.return_value.result.return_value = ["qwen"]
         apps = ["qwen-aaaaaaaaaa", "kokoro-bbbbbbbbbb"]
         with patch("mship_deploy.serve.delete") as mock_delete:
-            mship_deploy._remove_apps(gateway, apps)
+            mship_deploy.remove_apps(gateway, apps)
 
         # Unregister from gateway happens before serve.delete so new requests
         # stop routing before the deployment is torn down.
@@ -151,7 +151,7 @@ class TestRemoveApps:
         gateway = MagicMock()
         gateway.remove_deployments.remote.return_value.result.return_value = []
         with patch("mship_deploy.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete:
-            mship_deploy._remove_apps(gateway, ["a-1234567890", "b-1234567890"])
+            mship_deploy.remove_apps(gateway, ["a-1234567890", "b-1234567890"])
         # Both deletes attempted even though the first raised.
         assert mock_delete.call_count == 2
 

@@ -1,7 +1,7 @@
 import os
 from unittest import mock
 
-from modelship.actor_options import build_cache_env_vars
+from modelship.deploy.actor_options import build_cache_env_vars
 from modelship.utils import cache_dir, plugins_dir
 
 
