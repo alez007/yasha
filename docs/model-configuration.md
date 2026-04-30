@@ -4,7 +4,7 @@ Models are configured in a YAML file (default: `config/models.yaml`). Each entry
 
 ## CLI Options
 
-`start.py` accepts the following arguments (env vars work as fallbacks):
+`mship_deploy.py` accepts the following arguments (env vars work as fallbacks):
 
 | Argument | Env Var | Default | Description |
 |---|---|---|---|
@@ -34,30 +34,30 @@ The base cache directory (`MSHIP_CACHE_DIR`, default: `/.cache`) is organized in
 
 ### Additive Deploys
 
-By default, `start.py` adds models to a running cluster without disrupting existing deployments. This allows incremental composition:
+By default, `mship_deploy.py` adds models to a running cluster without disrupting existing deployments. This allows incremental composition:
 
 ```bash
 # Deploy LLM models
-python start.py --config config/llm.yaml
+python mship_deploy.py --config config/llm.yaml
 
 # Later, add TTS without touching the running LLMs
-python start.py --config config/tts.yaml
+python mship_deploy.py --config config/tts.yaml
 
 # Add more models from another config
-python start.py --config config/embeddings.yaml
+python mship_deploy.py --config config/embeddings.yaml
 ```
 
 Use `--redeploy` to tear down everything and start fresh:
 
 ```bash
-python start.py --config config/models.yaml --redeploy
+python mship_deploy.py --config config/models.yaml --redeploy
 ```
 
 Multiple gateways can run independently by using `--gateway-name`:
 
 ```bash
-python start.py --config config/llm.yaml --gateway-name "llm-api"
-python start.py --config config/tts.yaml --gateway-name "tts-api"
+python mship_deploy.py --config config/llm.yaml --gateway-name "llm-api"
+python mship_deploy.py --config config/tts.yaml --gateway-name "tts-api"
 ```
 
 ## Fields

@@ -1,13 +1,16 @@
-"""Tests for start.py CLI argument parsing and helpers."""
+"""Tests for mship_deploy.py CLI argument parsing and helpers."""
 
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import mship_deploy
 import pytest
-from start import _rand_suffix, _remove_apps, build_actor_options, parse_args, resolve_plugin_wheel
 
+from modelship.deploy.actor_options import build_actor_options, resolve_plugin_wheel
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase
+from modelship.utils import rand_suffix
+from modelship.utils.cli import parse_args
 
 
 class TestParseArgs:
@@ -71,16 +74,16 @@ class TestParseArgs:
 
 class TestRandSuffix:
     def test_default_length(self):
-        suffix = _rand_suffix()
+        suffix = rand_suffix()
         assert len(suffix) == 5
 
     def test_custom_length(self):
-        suffix = _rand_suffix(10)
+        suffix = rand_suffix(10)
         assert len(suffix) == 10
 
     def test_chars_are_alphanumeric_lowercase(self):
         for _ in range(50):
-            suffix = _rand_suffix()
+            suffix = rand_suffix()
             assert all(c.islower() or c.isdigit() for c in suffix)
 
 
@@ -127,8 +130,8 @@ class TestBuildActorOptions:
 class TestRemoveApps:
     def test_noop_on_empty_list(self):
         gateway = MagicMock()
-        with patch("start.serve.delete") as mock_delete:
-            _remove_apps(gateway, [])
+        with patch("mship_deploy.serve.delete") as mock_delete:
+            mship_deploy.remove_apps(gateway, [])
         gateway.remove_deployments.remote.assert_not_called()
         mock_delete.assert_not_called()
 
@@ -136,8 +139,8 @@ class TestRemoveApps:
         gateway = MagicMock()
         gateway.remove_deployments.remote.return_value.result.return_value = ["qwen"]
         apps = ["qwen-aaaaaaaaaa", "kokoro-bbbbbbbbbb"]
-        with patch("start.serve.delete") as mock_delete:
-            _remove_apps(gateway, apps)
+        with patch("mship_deploy.serve.delete") as mock_delete:
+            mship_deploy.remove_apps(gateway, apps)
 
         # Unregister from gateway happens before serve.delete so new requests
         # stop routing before the deployment is torn down.
@@ -147,8 +150,8 @@ class TestRemoveApps:
     def test_continues_on_serve_delete_error(self):
         gateway = MagicMock()
         gateway.remove_deployments.remote.return_value.result.return_value = []
-        with patch("start.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete:
-            _remove_apps(gateway, ["a-1234567890", "b-1234567890"])
+        with patch("mship_deploy.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete:
+            mship_deploy.remove_apps(gateway, ["a-1234567890", "b-1234567890"])
         # Both deletes attempted even though the first raised.
         assert mock_delete.call_count == 2
 

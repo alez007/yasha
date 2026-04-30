@@ -26,7 +26,7 @@ lint-fix:
 # only that plugin's stamp, so subsequent `make plugin-wheels` runs are
 # incremental. Stale wheels for the same plugin are purged before each build
 # to keep a single wheel per plugin in the output dir (simplifies lookup from
-# start.py, which globs for <name>-*.whl).
+# mship_deploy.py, which globs for <name>-*.whl).
 plugin-wheels: $(foreach p,$(PLUGINS),$(PLUGIN_STAMP_DIR)/$(p).stamp)
 
 PLUGIN_SOURCES = $(shell find plugins/$(1) -type f -not -path '*/.*' -not -path '*/__pycache__/*' 2>/dev/null)

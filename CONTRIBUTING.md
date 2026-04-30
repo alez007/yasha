@@ -16,7 +16,7 @@ The recommended way to develop is via the VS Code Dev Container. See [docs/devel
 ```bash
 uv sync --extra dev
 ray start --head --port=6379 --dashboard-host=0.0.0.0 --num-cpus=2 --num-gpus=1
-uv run start.py
+uv run mship_deploy.py
 ```
 
 ## Code Style

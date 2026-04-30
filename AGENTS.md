@@ -35,22 +35,22 @@ Pre-commit only runs ruff; it does **not** run pyright or tests, so don't rely o
 - Line length **120** (not 88). Ruff handles formatting; `E501` is disabled because the formatter owns line length.
 - Ruff rule set: `E, W, F, I, N, UP, B, SIM, RUF`. `I` means isort runs — don't hand-sort imports.
 - `known-first-party = ["modelship"]` — the `plugins/*` packages are treated as third-party by isort.
-- Pyright `typeCheckingMode = "basic"`, scoped to `modelship`, `plugins`, `start.py`. Don't add `# type: ignore` without checking pyright actually complains in basic mode.
+- Pyright `typeCheckingMode = "basic"`, scoped to `modelship`, `plugins`, `mship_deploy.py`. Don't add `# type: ignore` without checking pyright actually complains in basic mode.
 
 ## Running the server
 
-Entry point is `start.py` (not a console script, not `python -m`). It:
+Entry point is `mship_deploy.py` (not a console script, not `python -m`). It:
 
 1. Reads `config/models.yaml` (gitignored — copy one from `config/examples/`).
 2. Connects to a **running** Ray cluster (`ray.init(address="auto")` unless `MSHIP_USE_EXISTING_RAY_CLUSTER=true`). You must `ray start --head ...` first when running outside Docker.
 3. Deploys models **additively** by default (new deployments get a random suffix, e.g. `qwen-a3f9k`). Pass `--redeploy` to tear everything down first.
 4. Starts a FastAPI gateway Ray Serve app named `modelship api` (override with `--gateway-name`), listening on port `8000`.
 
-The Docker image's `CMD` (`scripts/start.sh`) starts the Ray head (auto-detecting CPUs/GPUs unless `RAY_HEAD_CPU_NUM` / `RAY_HEAD_GPU_NUM` are set) and runs `uv run --no-sync start.py` against the venv baked at build time (extras selected by `--build-arg MSHIP_VARIANT=gpu|cpu`). Plugin wheels under `MSHIP_PLUGIN_WHEEL_DIR` are injected per-deployment via Ray `runtime_env`, resolved automatically from `models.yaml`. The Dev Container overrides this `CMD`, so inside a Dev Container you must run those steps manually (see `docs/development.md`).
+The Docker image's `CMD` (`scripts/start.sh`) starts the Ray head (auto-detecting CPUs/GPUs unless `RAY_HEAD_CPU_NUM` / `RAY_HEAD_GPU_NUM` are set) and runs `uv run --no-sync mship_deploy.py` against the venv baked at build time (extras selected by `--build-arg MSHIP_VARIANT=gpu|cpu`). Plugin wheels under `MSHIP_PLUGIN_WHEEL_DIR` are injected per-deployment via Ray `runtime_env`, resolved automatically from `models.yaml`. The Dev Container overrides this `CMD`, so inside a Dev Container you must run those steps manually (see `docs/development.md`).
 
 ## Architecture quick map
 
-- `start.py` — Ray init + deploy loop. Contains non-obvious GPU allocation logic in `build_actor_options` for vLLM `tensor_parallel_size > 1` (mp vs ray backend behave differently; `num_gpus` is sometimes ignored and replaced by `VLLM_RAY_PER_WORKER_GPUS`).
+- `mship_deploy.py` — Ray init + deploy loop. Contains non-obvious GPU allocation logic in `build_actor_options` for vLLM `tensor_parallel_size > 1` (mp vs ray backend behave differently; `num_gpus` is sometimes ignored and replaced by `VLLM_RAY_PER_WORKER_GPUS`).
 - `modelship/openai/api.py` — FastAPI gateway. Uses `RequestWatcher` + `DisconnectEvent` Ray actor to propagate client disconnects across process boundaries.
 - `modelship/infer/model_deployment.py` — the single `@serve.deployment` actor class; lazily imports the right backend based on `config.loader`.
 - `modelship/infer/infer_config.py` — pydantic config schemas **and** `RawRequestProxy` / `DisconnectEvent`. `RawRequestProxy` exists because FastAPI `Request` cannot cross Ray process boundaries; any new attribute vLLM reads from `raw_request` must be added there.
@@ -80,9 +80,9 @@ Commit messages matter: use Conventional Commits prefixes so the changelog gener
 
 ## Gotchas
 
-- `config/models.yaml` is gitignored; `start.py` errors out with a pointer to `config/examples/` if missing.
-- vLLM version is pinned (`vllm==0.20.0`). Do not bump casually — the TP scheduling logic in `start.py:build_actor_options` defaults to the Ray V2 executor.
-- `llama_cpp` loader is CPU-only today; `num_gpus > 0` is silently warned and forced to 0 in `start.py:build_actor_options`.
+- `config/models.yaml` is gitignored; `mship_deploy.py` errors out with a pointer to `config/examples/` if missing.
+- vLLM version is pinned (`vllm==0.20.0`). Do not bump casually — the TP scheduling logic in `mship_deploy.py:build_actor_options` defaults to the Ray V2 executor.
+- `llama_cpp` loader is CPU-only today; `num_gpus > 0` is silently warned and forced to 0 in `mship_deploy.py:build_actor_options`.
 - Metrics are on by default on port **8079** (not 8000). Disable with `--no-metrics` or `MSHIP_METRICS=false`.
 - Log level `TRACE` (below `DEBUG`) is a custom level and logs full request/response payloads.
 - Docker images are multi-arch (amd64 + arm64). The CPU image uses the unified `Dockerfile` with `--build-arg MSHIP_VARIANT=cpu` and has a different tag suffix (`:latest-cpu`).

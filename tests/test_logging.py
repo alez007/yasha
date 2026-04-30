@@ -36,7 +36,7 @@ def _reset_logging():
     root.propagate = True
     saved_lib_levels = {name: logging.getLogger(name).level for name in _LIB_LOGGERS}
     saved_env = {k: os.environ.get(k) for k in _LIB_ENV_VARS}
-    # Clear so each test exercises a clean setdefault path. Importing start.py
+    # Clear so each test exercises a clean setdefault path. Importing mship_deploy.py
     # in another test runs propagate_lib_log_env() and pollutes os.environ for
     # the rest of the pytest session.
     for k in _LIB_ENV_VARS:

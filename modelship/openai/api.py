@@ -127,7 +127,7 @@ class ModelshipAPI:
         self._started_at = time.time()
         # Timing state — set_expected_models stamps a start, each add_models
         # arrival records the gap since the previous arrival as that model's
-        # load duration (start.py deploys sequentially so the gap ≈ load time).
+        # load duration (mship_deploy.py deploys sequentially so the gap ≈ load time).
         self._expected_set_at: float | None = None
         self._last_model_at: float | None = None
         self._all_ready_at: float | None = None

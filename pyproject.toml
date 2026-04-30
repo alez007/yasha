@@ -149,6 +149,6 @@ known-first-party = ["modelship"]
 pythonVersion = "3.12"
 venvPath = "/"
 venv = ".venv"
-include = ["modelship", "plugins", "start.py"]
+include = ["modelship", "plugins", "mship_deploy.py"]
 exclude = [".cache", ".venv"]
 typeCheckingMode = "basic"
