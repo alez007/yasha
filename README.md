@@ -105,12 +105,10 @@ The fastest way to try Modelship: run a quantized 7B chat model on a laptop — 
 mkdir -p models-cache && cat > models.yaml <<'EOF'
 models:
   - name: qwen
-    model: lmstudio-community/Qwen2.5-7B-Instruct-GGUF
+    model: "lmstudio-community/Qwen2.5-7B-Instruct-GGUF:*Q4_K_M.gguf"
     usecase: generate
     loader: llama_cpp
     num_cpus: 3
-    llama_cpp_config:
-      hf_filename: "*Q4_K_M.gguf"
 EOF
 
 docker run --rm --shm-size=8g \

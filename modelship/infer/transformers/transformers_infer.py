@@ -60,7 +60,12 @@ class TransformersInfer(BaseInfer):
 
     async def start(self):
         usecase = self.model_config.usecase
-        model_name = self.model_config.model
+        model_name = self.model_config._resolved_path
+        if not model_name:
+            raise ValueError(
+                f"Transformers deployment '{self.model_config.name}' is missing a resolved model path. "
+                f"Check driver logs for resolution errors."
+            )
 
         if usecase is ModelUsecase.generate:
             from transformers import pipeline

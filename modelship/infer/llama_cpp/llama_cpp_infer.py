@@ -65,9 +65,12 @@ class LlamaCppInfer(BaseInfer):
         logger.info("Start llama.cpp infer for model: %s", self.model_config)
         loop = asyncio.get_event_loop()
 
-        model_path = self.model_config._resolved_path or self.model_config.model
+        model_path = self.model_config._resolved_path
         if not model_path:
-            raise ValueError("LlamaCpp requires a valid model path")
+            raise ValueError(
+                f"LlamaCpp deployment '{self.model_config.name}' is missing a resolved model path. "
+                f"Check driver logs for resolution errors."
+            )
 
         self.llamacpp = await loop.run_in_executor(
             None,

@@ -80,8 +80,14 @@ class VllmInfer(BaseInfer):
     def __init__(self, model_config: ModelshipModelConfig):
         super().__init__(model_config)
 
+        if not model_config._resolved_path:
+            raise ValueError(
+                f"vllm deployment '{model_config.name}' is missing a resolved model path. "
+                f"Check driver logs for resolution errors."
+            )
+
         config_engine_kwargs = model_config.vllm_engine_kwargs.model_dump(exclude_unset=True)
-        config_engine_kwargs["model"] = model_config.model
+        config_engine_kwargs["model"] = model_config._resolved_path
 
         mem_fraction = self._get_memory_fraction()
         if mem_fraction is not None:

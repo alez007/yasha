@@ -5,12 +5,11 @@
 models:
   # Chat — 3B Q4 quant, ~2 GB, tool calling works for simple commands.
   - name: "qwen"
-    model: "lmstudio-community/Qwen2.5-3B-Instruct-GGUF"
+    model: "lmstudio-community/Qwen2.5-3B-Instruct-GGUF:*Q4_K_M.gguf"
     usecase: "generate"
     loader: "llama_cpp"
     num_cpus: 2
     llama_cpp_config:
-      hf_filename: "*Q4_K_M.gguf"
       n_ctx: 4096
 
   # TTS — Kokoro on CPU via ONNX.

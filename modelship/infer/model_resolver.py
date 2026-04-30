@@ -17,19 +17,25 @@ class ResolvedSource(NamedTuple):
     is_local: bool
 
 
+def _is_pathy(s: str) -> bool:
+    return s.startswith("/") or s.startswith("./") or s.startswith("~")
+
+
 def parse_model_ref(model: str) -> ResolvedSource:
     """Parses model string into (source, selector, is_local).
 
-    Rule: split on ':' if not an absolute path starting with '/', './' or '~'.
+    Path-first: if the literal full string is an existing local path, treat it
+    as one (covers the rare colon-in-filename case). Otherwise split on the
+    first ':' — the part before is the source (HF repo or local dir), the part
+    after is the selector for picking a file inside it.
     """
-    if (model.startswith("/") or model.startswith("./") or model.startswith("~")) and Path(
-        model.split(":")[0]
-    ).exists():
+    if _is_pathy(model) and Path(model).exists():
         return ResolvedSource(source=model, selector=None, is_local=True)
 
     if ":" in model:
         source, selector = model.split(":", 1)
-        return ResolvedSource(source=source, selector=selector, is_local=False)
+        is_local = _is_pathy(source) and Path(source).exists()
+        return ResolvedSource(source=source, selector=selector, is_local=is_local)
 
     return ResolvedSource(source=model, selector=None, is_local=False)
 
@@ -64,6 +70,12 @@ def _select_patterns(repo_files: list[str], trust_remote_code: bool = False) -> 
         patterns.extend(["*.bin", "*.bin.index.json", "**/*.bin"])
 
     return patterns
+
+
+def _format_gguf_variants(repo_files: list[str]) -> str:
+    """Format the GGUF files in a repo as a bullet list for error messages."""
+    ggufs = sorted(f for f in repo_files if f.endswith(".gguf"))
+    return "\n".join(f"  - {f}" for f in ggufs)
 
 
 def resolve_model_source(model_ref: str, trust_remote_code: bool = False) -> str:
@@ -118,6 +130,18 @@ def resolve_model_source(model_ref: str, trust_remote_code: bool = False) -> str
 
         # Single match: use hf_hub_download
         return hf_hub_download(source, matches[0])
+
+    # No selector: detect a multi-variant GGUF repo and require an explicit pick.
+    # This catches the common `model: org/repo-GGUF` mistake before the loader
+    # silently auto-resolves to the wrong quant.
+    ggufs = [f for f in repo_files if f.endswith(".gguf")]
+    if len(ggufs) > 1:
+        raise ValueError(
+            f"HF repo {source!r} contains {len(ggufs)} GGUF variants — pick one with the `:filename` "
+            f"syntax (glob supported, must match exactly one file):\n"
+            f"{_format_gguf_variants(repo_files)}\n"
+            f"Example: model: {source}:*Q4_K_M.gguf"
+        )
 
     # Full snapshot with universal filter
     patterns = _select_patterns(repo_files, trust_remote_code=trust_remote_code)
