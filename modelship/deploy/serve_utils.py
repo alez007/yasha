@@ -1,0 +1,107 @@
+import logging
+import os
+import socket
+
+import ray
+from ray import serve
+from ray.serve.config import HTTPOptions
+from ray.serve.schema import LoggingConfig
+
+from modelship.infer.infer_config import ModelshipConfig
+from modelship.logging import get_logger
+from modelship.openai.api import ModelshipAPI
+from modelship.utils import rand_suffix
+
+logger = get_logger("startup")
+_DEFAULT_OPENAI_API_PORT = 8000
+
+
+def make_operator_id() -> str:
+    return f"{socket.gethostname()}-{os.getpid()}-{rand_suffix(4)}"
+
+
+def get_existing_apps() -> set[str]:
+    """Return the set of currently deployed Serve app names."""
+    try:
+        return set(serve.status().applications.keys())
+    except Exception:
+        return set()
+
+
+def shutdown_ray() -> None:
+    """Shut down Ray Serve and Ray. Logs but swallows errors."""
+    for label, fn in (("serve.shutdown()", serve.shutdown), ("ray.shutdown()", ray.shutdown)):
+        try:
+            fn()
+        except Exception:
+            logger.exception("%s failed", label)
+
+
+def delete_apps_quietly(app_names) -> None:
+    """Best-effort serve.delete for cleanup paths — never raises."""
+    for name in app_names:
+        try:
+            logger.info("Deleting deployment: %s", name)
+            serve.delete(name)
+        except Exception:
+            logger.exception("Failed to delete deployment: %s", name)
+
+
+def remove_apps(gateway_handle, app_names: list[str]) -> None:
+    """Unregister the given deployment apps from the gateway (so new requests
+    stop routing) and then delete them from Ray Serve. `serve.delete` drains
+    in-flight requests before tearing the deployment down. The deploy
+    coordinator is intentionally not involved — it gates admission, not
+    teardown; freed resources show up on the next try_reserve."""
+    if not app_names:
+        return
+    try:
+        gateway_handle.remove_deployments.remote(app_names).result()
+    except Exception:
+        logger.exception("Failed to unregister deployments from gateway: %s", app_names)
+    delete_apps_quietly(app_names)
+
+
+def connect_ray(lib_level: int) -> None:
+    ray_cluster_address = os.environ["RAY_CLUSTER_ADDRESS"]
+    ray_redis_port = os.environ["RAY_REDIS_PORT"]
+    use_existing_cluster = os.environ.get("MSHIP_USE_EXISTING_RAY_CLUSTER", "false").lower() == "true"
+    os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
+
+    address = f"{ray_cluster_address}:{ray_redis_port}" if use_existing_cluster else "auto"
+    ray.init(address=address, ignore_reinit_error=True, logging_level=lib_level)
+    # ray.init re-sets ray.* loggers, so re-pin them after init.
+    logging.getLogger("ray").setLevel(lib_level)
+    logging.getLogger("ray._private.worker").setLevel(lib_level)
+
+
+def start_serve(serve_logging_config: LoggingConfig) -> None:
+    port = int(os.environ.get("MSHIP_OPENAI_API_PORT", str(_DEFAULT_OPENAI_API_PORT)))
+    serve.start(
+        http_options=HTTPOptions(host="0.0.0.0", port=port),
+        logging_config=serve_logging_config,
+    )
+
+
+def start_gateway(gateway_name: str, serve_logging_config: LoggingConfig) -> None:
+    logger.info("Starting API gateway...")
+    serve.run(
+        ModelshipAPI.options(
+            name=gateway_name,
+            num_replicas=1,
+            ray_actor_options={"num_cpus": 0},
+            logging_config=serve_logging_config,
+        ).bind(),
+        name=gateway_name,
+        route_prefix="/",
+    )
+    logger.info("Gateway up — /health and /readyz now serving.")
+
+
+def seed_expected_models(gateway_handle, yml_conf: ModelshipConfig) -> None:
+    # Pass the full desired set, not just models_to_add — already-deployed
+    # models also count toward "ready".
+    try:
+        gateway_handle.set_expected_models.remote([c.name for c in yml_conf.models]).result()
+    except Exception:
+        logger.exception("Failed to seed expected model list on gateway (non-fatal).")
