@@ -66,13 +66,13 @@ Ship logs to a remote syslog server instead of stderr. Useful for centralized lo
 
 ```bash
 # UDP (default)
-python start.py --log-target syslog://192.168.1.50:514
+python mship_deploy.py --log-target syslog://192.168.1.50:514
 
 # TCP (reliable delivery)
-python start.py --log-target syslog+tcp://192.168.1.50:514
+python mship_deploy.py --log-target syslog+tcp://192.168.1.50:514
 
 # Via environment variable
-MSHIP_LOG_TARGET=syslog://192.168.1.50:514 python start.py
+MSHIP_LOG_TARGET=syslog://192.168.1.50:514 python mship_deploy.py
 ```
 
 Supported URI formats:
@@ -99,10 +99,10 @@ Then configure the endpoint:
 
 ```bash
 # Via CLI
-python start.py --otel-endpoint http://collector:4317
+python mship_deploy.py --otel-endpoint http://collector:4317
 
 # Via environment variable
-OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317 python start.py
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317 python mship_deploy.py
 ```
 
 When OTel is enabled:
@@ -266,7 +266,7 @@ curl http://localhost:8000/status
 # }
 ```
 
-Per-model timings are gateway-measured: the gap between one model registering and the next (models deploy sequentially in `start.py`), so the first model's entry includes any framework-level setup time preceding it.
+Per-model timings are gateway-measured: the gap between one model registering and the next (models deploy sequentially in `mship_deploy.py`), so the first model's entry includes any framework-level setup time preceding it.
 
 Use `/health` for Kubernetes liveness probes and `/status` for readiness probes — `/status` returning 503 prevents a service from flipping traffic onto the pod before models are loaded.
 

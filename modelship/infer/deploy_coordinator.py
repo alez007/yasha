@@ -1,6 +1,6 @@
 """Cluster-wide coordinator for serialising model deploys across operators.
 
-A `start.py` driver ("operator") cannot safely assume it is the only process
+A `mship_deploy.py` driver ("operator") cannot safely assume it is the only process
 deploying models to the Ray cluster. Two operators both checking
 `ray.available_resources()`, both seeing "GPU free", and both calling
 `serve.run()` concurrently can trigger simultaneous VRAM loads on the same

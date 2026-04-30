@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Python is pinned exactly to `3.12.10` (not `>=`). Dependency manager is **uv** with a workspace; `plugins/*` are workspace members. Never use `pip install`.
 - `gpu` and `cpu` extras are **mutually exclusive** (declared in `[tool.uv] conflicts`) — `torch`/`torchvision` come from different indexes per extra.
 - Line length is **120**, not 88. Ruff owns formatting (`E501` disabled); don't hand-sort imports (isort via `I` rule handles it). `plugins/*` are third-party to isort; `modelship` is first-party.
-- Pyright runs in `basic` mode, scoped to `modelship`, `plugins`, `start.py`. Pre-commit only runs ruff — don't rely on it to catch type errors.
+- Pyright runs in `basic` mode, scoped to `modelship`, `plugins`, `mship_deploy.py`. Pre-commit only runs ruff — don't rely on it to catch type errors.
 
 ## Common commands
 
@@ -30,18 +30,18 @@ CI mirrors `make lint` + `pytest tests/ -v`. Match it locally before pushing.
 
 ## Running the server
 
-`start.py` is the entry point (not a console script, not `python -m`). It:
+`mship_deploy.py` is the entry point (not a console script, not `python -m`). It:
 
-1. Reads `config/models.yaml` (gitignored — copy from `config/examples/`; `start.py` errors out pointing there if missing).
+1. Reads `config/models.yaml` (gitignored — copy from `config/examples/`; `mship_deploy.py` errors out pointing there if missing).
 2. Connects to a **running** Ray cluster (`ray.init(address="auto")`). Outside Docker you must `ray start --head ...` first.
 3. Deploys models **additively** by default (each gets a random suffix like `qwen-a3f9k`). Use `--redeploy` to tear everything down first.
 4. Starts a FastAPI Ray Serve app named `modelship api` on port 8000. Override via `--gateway-name` (multiple gateways can coexist on one cluster).
 
-Docker's `scripts/start.sh` starts Ray (auto-detecting CPUs/GPUs unless `RAY_HEAD_CPU_NUM`/`RAY_HEAD_GPU_NUM` set) and runs `uv run --no-sync start.py` against the prebuilt venv (extras chosen by `--build-arg MSHIP_VARIANT=gpu|cpu`). Plugin wheels in `MSHIP_PLUGIN_WHEEL_DIR` ship to Ray workers per-deployment via `runtime_env`, resolved from `models.yaml`. The Dev Container overrides this — inside it you must `uv sync`, `ray start`, and run `start.py` manually.
+Docker's `scripts/start.sh` starts Ray (auto-detecting CPUs/GPUs unless `RAY_HEAD_CPU_NUM`/`RAY_HEAD_GPU_NUM` set) and runs `uv run --no-sync mship_deploy.py` against the prebuilt venv (extras chosen by `--build-arg MSHIP_VARIANT=gpu|cpu`). Plugin wheels in `MSHIP_PLUGIN_WHEEL_DIR` ship to Ray workers per-deployment via `runtime_env`, resolved from `models.yaml`. The Dev Container overrides this — inside it you must `uv sync`, `ray start`, and run `mship_deploy.py` manually.
 
 ## Architecture map
 
-- `start.py` — Ray init + deploy loop. `build_actor_options` has non-obvious GPU allocation for vLLM `tensor_parallel_size > 1` (mp vs ray backend differ; `num_gpus` is sometimes replaced by `VLLM_RAY_PER_WORKER_GPUS`). `llama_cpp` loader is CPU-only — `num_gpus > 0` is silently forced to 0.
+- `mship_deploy.py` — Ray init + deploy loop. `build_actor_options` has non-obvious GPU allocation for vLLM `tensor_parallel_size > 1` (mp vs ray backend differ; `num_gpus` is sometimes replaced by `VLLM_RAY_PER_WORKER_GPUS`). `llama_cpp` loader is CPU-only — `num_gpus > 0` is silently forced to 0.
 - `modelship/openai/api.py` — FastAPI gateway. Uses `RequestWatcher` + `DisconnectEvent` Ray actor to propagate client disconnects across process boundaries and cancel in-flight inference.
 - `modelship/infer/model_deployment.py` — the single `@serve.deployment` actor class; lazily imports the right backend from `config.loader`.
 - `modelship/infer/infer_config.py` — pydantic config schemas plus `RawRequestProxy` / `DisconnectEvent`. `RawRequestProxy` exists because FastAPI `Request` can't cross Ray process boundaries. **Any new attribute vLLM reads from `raw_request` must be added there.**
@@ -61,7 +61,7 @@ Under `tests/`, `pytest-asyncio` for async. Tests **mock out Ray Serve** — the
 
 ## Sharp edges
 
-- `vllm==0.20.0` is pinned. Don't bump casually — TP scheduling in `start.py:build_actor_options` defaults to the Ray V2 executor.
+- `vllm==0.20.0` is pinned. Don't bump casually — TP scheduling in `mship_deploy.py:build_actor_options` defaults to the Ray V2 executor.
 - Metrics live on port **8079** (not 8000). `MSHIP_METRICS=false` or `--no-metrics` disables.
 - `TRACE` is a custom log level below `DEBUG`; it logs full request/response payloads.
 - Docker CPU image uses the unified `Dockerfile` with `--build-arg MSHIP_VARIANT=cpu` and has a `:latest-cpu` tag suffix.

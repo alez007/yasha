@@ -106,7 +106,7 @@ RUN mkdir -p /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR /usr/local/uv/python && \
 #
 # The venv is resolved with --extra $MSHIP_VARIANT only (no plugin extras).
 # Plugin wheels are built separately into $MSHIP_PLUGIN_WHEEL_DIR and shipped
-# to Ray workers per-deployment via runtime_env from start.py.
+# to Ray workers per-deployment via runtime_env from mship_deploy.py.
 # =============================================================================
 FROM base AS builder
 
@@ -201,7 +201,7 @@ ADD --chown=$UID:$GID ./pyproject.toml pyproject.toml
 ADD --chown=$UID:$GID ./README.md README.md
 ADD --chown=$UID:$GID ./uv.lock uv.lock
 ADD --chown=$UID:$GID ./plugins plugins
-ADD --chown=$UID:$GID ./start.py start.py
+ADD --chown=$UID:$GID ./mship_deploy.py mship_deploy.py
 ADD --chown=$UID:$GID ./modelship modelship
 ADD --chown=$UID:$GID ./scripts scripts
 

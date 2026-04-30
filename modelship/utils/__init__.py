@@ -1,13 +1,21 @@
 import os
+import random
+import string
 import uuid
 
 import requests
 
 from modelship.infer.infer_config import RawRequestProxy
 
+_RAND_CHARS = string.ascii_lowercase + string.digits
+
 
 def random_uuid() -> str:
     return str(uuid.uuid4().hex)
+
+
+def rand_suffix(length: int = 5) -> str:
+    return "".join(random.choices(_RAND_CHARS, k=length))
 
 
 def base_request_id(raw_request: RawRequestProxy | None = None) -> str:

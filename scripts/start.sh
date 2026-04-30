@@ -16,4 +16,4 @@ if [ "${MSHIP_USE_EXISTING_RAY_CLUSTER}" != "true" ]; then
     /modelship/scripts/start_ray.sh "${RAY_ARGS[@]}"
 fi
 
-cd /modelship && uv run --no-sync start.py
+cd /modelship && uv run --no-sync mship_deploy.py

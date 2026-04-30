@@ -34,7 +34,7 @@ The recommended way to develop Modelship is with VS Code Dev Containers. The con
 4. Start the server:
 
    ```bash
-   uv run start.py
+   uv run mship_deploy.py
    ```
 
 > **Why the extra steps?** The Dev Container overrides the image's default `CMD` (which normally runs `start.sh` to sync deps and start Ray). Inside a Dev Container you need to run these steps manually.
@@ -108,7 +108,7 @@ docker run -it --rm --shm-size=8g \
 The container's entrypoint (`start.sh`) automatically starts the Ray head node (auto-detecting resources) and drops into a shell. Then start the server:
 
 ```bash
-uv run start.py
+uv run mship_deploy.py
 ```
 
 ## Production Builds
