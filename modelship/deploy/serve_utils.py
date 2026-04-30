@@ -63,12 +63,16 @@ def remove_apps(gateway_handle, app_names: list[str]) -> None:
 
 
 def connect_ray(lib_level: int) -> None:
-    ray_cluster_address = os.environ["RAY_CLUSTER_ADDRESS"]
-    ray_redis_port = os.environ["RAY_REDIS_PORT"]
     use_existing_cluster = os.environ.get("MSHIP_USE_EXISTING_RAY_CLUSTER", "false").lower() == "true"
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
 
-    address = f"{ray_cluster_address}:{ray_redis_port}" if use_existing_cluster else "auto"
+    if use_existing_cluster:
+        ray_cluster_address = os.environ["RAY_CLUSTER_ADDRESS"]
+        ray_redis_port = os.environ["RAY_REDIS_PORT"]
+        address = f"{ray_cluster_address}:{ray_redis_port}"
+    else:
+        address = "auto"
+
     ray.init(address=address, ignore_reinit_error=True, logging_level=lib_level)
     # ray.init re-sets ray.* loggers, so re-pin them after init.
     logging.getLogger("ray").setLevel(lib_level)
