@@ -127,13 +127,16 @@ class TestResolveLocalPath:
         with pytest.raises(FileNotFoundError, match="matched no files"):
             resolve_model_source(f"{d}:*Q4_K_M.gguf")
 
-    def test_local_dir_with_selector_multiple_matches(self, tmp_path: Path):
+    def test_local_dir_with_selector_multiple_matches_returns_first(self, tmp_path: Path):
+        # Sharded GGUF case: selector matches several shards; return the first
+        # alphabetically so llama.cpp can auto-load the rest.
         d = tmp_path / "ggufs"
         d.mkdir()
-        (d / "a-Q4_K_M.gguf").write_text("dummy")
-        (d / "b-Q4_K_M.gguf").write_text("dummy")
-        with pytest.raises(RuntimeError, match="matched multiple files"):
-            resolve_model_source(f"{d}:*Q4_K_M.gguf")
+        (d / "model-00002-of-00003.gguf").write_text("dummy")
+        (d / "model-00001-of-00003.gguf").write_text("dummy")
+        (d / "model-00003-of-00003.gguf").write_text("dummy")
+        result = resolve_model_source(f"{d}:model-*.gguf")
+        assert result.endswith("model-00001-of-00003.gguf")
 
     def test_local_path_missing(self, tmp_path: Path):
         # parse_model_ref accepts an absolute path that doesn't exist as a non-local
@@ -169,16 +172,18 @@ class TestResolveHfRepo:
             assert result == "/cache/model-Q4_K_M.gguf"
             mock_dl.assert_called_once_with("org/repo", "model-Q4_K_M.gguf")
 
-    def test_selector_multiple_matches_uses_snapshot_download(self):
-        # Sharded GGUF case
-        files = ["model-00001-of-00002.gguf", "model-00002-of-00002.gguf"]
+    def test_selector_multiple_matches_returns_first_shard_path(self):
+        # Sharded GGUF: download all shards via snapshot_download, then return
+        # the first shard's full path (not the snapshot dir) so file-path
+        # loaders like llama.cpp work.
+        files = ["model-00002-of-00002.gguf", "model-00001-of-00002.gguf"]
         with (
             patch("modelship.infer.model_resolver.list_repo_files", return_value=files),
             patch("modelship.infer.model_resolver.snapshot_download") as mock_snap,
         ):
             mock_snap.return_value = "/cache/snapshot"
             result = resolve_model_source("org/repo:*.gguf")
-            assert result == "/cache/snapshot"
+            assert result == "/cache/snapshot/model-00001-of-00002.gguf"
             mock_snap.assert_called_once_with("org/repo", allow_patterns=["*.gguf"])
 
     def test_selector_no_match_raises(self):
@@ -202,18 +207,20 @@ class TestResolveHfRepo:
         ):
             resolve_model_source("lmstudio-community/Qwen2.5-7B-Instruct-GGUF")
 
-    def test_single_gguf_without_selector_downloads_via_universal_filter(self):
-        # Single GGUF is not ambiguous — resolver should not raise; falls through
-        # to snapshot_download (universal filter does not include *.gguf, but the
-        # caller's expectation here is just that no error is raised).
+    def test_single_gguf_without_selector_returns_file_path(self):
+        # Single-GGUF repo: resolver must return the file path (not a snapshot
+        # dir), because llama_cpp requires a file path.
         files = ["model.gguf", "config.json"]
         with (
             patch("modelship.infer.model_resolver.list_repo_files", return_value=files),
+            patch("modelship.infer.model_resolver.hf_hub_download") as mock_dl,
             patch("modelship.infer.model_resolver.snapshot_download") as mock_snap,
         ):
-            mock_snap.return_value = "/cache/snapshot"
+            mock_dl.return_value = "/cache/model.gguf"
             result = resolve_model_source("org/single-gguf-repo")
-            assert result == "/cache/snapshot"
+            assert result == "/cache/model.gguf"
+            mock_dl.assert_called_once_with("org/single-gguf-repo", "model.gguf")
+            mock_snap.assert_not_called()
 
     def test_list_repo_files_failure_wrapped(self):
         with (

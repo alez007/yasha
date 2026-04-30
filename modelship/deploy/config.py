@@ -43,6 +43,10 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
     sees the error before any Ray actor spins up.
 
     Plugins (`loader=custom`) are skipped — they manage their own download.
+
+    Note: HF_HOME / VLLM_CACHE_ROOT / FLASHINFER_CACHE_DIR are set at module
+    load time in mship_deploy.py — `huggingface_hub.HF_HOME` is latched at
+    import, so setting them later doesn't take effect.
     """
     for cfg in yml_conf.models:
         if cfg.loader == ModelLoader.custom:

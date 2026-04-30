@@ -97,16 +97,25 @@ def resolve_model_source(model_ref: str, trust_remote_code: bool = False) -> str
 
         if selector and path.is_dir():
             # If selector is provided for a local dir, try to match it
-            matches = list(path.glob(selector))
+            matches = sorted(path.glob(selector))
             if not matches:
                 # Try recursive if not found
-                matches = list(path.rglob(selector))
+                matches = sorted(path.rglob(selector))
 
-            if len(matches) == 1:
-                return str(matches[0].absolute())
+            if not matches:
+                raise FileNotFoundError(f"Selector {selector!r} matched no files in {path}")
             if len(matches) > 1:
-                raise RuntimeError(f"Selector {selector!r} matched multiple files in {path}: {matches}")
-            raise FileNotFoundError(f"Selector {selector!r} matched no files in {path}")
+                # Sharded weights (e.g. model-00001-of-00003.gguf): return the
+                # first shard sorted alphabetically. llama.cpp auto-loads the
+                # rest given the first shard's path.
+                logger.info(
+                    "Selector %r matched %d files in %s; returning first shard %s",
+                    selector,
+                    len(matches),
+                    path,
+                    matches[0].name,
+                )
+            return str(matches[0].absolute())
 
         return str(path.absolute())
 
@@ -117,16 +126,24 @@ def resolve_model_source(model_ref: str, trust_remote_code: bool = False) -> str
         raise RuntimeError(f"Failed to list files for HF repo {source!r}: {e}") from e
 
     if selector:
-        # Check if it's a sharded GGUF or similar that matches multiple files
-        matches = fnmatch.filter(repo_files, selector)
+        matches = sorted(fnmatch.filter(repo_files, selector))
         if not matches:
             raise FileNotFoundError(f"Selector {selector!r} matched no files in HF repo {source!r}")
 
         if len(matches) > 1:
-            # If multiple matches, we might need snapshot_download with patterns
-            # e.g. for sharded GGUFs.
-            logger.info("Selector %r matched %d files, using snapshot_download", selector, len(matches))
-            return snapshot_download(source, allow_patterns=[selector])
+            # Sharded weights (e.g. model-00001-of-00003.gguf): pull every shard
+            # via snapshot_download, then return the path to the first shard so
+            # loaders like llama.cpp (which want a file, not a directory) can
+            # auto-load the rest.
+            logger.info(
+                "Selector %r matched %d files in HF repo %r; downloading all shards and returning first %s",
+                selector,
+                len(matches),
+                source,
+                matches[0],
+            )
+            snapshot_dir = snapshot_download(source, allow_patterns=[selector])
+            return str(Path(snapshot_dir, matches[0]).absolute())
 
         # Single match: use hf_hub_download
         return hf_hub_download(source, matches[0])
@@ -142,6 +159,13 @@ def resolve_model_source(model_ref: str, trust_remote_code: bool = False) -> str
             f"{_format_gguf_variants(repo_files)}\n"
             f"Example: model: {source}:*Q4_K_M.gguf"
         )
+
+    # Single GGUF in the repo: download it directly and return the file path.
+    # llama_cpp requires a file path, not a directory, so snapshot_download
+    # would break it. The implicit "the only GGUF" is unambiguous.
+    if len(ggufs) == 1:
+        logger.info("HF repo %r has a single GGUF (%s); resolving to its file path", source, ggufs[0])
+        return hf_hub_download(source, ggufs[0])
 
     # Full snapshot with universal filter
     patterns = _select_patterns(repo_files, trust_remote_code=trust_remote_code)

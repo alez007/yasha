@@ -10,12 +10,22 @@ import sys
 # worker. Keep the uv hook off so runtime_env.pip's py_executable survives.
 os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "false")
 
+# Set HF / vLLM / FlashInfer cache dirs BEFORE importing anything that
+# transitively pulls in `huggingface_hub` — its `HF_HOME` constant is latched
+# at import time, so setting the env later does nothing. Driver-side downloads
+# (the model resolver) and Ray workers must agree on the cache path; workers
+# get these via runtime_env.env_vars in actor_options.build_cache_env_vars.
+_BASE_CACHE = os.environ.get("MSHIP_CACHE_DIR", "/.cache")
+os.environ.setdefault("HF_HOME", f"{_BASE_CACHE}/huggingface")
+os.environ.setdefault("VLLM_CACHE_ROOT", f"{_BASE_CACHE}/vllm")
+os.environ.setdefault("FLASHINFER_CACHE_DIR", f"{_BASE_CACHE}/flashinfer")
+
 # Set RAY_LOG_LEVEL/RAY_SERVE_LOG_LEVEL/VLLM_LOGGING_LEVEL/TRANSFORMERS_VERBOSITY
 # from MSHIP_LOG_LEVEL BEFORE `import ray` — Ray's loggers latch the env value
 # at import time, so configuring them later (in configure_logging) is too late
 # for the driver process. The level is env-var-only (no CLI flag) since argv
 # is parsed inside main(), well after `import ray`.
-from modelship.logging import propagate_lib_log_env
+from modelship.logging import propagate_lib_log_env  # noqa: E402
 
 propagate_lib_log_env()
 
