@@ -2,14 +2,12 @@
 # Ideal for quantized models on laptops, mini-PCs, and ARM hardware.
 
 models:
-  # Chat: GGUF pulled from a HuggingFace repo (glob picks the right quant)
+  # Chat: GGUF pulled from a HuggingFace repo (glob after `:` picks the right quant)
   - name: "qwen"
-    model: "lmstudio-community/Qwen2.5-7B-Instruct-GGUF"
+    model: "lmstudio-community/Qwen2.5-7B-Instruct-GGUF:*Q4_K_M.gguf"
     usecase: "generate"
     loader: "llama_cpp"
     num_cpus: 3
-    llama_cpp_config:
-      hf_filename: "*Q4_K_M.gguf"
 
   # Chat: GGUF from a local path (bind-mount the directory into the container)
   - name: "llama3-local"
@@ -23,9 +21,7 @@ models:
 
   # Embeddings
   - name: "nomic-embed"
-    model: "nomic-ai/nomic-embed-text-v1.5-GGUF"
+    model: "nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q4_K_M.gguf"
     usecase: "embed"
     loader: "llama_cpp"
     num_cpus: 2
-    llama_cpp_config:
-      hf_filename: "nomic-embed-text-v1.5.Q4_K_M.gguf"

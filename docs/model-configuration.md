@@ -65,7 +65,7 @@ python mship_deploy.py --config config/tts.yaml --gateway-name "tts-api"
 | Field | Type | Description |
 |---|---|---|
 | `name` | string | Model identifier used in API requests |
-| `model` | string | HuggingFace model ID |
+| `model` | string | HuggingFace repo ID, local path, or `repo:filename` (see [Model source](#model-source)). Required for built-in loaders; optional for `loader: custom` |
 | `usecase` | string | `generate`, `embed`, `transcription`, `translation`, `tts`, or `image` |
 | `loader` | string | `vllm`, `transformers`, `diffusers`, `llama_cpp`, or `custom` |
 | `plugin` | string | Plugin module name (required when `loader: custom`); automatically loaded from wheels when referenced |
@@ -77,6 +77,51 @@ python mship_deploy.py --config config/tts.yaml --gateway-name "tts-api"
 | `diffusers_config` | object | Diffusers pipeline options (see below) |
 | `llama_cpp_config` | object | llama.cpp loader options (see below) |
 | `plugin_config` | object | Plugin-specific options passed through to the plugin |
+
+## Model source
+
+The `model:` field accepts three forms. For built-in loaders, Modelship resolves
+the source on the **driver** before any Ray actor spins up — so auth failures,
+missing repos, and missing files surface immediately at startup instead of inside
+a stuck deployment.
+
+| Form | Example | When to use |
+|---|---|---|
+| HuggingFace repo ID | `Qwen/Qwen3-7B` | Standard HF model. Modelship runs `snapshot_download` with a universal filter (prefers `*.safetensors`, skips `*.bin` when both exist). |
+| Local path | `/mnt/nfs/models/qwen-7b` | A directory of HF-format files (or a single file for llama.cpp / vllm GGUF). |
+| `repo:filename` | `lmstudio-community/Qwen2.5-7B-Instruct-GGUF:*Q4_K_M.gguf` | Pick a specific file inside an HF repo. The selector is a glob; it must match exactly one file (or a single sharded set, e.g. `*-of-*.gguf`). |
+
+The `:filename` selector is also supported against a **local directory**: if `model:` points at a directory and the value contains `:`, the selector is matched against files inside that directory. The full path to the matched file is what the loader receives.
+
+### Multi-node clusters
+
+When Ray runs across multiple nodes, the resolver downloads to the driver's
+`HF_HOME`. **Worker nodes must see the same path** — the simplest setup is to
+mount `MSHIP_CACHE_DIR` (which contains `HF_HOME`) on shared storage (NFS, EFS,
+or similar) so every node reads from one cache. Without shared storage the
+worker can't open the file.
+
+### Multi-variant GGUF repos
+
+If `model:` points at an HF repo containing more than one `.gguf` file and no
+`:filename` selector is given, Modelship raises at startup with the list of
+variants and an example fix:
+
+```
+HF repo 'lmstudio-community/Qwen2.5-7B-Instruct-GGUF' contains 5 GGUF variants — pick one with the `:filename` syntax (glob supported, must match exactly one file):
+  - Qwen2.5-7B-Instruct-Q2_K.gguf
+  - Qwen2.5-7B-Instruct-Q4_K_M.gguf
+  - Qwen2.5-7B-Instruct-Q5_K_M.gguf
+  - Qwen2.5-7B-Instruct-Q8_0.gguf
+  - Qwen2.5-7B-Instruct-fp16.gguf
+Example: model: lmstudio-community/Qwen2.5-7B-Instruct-GGUF:*Q4_K_M.gguf
+```
+
+### Plugins (`loader: custom`)
+
+Plugins manage their own model files; Modelship does not pre-resolve `model:` for
+them. The field is optional for custom loaders and acts as a label only —
+plugins are free to ignore it and use `plugin_config` instead.
 
 ## vLLM Loader
 
@@ -264,22 +309,23 @@ The `llama_cpp` loader uses [llama-cpp-python](https://github.com/abetlen/llama-
 | `n_batch` | int | `512` | Batch size for prompt processing |
 | `n_gpu_layers` | int | `0` | Currently ignored — forced to `0` (CPU-only) |
 | `chat_format` | string | — | Chat template format (e.g. `llama-3`) |
-| `hf_filename` | string | — | Specific GGUF filename to download from the HF repo (supports glob patterns) |
 | `model_kwargs` | object | `{}` | Extra keyword arguments passed to the `Llama` constructor |
 
 > **Note:** Setting `MSHIP_LOG_LEVEL` to `TRACE` will enable `verbose` mode in the underlying llama.cpp engine.
+
+GGUF variants in a HuggingFace repo are picked via the `:filename` syntax on the
+`model:` field (see [Model source](#model-source)). The selector is a glob and
+must match exactly one file.
 
 ### Chat / Text Generation (GGUF)
 
 ```yaml
 models:
   - name: "qwen-gguf-hf"
-    model: "lmstudio-community/Qwen2.5-7B-Instruct-GGUF"
+    model: "lmstudio-community/Qwen2.5-7B-Instruct-GGUF:*Q4_K_M.gguf"
     usecase: "generate"
     loader: "llama_cpp"
     num_cpus: 3
-    llama_cpp_config:
-      hf_filename: "*Q4_K_M.gguf"
 ```
 
 ### Embeddings (GGUF)
@@ -287,11 +333,9 @@ models:
 ```yaml
 models:
   - name: nomic-embed
-    model: nomic-ai/nomic-embed-text-v1.5-GGUF
+    model: "nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q4_K_M.gguf"
     usecase: embed
     loader: llama_cpp
-    llama_cpp_config:
-      hf_filename: "nomic-embed-text-v1.5.Q4_K_M.gguf"
 ```
 
 ## Custom Loader (Plugins)

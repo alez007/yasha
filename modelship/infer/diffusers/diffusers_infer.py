@@ -48,14 +48,20 @@ class DiffusersInfer(BaseInfer):
         config = self.model_config.diffusers_config or DiffusersConfig()
         dtype = _TORCH_DTYPES.get(config.torch_dtype, torch.float16)
 
+        if not self.model_config._resolved_path:
+            raise ValueError(
+                f"Diffusers deployment '{self.model_config.name}' is missing a resolved model path. "
+                f"Check driver logs for resolution errors."
+            )
+
         logger.info(
             "Loading diffusers pipeline: %s (dtype=%s, device=%s)",
-            self.model_config.model,
+            self.model_config._resolved_path,
             config.torch_dtype,
             self.device,
         )
         self._pipeline = AutoPipelineForText2Image.from_pretrained(
-            self.model_config.model,
+            self.model_config._resolved_path,
             torch_dtype=dtype,
         ).to(device=self.device, dtype=dtype)
 

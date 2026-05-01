@@ -21,7 +21,6 @@ class TestLlamaCppConfig:
         assert config.n_ctx == 2048
         assert config.n_batch == 512
         assert config.chat_format is None
-        assert config.hf_filename is None
         assert config.model_kwargs == {}
 
     def test_custom_values(self):
@@ -30,26 +29,24 @@ class TestLlamaCppConfig:
             n_ctx=4096,
             n_batch=1024,
             chat_format="llama-3",
-            hf_filename="model.gguf",
             model_kwargs={"seed": 42},
         )
         assert config.n_gpu_layers == 33
         assert config.n_ctx == 4096
         assert config.n_batch == 1024
         assert config.chat_format == "llama-3"
-        assert config.hf_filename == "model.gguf"
         assert config.model_kwargs == {"seed": 42}
 
     def test_llama_cpp_model_config(self):
         config = ModelshipModelConfig(
             name="llama-3",
-            model="meta-llama/Llama-3-8B-Instruct-GGUF",
+            model="meta-llama/Llama-3-8B-Instruct-GGUF:*Q4_K_M.gguf",
             usecase=ModelUsecase.generate,
             loader=ModelLoader.llama_cpp,
-            llama_cpp_config=LlamaCppConfig(hf_filename="*Q4_K_M.gguf"),
+            llama_cpp_config=LlamaCppConfig(),
         )
         assert config.loader == ModelLoader.llama_cpp
-        assert config.llama_cpp_config.hf_filename == "*Q4_K_M.gguf"
+        assert config.model == "meta-llama/Llama-3-8B-Instruct-GGUF:*Q4_K_M.gguf"
 
 
 class TestModelshipModelConfig:
@@ -95,7 +92,7 @@ class TestModelshipModelConfig:
         assert config.plugin == "kokoroonnx"
 
     def test_model_required(self):
-        with pytest.raises(ValidationError, match="Field required"):
+        with pytest.raises(ValidationError, match="`model:` is required for loader"):
             ModelshipModelConfig(
                 name="test-llm",
                 usecase=ModelUsecase.generate,

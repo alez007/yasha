@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 import ray
 from fastapi import Request
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from starlette.datastructures import Headers, State
 
 # Length (hex chars) of the per-deployment fingerprint suffix. 10 hex chars =
@@ -80,13 +80,12 @@ class LlamaCppConfig(BaseModel):
     n_ctx: int = 2048
     n_batch: int = 512
     chat_format: str | None = None
-    hf_filename: str | None = None
     model_kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
 class ModelshipModelConfig(BaseModel):
     name: str
-    model: str
+    model: str | None = None
     usecase: ModelUsecase
     loader: ModelLoader
     plugin: str | None = None  # only meaningful for loader='custom'
@@ -99,10 +98,14 @@ class ModelshipModelConfig(BaseModel):
     llama_cpp_config: LlamaCppConfig | None = None
     plugin_config: dict[str, Any] | None = None  # plugin devs parse this themselves
 
+    _resolved_path: str | None = PrivateAttr(default=None)
+
     @model_validator(mode="after")
     def check_custom_requires_plugin(self):
         if self.loader == ModelLoader.custom and self.plugin is None:
             raise ValueError("loader='custom' requires plugin to be set")
+        if self.loader != ModelLoader.custom and not self.model:
+            raise ValueError(f"`model:` is required for loader={self.loader!r}")
         return self
 
     def fingerprint(self) -> str:

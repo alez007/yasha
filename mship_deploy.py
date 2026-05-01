@@ -10,19 +10,33 @@ import sys
 # worker. Keep the uv hook off so runtime_env.pip's py_executable survives.
 os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "false")
 
+# Set HF / vLLM / FlashInfer cache dirs BEFORE importing anything that
+# transitively pulls in `huggingface_hub` — its `HF_HOME` constant is latched
+# at import time, so setting the env later does nothing. Driver-side downloads
+# (the model resolver) and Ray workers must agree on the cache path; workers
+# get these via runtime_env.env_vars in actor_options.build_cache_env_vars.
+_BASE_CACHE = os.environ.get("MSHIP_CACHE_DIR", "/.cache")
+os.environ.setdefault("HF_HOME", f"{_BASE_CACHE}/huggingface")
+os.environ.setdefault("VLLM_CACHE_ROOT", f"{_BASE_CACHE}/vllm")
+os.environ.setdefault("FLASHINFER_CACHE_DIR", f"{_BASE_CACHE}/flashinfer")
+
 # Set RAY_LOG_LEVEL/RAY_SERVE_LOG_LEVEL/VLLM_LOGGING_LEVEL/TRANSFORMERS_VERBOSITY
 # from MSHIP_LOG_LEVEL BEFORE `import ray` — Ray's loggers latch the env value
 # at import time, so configuring them later (in configure_logging) is too late
 # for the driver process. The level is env-var-only (no CLI flag) since argv
 # is parsed inside main(), well after `import ray`.
-from modelship.logging import propagate_lib_log_env
+from modelship.logging import propagate_lib_log_env  # noqa: E402
 
 propagate_lib_log_env()
 
 from ray import serve  # noqa: E402
 from ray.serve.schema import LoggingConfig  # noqa: E402
 
-from modelship.deploy.config import load_yaml_config, resolve_all_plugin_wheels  # noqa: E402
+from modelship.deploy.config import (  # noqa: E402
+    load_yaml_config,
+    resolve_all_model_sources,
+    resolve_all_plugin_wheels,
+)
 from modelship.deploy.serve_utils import (  # noqa: E402
     connect_ray,
     delete_apps_quietly,
@@ -94,10 +108,16 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         # Start the gateway FIRST on fresh install so /health, /v1/models, and
-        # /readyz are reachable while models are still loading. Models register
-        # with the gateway as they come up (incremental add_models calls).
+        # /readyz are reachable while models are still loading (or downloading).
+        # Models register with the gateway as they come up.
         if fresh_install:
             start_gateway(gateway_name, serve_logging_config)
+
+        # Pre-flight: download/validate every built-in-loader model on the driver
+        # before any model deployment spins up. Surfaces auth / missing-repo /
+        # missing-file errors here instead of inside an UNHEALTHY replica. Runs
+        # AFTER the gateway is up so /health and /readyz answer during downloads.
+        resolve_all_model_sources(yml_conf)
 
         gateway_handle = serve.get_app_handle(gateway_name)
         seed_expected_models(gateway_handle, yml_conf)

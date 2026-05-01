@@ -65,40 +65,27 @@ class LlamaCppInfer(BaseInfer):
         logger.info("Start llama.cpp infer for model: %s", self.model_config)
         loop = asyncio.get_event_loop()
 
-        if self.config.hf_filename:
-            logger.info(
-                "Loading llama.cpp model from Hugging Face: repo=%s, file=%s",
-                self.model_config.model,
-                self.config.hf_filename,
+        model_path = self.model_config._resolved_path
+        if not model_path:
+            raise ValueError(
+                f"LlamaCpp deployment '{self.model_config.name}' is missing a resolved model path. "
+                f"Check driver logs for resolution errors."
             )
-            self.llamacpp = await loop.run_in_executor(
-                None,
-                lambda: Llama.from_pretrained(
-                    repo_id=self.model_config.model,
-                    filename=self.config.hf_filename,
-                    n_gpu_layers=self._n_gpu_layers,
-                    n_ctx=self.config.n_ctx,
-                    n_batch=self.config.n_batch,
-                    chat_format=self.config.chat_format,
-                    verbose=self._verbose,
-                    embedding=self.model_config.usecase == ModelUsecase.embed,
-                    **self.config.model_kwargs,
-                ),
-            )
-        else:
-            self.llamacpp = await loop.run_in_executor(
-                None,
-                lambda: Llama(
-                    model_path=self.model_config.model,
-                    n_gpu_layers=self._n_gpu_layers,
-                    n_ctx=self.config.n_ctx,
-                    n_batch=self.config.n_batch,
-                    chat_format=self.config.chat_format,
-                    verbose=self._verbose,
-                    embedding=self.model_config.usecase == ModelUsecase.embed,
-                    **self.config.model_kwargs,
-                ),
-            )
+
+        self.llamacpp = await loop.run_in_executor(
+            None,
+            lambda: Llama(
+                model_path=model_path,
+                n_gpu_layers=self._n_gpu_layers,
+                n_ctx=self.config.n_ctx,
+                n_batch=self.config.n_batch,
+                chat_format=self.config.chat_format,
+                verbose=self._verbose,
+                embedding=self.model_config.usecase == ModelUsecase.embed,
+                **self.config.model_kwargs,
+            ),
+        )
+
         self._set_max_context_length(self.config.n_ctx)
 
         assert self.llamacpp is not None
