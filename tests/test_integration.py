@@ -1,5 +1,3 @@
-import os
-import signal
 import subprocess
 import time
 
@@ -11,27 +9,34 @@ from openai import OpenAI
 
 OPENAI_API_BASE = "http://localhost:8000/v1"
 
+EXPECTED_MODELS = {"chat-capable", "chat-limited", "embed-model", "stt-model", "tts-model"}
+
 
 @pytest.fixture(scope="session")
 def mship_cluster(tmp_path_factory):
     """Starts a Ray cluster and mship_deploy in the background and waits for it to be ready."""
-    # Create a session-unique config path
     tmp_dir = tmp_path_factory.mktemp("mship_integration")
     config_path = tmp_dir / "integration-models.yaml"
+    log_path = tmp_dir / "mship_deploy.log"
 
-    # Ensure Ray is stopped first to start fresh
     subprocess.run(["ray", "stop", "--force"], check=False)
     subprocess.run(["ray", "start", "--head", "--dashboard-host=0.0.0.0", "--disable-usage-stats"], check=True)
 
-    # Ensure config exists
     config = {
         "models": [
             {
                 "name": "chat-capable",
                 "model": "Qwen/Qwen2.5-0.5B-Instruct",
                 "usecase": "generate",
-                "loader": "vllm",  # Use vLLM for reliable tool calling
-                "num_gpus": 0.1,
+                "loader": "vllm",
+                # num_gpus is also wired into vllm's gpu_memory_utilization; 0.1 leaves no room for KV cache
+                "num_gpus": 0.5,
+                "vllm_engine_kwargs": {
+                    "max_model_len": 2048,
+                    "enforce_eager": True,
+                    "enable_auto_tool_choice": True,
+                    "tool_call_parser": "hermes",
+                },
             },
             {
                 "name": "chat-limited",
@@ -68,51 +73,60 @@ def mship_cluster(tmp_path_factory):
     with open(config_path, "w") as f:
         yaml.dump(config, f)
 
-    # Start deployment
+    log_file = open(log_path, "w")  # noqa: SIM115 — kept open for subprocess lifetime, closed in cleanup
     proc = subprocess.Popen(
         ["uv", "run", "mship_deploy.py", "--config", str(config_path), "--redeploy"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
         text=True,
-        start_new_session=True,
     )
 
-    # Wait for ready
-    start_time = time.time()
-    timeout = 900  # 15 minutes (vLLM can be slow to init)
-    ready = False
-
-    while time.time() - start_time < timeout:
-        try:
-            resp = httpx.get(f"{OPENAI_API_BASE}/models")
-            if resp.status_code == 200:
-                models = resp.json().get("data", [])
-                if len(models) >= 5:
-                    ready = True
-                    break
-        except Exception:
-            pass
-        time.sleep(15)
-
-    if not ready:
-        try:
-            stdout, stderr = proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            stdout, stderr = "timeout", "timeout"
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    def cleanup():
+        log_file.close()
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
         subprocess.run(["ray", "stop", "--force"], check=False)
-        pytest.fail(f"Deployment failed to become ready within timeout.\nSTDOUT: {stdout}\nSTDERR: {stderr}")
 
-    yield proc
-
-    # Cleanup
-    os.killpg(os.getpgid(proc.pid), signal.SIGINT)
     try:
-        proc.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        start_time = time.time()
+        timeout = 900  # 15 minutes (vLLM can be slow to init)
+        ready = False
+        seen_models: set[str] = set()
 
-    subprocess.run(["ray", "stop", "--force"], check=False)
+        while time.time() - start_time < timeout:
+            if proc.poll() is not None:
+                break
+            try:
+                resp = httpx.get(f"{OPENAI_API_BASE}/models")
+                if resp.status_code == 200:
+                    seen_models = {m["id"] for m in resp.json().get("data", [])}
+                    if EXPECTED_MODELS.issubset(seen_models):
+                        ready = True
+                        break
+            except Exception:
+                pass
+            time.sleep(15)
+
+        if not ready:
+            missing = EXPECTED_MODELS - seen_models
+            log_tail = log_path.read_text()[-4000:] if log_path.exists() else "<no log>"
+            cleanup()
+            pytest.fail(
+                f"Deployment failed to become ready within timeout.\n"
+                f"Missing models: {sorted(missing)}\n"
+                f"Seen models: {sorted(seen_models)}\n"
+                f"Log file: {log_path}\n"
+                f"Last 4KB of mship_deploy log:\n{log_tail}"
+            )
+
+        yield proc
+    finally:
+        cleanup()
 
 
 @pytest.fixture(scope="session")
