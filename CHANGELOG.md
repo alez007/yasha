@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.35] - 2026-05-01
+
+### Added
+- centralize model source resolution on the driver
+- add reconciliation logic for deployments based on models.yaml
+- add max_num_batched_tokens to VllmEngineConfig
+- add flatten_message_content utility and integrate into llama_cpp
+- upgrade vLLM to 0.20.0 and harden inference loaders
+
+### Fixed
+- resolver returns file paths for GGUF and sets HF_HOME pre-import
+- defer ray cluster env var checks to avoid key error in auto mode
+- handle direct Response chunks and improve vLLM embedding error conversion
+- remove non-existent io_processor argument from OpenAIServingRender
+- type llama_cpp stream iterator so pyright accepts run_in_executor
+- tag REQUEST_TOTAL by outcome instead of marking every request processed
+
+### Changed
+- simplify LlamaCpp plugin by delegating resolution to the driver
+- extract deployment components into modelship.deploy
+- fix unused import in mship_deploy.py
+- simplify mship_deploy.py by extracting logic
+- detect capabilities and emit OpenAI-compliant chat responses for transformers loader
+- split llama_cpp into per-surface OpenAI serving handlers
+
 ## [0.1.34] - 2026-04-27
 
 ### Added
