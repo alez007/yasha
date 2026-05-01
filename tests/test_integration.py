@@ -9,7 +9,14 @@ from openai import OpenAI
 
 OPENAI_API_BASE = "http://localhost:8000/v1"
 
-EXPECTED_MODELS = {"chat-capable", "chat-limited", "embed-model", "stt-model", "tts-model"}
+EXPECTED_MODELS = {
+    "chat-capable",
+    "chat-limited",
+    "chat-transformers",
+    "embed-model",
+    "stt-model",
+    "tts-model",
+}
 
 
 @pytest.fixture(scope="session")
@@ -44,6 +51,20 @@ def mship_cluster(tmp_path_factory):
                 "usecase": "generate",
                 "loader": "llama_cpp",
                 "num_cpus": 1,
+            },
+            {
+                # Same Qwen2.5-Instruct family as `chat-capable` so we exercise
+                # the transformers loader against a model trained to emit
+                # Hermes-style `<tool_call>{...}</tool_call>` markers.
+                "name": "chat-transformers",
+                "model": "Qwen/Qwen2.5-0.5B-Instruct",
+                "usecase": "generate",
+                "loader": "transformers",
+                "num_cpus": 2,
+                "transformers_config": {
+                    "device": "cpu",
+                    "torch_dtype": "float32",
+                },
             },
             {
                 "name": "embed-model",
@@ -140,6 +161,7 @@ def test_list_models(client):
     model_ids = [m.id for m in models.data]
     assert "chat-capable" in model_ids
     assert "chat-limited" in model_ids
+    assert "chat-transformers" in model_ids
     assert "embed-model" in model_ids
     assert "stt-model" in model_ids
     assert "tts-model" in model_ids
@@ -189,6 +211,42 @@ def test_tool_calling_success(client):
     )
     assert completion.choices[0].message.tool_calls
     assert completion.choices[0].message.tool_calls[0].function.name == "get_weather"
+
+
+@pytest.mark.integration
+def test_tool_calling_transformers_loader(client):
+    """Round-trip a Hermes-style tool call through the transformers loader.
+
+    Uses the same Qwen2.5-0.5B-Instruct weights as the vLLM `chat-capable`
+    deployment but goes through the modelship-side tool-calling toolkit
+    (apply_chat_template(tools=...) on input, hermes parser on output).
+    """
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get weather for a city",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                },
+            },
+        }
+    ]
+    completion = client.chat.completions.create(
+        model="chat-transformers",
+        messages=[{"role": "user", "content": "What is the weather in Paris?"}],
+        tools=tools,
+        tool_choice="auto",
+        max_tokens=128,
+    )
+    tool_calls = completion.choices[0].message.tool_calls
+    assert tool_calls, f"expected a tool call, got content={completion.choices[0].message.content!r}"
+    assert tool_calls[0].function.name == "get_weather"
+    assert "Paris" in tool_calls[0].function.arguments
+    assert completion.choices[0].finish_reason == "tool_calls"
 
 
 @pytest.mark.integration
