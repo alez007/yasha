@@ -145,6 +145,11 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["modelship"]
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that require a running Ray cluster and external models",
+]
+
 [tool.pyright]
 pythonVersion = "3.12"
 venvPath = "/"

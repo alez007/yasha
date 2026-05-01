@@ -43,4 +43,4 @@ jobs:
         run: uv sync --extra dev --extra gpu
 
       - name: Run tests
-        run: uv run pytest tests/ -v
+        run: uv run pytest tests/ -v -m "not integration"
