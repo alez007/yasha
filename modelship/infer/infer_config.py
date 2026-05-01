@@ -67,6 +67,7 @@ class TransformersConfig(BaseModel):
     trust_remote_code: bool = False
     model_kwargs: dict[str, Any] = Field(default_factory=dict)
     pipeline_kwargs: dict[str, Any] = Field(default_factory=dict)
+    tool_call_parser: str = "hermes"
 
 
 class DiffusersConfig(BaseModel):
