@@ -61,26 +61,45 @@ jobs:
             --prerelease \
             "${NAME}.tar.gz" "${NAME}.tar.gz.sha256"
 
+      - name: Install crane
+        run: brew install crane
+
+      - name: Resolve upstream Docker image digests
+        id: digests
+        run: |
+          TAG=${{ inputs.tag }}
+          CUDA_REF="ghcr.io/ggml-org/llama.cpp:server-cuda13-${TAG}"
+          CPU_REF="ghcr.io/ggml-org/llama.cpp:server-${TAG}"
+          CUDA_DIGEST=$(crane digest "$CUDA_REF")
+          CPU_DIGEST=$(crane digest "$CPU_REF")
+          echo "cuda_ref=${CUDA_REF}@${CUDA_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "cpu_ref=${CPU_REF}@${CPU_DIGEST}" >> "$GITHUB_OUTPUT"
+
       - name: Open pin-bump PR
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG=${{ inputs.tag }}
           SHA=${{ steps.package.outputs.sha256 }}
+          CUDA_IMAGE="${{ steps.digests.outputs.cuda_ref }}"
+          CPU_IMAGE="${{ steps.digests.outputs.cpu_ref }}"
           BRANCH="llama-cpp/${TAG}"
           LAUNCHER="modelship/launcher.py"
+          DOCKERFILE="Dockerfile"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
           sed -i '' "s/^_LLAMA_CPP_TAG = .*/_LLAMA_CPP_TAG = \"${TAG}\"/" "$LAUNCHER"
           sed -i '' "s/^_LLAMA_CPP_METAL_SHA256 = .*/_LLAMA_CPP_METAL_SHA256 = \"${SHA}\"/" "$LAUNCHER"
-          git add "$LAUNCHER"
-          git commit -m "chore: bump llama.cpp Metal build to ${TAG}"
+          sed -i '' "s|^ARG LLAMA_CPP_IMAGE_CUDA=.*|ARG LLAMA_CPP_IMAGE_CUDA=${CUDA_IMAGE}|" "$DOCKERFILE"
+          sed -i '' "s|^ARG LLAMA_CPP_IMAGE_CPU=.*|ARG LLAMA_CPP_IMAGE_CPU=${CPU_IMAGE}|" "$DOCKERFILE"
+          git add "$LAUNCHER" "$DOCKERFILE"
+          git commit -m "chore: bump llama.cpp to ${TAG}"
           git push origin "$BRANCH" --force
           gh pr create \
             --repo "${{ github.repository }}" \
-            --title "chore: bump llama.cpp Metal build to ${TAG}" \
+            --title "chore: bump llama.cpp to ${TAG}" \
             --body "Own-CI Metal build published: https://github.com/${{ github.repository }}/releases/tag/llamacpp-${TAG}-metal
 
-          The Linux Docker images (\`LLAMA_CPP_IMAGE_CUDA\`/\`LLAMA_CPP_IMAGE_CPU\` in \`Dockerfile\`) pin llama.cpp separately, by upstream image digest — bump those too if this PR is meant to move the whole project to ${TAG}." \
+          The Linux Docker images (\`LLAMA_CPP_IMAGE_CUDA\`/\`LLAMA_CPP_IMAGE_CPU\` in \`Dockerfile\`) were re-pinned to the same tag, with digests resolved via \`crane digest\` against \`ghcr.io/ggml-org/llama.cpp\`." \
             || echo "PR create failed or already exists for branch $BRANCH"

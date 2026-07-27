@@ -43,8 +43,9 @@ plugin-wheels-clean:
 
 # Fires the macOS Metal build for a new llama.cpp tag and returns immediately —
 # it does not wait for the build. The workflow itself publishes the GitHub
-# release and opens a PR with _pins.py updated to the new tag + sha256; review
-# and merge that PR once CI confirms the build (and your own testing) is good.
+# release and opens a PR with launcher.py's Metal pin and the Dockerfile's
+# CUDA/CPU image digests all bumped to the new tag; review and merge that PR
+# once CI confirms the build (and your own testing) is good.
 llama-cpp-bump:
 	@if [ -z "$(TAG)" ]; then echo "Error: usage: make llama-cpp-bump TAG=b9860" >&2; exit 1; fi
 	@gh workflow run llama-cpp-metal.yml -f tag=$(TAG)
