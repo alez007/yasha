@@ -18,12 +18,12 @@ from modelship.utils.cache import resolve_cache_root
 _REQUIRED_PYTHON = (3, 12, 10)
 _LOADER_MODULES = {"vllm": "vllm", "diffusers": "diffusers", "stable_diffusion_cpp": "stable_diffusion_cpp"}
 
-_LLAMA_CPP_TAG = "b9859"
+_LLAMA_CPP_TAG = "b9860"
 _LLAMA_CPP_METAL_ASSET_URL = (
     f"https://github.com/alez007/modelship/releases/download/llamacpp-{_LLAMA_CPP_TAG}-metal/"
     f"llama-server-{_LLAMA_CPP_TAG}-macos-arm64-metal.tar.gz"
 )
-_LLAMA_CPP_METAL_SHA256 = ""
+_LLAMA_CPP_METAL_SHA256 = "4dcc8c0127984e11246c43c20d82eecb67b515feb87bf087b9184354a13a5ed8"
 
 
 class LlamaServerProvisionError(RuntimeError):
