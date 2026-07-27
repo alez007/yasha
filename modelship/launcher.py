@@ -20,7 +20,7 @@ _LOADER_MODULES = {"vllm": "vllm", "diffusers": "diffusers", "stable_diffusion_c
 
 _LLAMA_CPP_TAG = "b9859"
 _LLAMA_CPP_METAL_ASSET_URL = (
-    f"https://github.com/alez007/modelship/releases/download/llamacpp-{_LLAMA_CPP_TAG}-metal/"
+    f"https://github.com/alez007/llama-cpp-builds/releases/download/llamacpp-{_LLAMA_CPP_TAG}-metal/"
     f"llama-server-{_LLAMA_CPP_TAG}-macos-arm64-metal.tar.gz"
 )
 _LLAMA_CPP_METAL_SHA256 = ""

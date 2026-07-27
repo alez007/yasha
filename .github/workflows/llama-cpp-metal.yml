@@ -11,6 +11,14 @@ permissions:
   contents: write
   pull-requests: write
 
+# Metal build releases are published to a dedicated repo, not this one, so
+# they don't interleave with modelship's own vX.Y.Z release tags. The
+# default GITHUB_TOKEN can't write there — LLAMA_CPP_BUILDS_TOKEN must be a
+# PAT (classic or fine-grained) with contents:write on LLAMA_CPP_BUILDS_REPO,
+# stored as a repo secret here.
+env:
+  LLAMA_CPP_BUILDS_REPO: alez007/llama-cpp-builds
+
 jobs:
   build:
     runs-on: macos-14
@@ -50,14 +58,14 @@ jobs:
       - name: Publish release
         working-directory: llama.cpp
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.LLAMA_CPP_BUILDS_TOKEN }}
         run: |
           TAG=${{ inputs.tag }}
           NAME="llama-server-${TAG}-macos-arm64-metal"
           gh release create "llamacpp-${TAG}-metal" \
-            --repo "${{ github.repository }}" \
+            --repo "${{ env.LLAMA_CPP_BUILDS_REPO }}" \
             --title "llama.cpp ${TAG} (macOS Metal)" \
-            --notes "Own-CI build of ggml-org/llama.cpp ${TAG} with CMAKE_OSX_DEPLOYMENT_TARGET=14.0. sha256: ${{ steps.package.outputs.sha256 }}" \
+            --notes "Own-CI build of ggml-org/llama.cpp ${TAG} with CMAKE_OSX_DEPLOYMENT_TARGET=14.0, built from modelship's llama-cpp-metal.yml workflow. sha256: ${{ steps.package.outputs.sha256 }}" \
             --prerelease \
             "${NAME}.tar.gz" "${NAME}.tar.gz.sha256"
 
@@ -99,7 +107,7 @@ jobs:
           gh pr create \
             --repo "${{ github.repository }}" \
             --title "chore: bump llama.cpp to ${TAG}" \
-            --body "Own-CI Metal build published: https://github.com/${{ github.repository }}/releases/tag/llamacpp-${TAG}-metal
+            --body "Own-CI Metal build published: https://github.com/${{ env.LLAMA_CPP_BUILDS_REPO }}/releases/tag/llamacpp-${TAG}-metal
 
           The Linux Docker images (\`LLAMA_CPP_IMAGE_CUDA\`/\`LLAMA_CPP_IMAGE_CPU\` in \`Dockerfile\`) were re-pinned to the same tag, with digests resolved via \`crane digest\` against \`ghcr.io/ggml-org/llama.cpp\`." \
             || echo "PR create failed or already exists for branch $BRANCH"
