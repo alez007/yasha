@@ -68,12 +68,13 @@ jobs:
           TAG=${{ inputs.tag }}
           SHA=${{ steps.package.outputs.sha256 }}
           BRANCH="llama-cpp/${TAG}"
+          LAUNCHER="modelship/launcher.py"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
-          sed -i '' "s/^LLAMA_CPP_TAG = .*/LLAMA_CPP_TAG = \"${TAG}\"/" modelship/_pins.py
-          sed -i '' "s/^LLAMA_CPP_METAL_SHA256 = .*/LLAMA_CPP_METAL_SHA256 = \"${SHA}\"/" modelship/_pins.py
-          git add modelship/_pins.py
+          sed -i '' "s/^_LLAMA_CPP_TAG = .*/_LLAMA_CPP_TAG = \"${TAG}\"/" "$LAUNCHER"
+          sed -i '' "s/^_LLAMA_CPP_METAL_SHA256 = .*/_LLAMA_CPP_METAL_SHA256 = \"${SHA}\"/" "$LAUNCHER"
+          git add "$LAUNCHER"
           git commit -m "chore: bump llama.cpp Metal build to ${TAG}"
           git push origin "$BRANCH" --force
           gh pr create \

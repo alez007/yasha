@@ -1,8 +1,10 @@
+import hashlib
 import logging
 import os
 import random
 import re
 import string
+import tarfile
 from collections.abc import Iterable
 from typing import Any
 
@@ -72,6 +74,31 @@ def download(url: str, file_path: str, overwrite: bool = False):
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+def verify_sha256(path: str, expected: str) -> None:
+    """Raise ValueError if the file at ``path`` doesn't hash to ``expected``."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if actual != expected:
+        raise ValueError(f"{path} failed sha256 verification: expected {expected}, got {actual}")
+
+
+def extract_tar(archive_path: str, extract_dir: str) -> None:
+    """Extract every member of a .tar.gz into extract_dir, flattened to its
+    basename — drops whatever containing directory the archive was packaged
+    with, so callers don't need to know that layout up front."""
+    os.makedirs(extract_dir, exist_ok=True)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            name = os.path.basename(member.name)
+            if not name:
+                continue
+            member.name = name
+            tar.extract(member, path=extract_dir, filter="data")
 
 
 def cache_dir() -> str:

@@ -1,10 +1,25 @@
+import hashlib
 import os
 import sys
+import tarfile
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from modelship import launcher
+
+
+def _make_archive(tmp_path, contents: bytes = b"binary-contents") -> tuple[str, str]:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "llama-server").write_bytes(contents)
+    (src_dir / "libggml.dylib").write_bytes(b"lib")
+    archive = tmp_path / "archive.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(src_dir / "llama-server", arcname="llama-server")
+        tar.add(src_dir / "libggml.dylib", arcname="libggml.dylib")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    return str(archive), digest
 
 
 class TestGuardPythonVersion:
@@ -62,7 +77,7 @@ class TestProvisionMacosLlamaServer:
     def test_sets_env_on_success(self):
         with (
             patch.dict(os.environ, {}, clear=True),
-            patch("modelship.provision.llama_server.resolve_llama_server_bin", return_value="/resolved/bin"),
+            patch.object(launcher, "_resolve_llama_server_bin", return_value="/resolved/bin"),
         ):
             path = launcher._provision_macos_llama_server()
             assert path == "/resolved/bin"
@@ -71,10 +86,60 @@ class TestProvisionMacosLlamaServer:
     def test_warns_and_returns_none_on_failure(self):
         with (
             patch.dict(os.environ, {}, clear=True),
-            patch("modelship.provision.llama_server.resolve_llama_server_bin", side_effect=RuntimeError("boom")),
+            patch.object(launcher, "_resolve_llama_server_bin", side_effect=RuntimeError("boom")),
         ):
             assert launcher._provision_macos_llama_server() is None
         assert "MSHIP_LLAMA_SERVER_BIN" not in os.environ
+
+
+class TestResolveLlamaServerBin:
+    def test_non_darwin_raises(self):
+        with (
+            patch.object(launcher.platform, "system", return_value="Linux"),
+            pytest.raises(launcher.LlamaServerProvisionError, match="MSHIP_LLAMA_SERVER_BIN"),
+        ):
+            launcher._resolve_llama_server_bin()
+
+    def test_downloads_verifies_and_extracts(self, tmp_path):
+        archive, digest = _make_archive(tmp_path)
+        cache_root = str(tmp_path / "cache")
+
+        def fake_download(url, dest):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(archive, "rb") as src, open(dest, "wb") as dst:
+                dst.write(src.read())
+
+        with (
+            patch.object(launcher.platform, "system", return_value="Darwin"),
+            patch.object(launcher, "resolve_cache_root", return_value=cache_root),
+            patch.object(launcher, "_LLAMA_CPP_METAL_SHA256", digest),
+            patch.object(launcher, "download", side_effect=fake_download) as mock_download,
+        ):
+            wrapper = launcher._resolve_llama_server_bin()
+
+        mock_download.assert_called_once()
+        assert os.path.isfile(wrapper)
+        assert "llama-server.sh" in wrapper
+        extracted_bin = os.path.join(os.path.dirname(wrapper), "extracted", "llama-server")
+        assert os.path.isfile(extracted_bin)
+
+    def test_digest_mismatch_raises(self, tmp_path):
+        archive, _real_digest = _make_archive(tmp_path)
+        cache_root = str(tmp_path / "cache")
+
+        def fake_download(url, dest):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(archive, "rb") as src, open(dest, "wb") as dst:
+                dst.write(src.read())
+
+        with (
+            patch.object(launcher.platform, "system", return_value="Darwin"),
+            patch.object(launcher, "resolve_cache_root", return_value=cache_root),
+            patch.object(launcher, "_LLAMA_CPP_METAL_SHA256", "0" * 64),
+            patch.object(launcher, "download", side_effect=fake_download),
+            pytest.raises(ValueError, match="sha256 verification"),
+        ):
+            launcher._resolve_llama_server_bin()
 
 
 class TestCmdDeploy:

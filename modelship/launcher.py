@@ -8,13 +8,26 @@ from __future__ import annotations
 import importlib.util
 import os
 import platform
+import stat
 import sys
 
+from modelship.utils import download, extract_tar, verify_sha256
 from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.cache import resolve_cache_root
 
 _REQUIRED_PYTHON = (3, 12, 10)
 _LOADER_MODULES = {"vllm": "vllm", "diffusers": "diffusers", "stable_diffusion_cpp": "stable_diffusion_cpp"}
+
+_LLAMA_CPP_TAG = "b9859"
+_LLAMA_CPP_METAL_ASSET_URL = (
+    f"https://github.com/alez007/modelship/releases/download/llamacpp-{_LLAMA_CPP_TAG}-metal/"
+    f"llama-server-{_LLAMA_CPP_TAG}-macos-arm64-metal.tar.gz"
+)
+_LLAMA_CPP_METAL_SHA256 = ""
+
+
+class LlamaServerProvisionError(RuntimeError):
+    pass
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -78,14 +91,53 @@ def _provision_macos_llama_server() -> str | None:
     if explicit := os.environ.get("MSHIP_LLAMA_SERVER_BIN"):
         return explicit
     try:
-        from modelship.provision.llama_server import resolve_llama_server_bin
-
-        path = resolve_llama_server_bin()
+        path = _resolve_llama_server_bin()
         os.environ["MSHIP_LLAMA_SERVER_BIN"] = path
         return path
     except Exception as e:
         print(f"warning: llama-server provisioning failed: {e}", file=sys.stderr)
         return None
+
+
+def _resolve_llama_server_bin() -> str:
+    """Downloads, sha256-verifies, and extracts the pinned llama.cpp Metal build,
+    caching it under resolve_cache_root()/llama.cpp/<tag>/. Mirrors how the Docker
+    images bake a prebuilt llama-server binary at build time (Dockerfile's
+    LLAMA_CPP_IMAGE_CUDA/CPU) — this is the native-install equivalent, since pip/uv
+    have no post-install hook to do it ahead of time."""
+    if platform.system() != "Darwin":
+        raise LlamaServerProvisionError(
+            "loader: llama_server needs MSHIP_LLAMA_SERVER_BIN set to a llama-server binary "
+            "(auto-provisioning only runs on macOS). See https://github.com/ggml-org/llama.cpp/releases."
+        )
+
+    tag_dir = os.path.join(resolve_cache_root(), "llama.cpp", _LLAMA_CPP_TAG)
+    archive_path = os.path.join(tag_dir, "archive.tar.gz")
+    extract_dir = os.path.join(tag_dir, "extracted")
+    wrapper_path = os.path.join(tag_dir, "llama-server.sh")
+
+    os.makedirs(tag_dir, exist_ok=True)
+    download(_LLAMA_CPP_METAL_ASSET_URL, archive_path)
+    verify_sha256(archive_path, _LLAMA_CPP_METAL_SHA256)
+
+    if not os.path.isfile(os.path.join(extract_dir, "llama-server")):
+        extract_tar(archive_path, extract_dir)
+        binary = os.path.join(extract_dir, "llama-server")
+        os.chmod(binary, os.stat(binary).st_mode | stat.S_IEXEC)
+
+    _write_wrapper(wrapper_path, extract_dir)
+    return wrapper_path
+
+
+def _write_wrapper(wrapper_path: str, extract_dir: str) -> None:
+    content = (
+        "#!/bin/sh\n"
+        f'export DYLD_LIBRARY_PATH="{extract_dir}${{DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}}"\n'
+        f'exec "{extract_dir}/llama-server" "$@"\n'
+    )
+    with open(wrapper_path, "w") as f:
+        f.write(content)
+    os.chmod(wrapper_path, os.stat(wrapper_path).st_mode | stat.S_IEXEC)
 
 
 def _check_loader_capabilities(config_path: str | None) -> None:
