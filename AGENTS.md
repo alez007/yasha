@@ -54,7 +54,7 @@ When in doubt, check OpenAI's reference for the exact route. Existing deviations
 
 ## Running the server
 
-`mship deploy` (console script, installed via `pip`/`uv tool install "modelship[metal]"`) is the entry point; `modelship/launcher.py` resolves the cache root, checks the Python version, detects the accelerator (cuda/metal/cpu), and on macOS auto-provisions `llama-server` before handing off to `modelship/driver.py:main`. `mship_deploy.py` survives as a 3-line back-compat shim to `modelship.driver.main` (Docker images run `python -m modelship.launcher deploy` instead, since they install deps with `--no-install-project`). The driver itself:
+`mship deploy` (console script, installed via `pip`/`uv tool install "mship[metal]"`) is the entry point; `modelship/launcher.py` resolves the cache root, checks the Python version, detects the accelerator (cuda/metal/cpu), and on macOS auto-provisions `llama-server` before handing off to `modelship/driver.py:main`. `mship_deploy.py` survives as a 3-line back-compat shim to `modelship.driver.main` (Docker images run `python -m modelship.launcher deploy` instead, since they install deps with `--no-install-project`). The driver itself:
 
 1. Reads `config/models.yaml` (gitignored — copy one from `config/examples/`).
 2. Starts its **own** Ray head by default (sized from `MSHIP_NODE_NUM_CPUS`/`MSHIP_NODE_NUM_GPUS`, auto-detected if unset; metrics on `RAY_METRICS_EXPORT_PORT`) and tears it down on exit. With `--use-existing-ray-cluster` it instead connects to a cluster you manage via `ray.init(address="auto")` and deploys-and-exits without teardown — the driver must run **on** a cluster node (Docker co-located / k8s RayJob / bare-metal node); it cannot attach from off-cluster.

@@ -123,11 +123,11 @@ On a Mac, install `mship` directly and get full Metal GPU offload for GGUF model
 
 ```bash
 xcode-select --install          # first-time only; skip if already installed
-uv tool install "modelship[metal]"
+uv tool install "mship[metal]"
 mship deploy --config models.yaml
 ```
 
-`uv tool install` auto-fetches the pinned Python 3.12.10 interpreter. `pip install "modelship[metal]"` also works if you already have that exact version (same Xcode CLI Tools prerequisite applies). Bare `pip install modelship`, `modelship[cuda]`, or `modelship[cpu]` are not supported install paths — those extras are for the Docker images only.
+`uv tool install` auto-fetches the pinned Python 3.12.10 interpreter. `pip install "mship[metal]"` also works if you already have that exact version (same Xcode CLI Tools prerequisite applies). Bare `pip install mship`, `mship[cuda]`, or `mship[cpu]` are not supported install paths — those extras are for the Docker images only.
 
 ### GPU (vLLM, Diffusers)
 

@@ -69,16 +69,16 @@ compiler is present. `xcode-select -p` checks whether you already have it.
 
 ```bash
 xcode-select --install          # first-time only; skip if already installed
-uv tool install "modelship[metal]"
+uv tool install "mship[metal]"
 mship deploy --config models.yaml
 ```
 
 `uv tool install` auto-fetches the pinned Python 3.12.10 interpreter;
-`pip install "modelship[metal]"` works too if that exact version is already
+`pip install "mship[metal]"` works too if that exact version is already
 present (same Xcode CLI Tools prerequisite applies). The first install
 compiles stable-diffusion.cpp and takes a few minutes — that's expected, not
-a hang. Bare `pip install modelship`, `modelship[cuda]`, and
-`modelship[cpu]` are not supported install paths; those extras exist only
+a hang. Bare `pip install mship`, `mship[cuda]`, and
+`mship[cpu]` are not supported install paths; those extras exist only
 for the Docker images.
 
 ## Local development
