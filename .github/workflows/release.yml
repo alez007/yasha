@@ -80,7 +80,7 @@ jobs:
 
   pypi:
     runs-on: ubuntu-latest
-    needs: [version, docker]
+    needs: [version]
     permissions:
       id-token: write
     steps:
