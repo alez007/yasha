@@ -78,6 +78,24 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.variant }}
           cache-to: type=gha,mode=max,scope=${{ matrix.variant }},ignore-error=true
 
+  pypi:
+    runs-on: ubuntu-latest
+    needs: [version, docker]
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Build
+        run: uv build
+
+      - name: Publish to PyPI
+        run: uv publish
+
   helm:
     runs-on: ubuntu-latest
     # After docker so a published chart's image tag always exists in GHCR.
@@ -116,7 +134,7 @@ jobs:
 
   github-release:
     runs-on: ubuntu-latest
-    needs: [version, docker, helm]
+    needs: [version, docker, helm, pypi]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -128,6 +146,13 @@ jobs:
         with:
           generate_release_notes: true
           body: |
+            ## Native install (Apple Silicon / homelab)
+
+            ```bash
+            uv tool install "mship[metal]"
+            mship deploy --config models.yaml
+            ```
+
             ## Docker images
 
             ### Thin (control/coordinator — default, no torch/vllm)

@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from modelship.infer.model_deployment import ModelDeployment
+from modelship.infer.infer_config import ModelLoader
+from modelship.infer.model_deployment import ModelDeployment, _reject_unsupported_darwin_loader
 from modelship.infer.model_resolver import ModelDownloadError
 
 # Bypass the @serve.deployment wrapper (see test_model_deployment_metrics.py).
@@ -18,6 +19,39 @@ def _make_config():
     config.name = "test-model"
     config.loader.value = "vllm"
     return config
+
+
+class TestRejectUnsupportedDarwinLoader:
+    @pytest.mark.parametrize("loader", [ModelLoader.vllm, ModelLoader.diffusers])
+    def test_darwin_rejects_unsupported_loaders(self, loader):
+        config = MagicMock(loader=loader, name="test-model")
+        with (
+            patch("modelship.infer.model_deployment.platform.system", return_value="Darwin"),
+            pytest.raises(RuntimeError, match=f"loader={loader.value}"),
+        ):
+            _reject_unsupported_darwin_loader(config)
+
+    def test_darwin_allows_llama_server(self):
+        config = MagicMock(loader=ModelLoader.llama_server, name="test-model")
+        with patch("modelship.infer.model_deployment.platform.system", return_value="Darwin"):
+            _reject_unsupported_darwin_loader(config)  # no raise
+
+    def test_darwin_allows_stable_diffusion_cpp(self):
+        # ggml's runtime backend registry picks up Metal automatically — regression
+        # test for dropping this loader from _DARWIN_UNSUPPORTED_LOADERS.
+        config = MagicMock(loader=ModelLoader.stable_diffusion_cpp, name="test-model")
+        with patch("modelship.infer.model_deployment.platform.system", return_value="Darwin"):
+            _reject_unsupported_darwin_loader(config)  # no raise
+
+    def test_darwin_allows_custom(self):
+        config = MagicMock(loader=ModelLoader.custom, name="test-model")
+        with patch("modelship.infer.model_deployment.platform.system", return_value="Darwin"):
+            _reject_unsupported_darwin_loader(config)  # no raise
+
+    def test_linux_allows_everything(self):
+        config = MagicMock(loader=ModelLoader.vllm, name="test-model")
+        with patch("modelship.infer.model_deployment.platform.system", return_value="Linux"):
+            _reject_unsupported_darwin_loader(config)  # no raise
 
 
 def _patch_init_globals(**kwargs):

@@ -130,6 +130,142 @@ class TestGpuDiscoveryUuid:
         assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid=None)]
 
 
+class TestAppleMetalDiscovery:
+    """_apple_metal_discover() — darwin+arm64 only, torch.mps preferred over the
+    sysctl/psutil heuristic, checked last in detect_gpus() so CUDA wins when present."""
+
+    def _mock_psutil(self, total, available):
+        mock_psutil = MagicMock()
+        mock_psutil.virtual_memory.return_value = SimpleNamespace(total=total, available=available)
+        return mock_psutil
+
+    def test_non_darwin_returns_empty(self):
+        from modelship.preflight import base as preflight_base
+
+        with (
+            patch("platform.system", return_value="Linux"),
+            patch("platform.machine", return_value="x86_64"),
+        ):
+            assert preflight_base._apple_metal_discover() == []
+
+    def test_darwin_intel_returns_empty(self):
+        from modelship.preflight import base as preflight_base
+
+        with (
+            patch("platform.system", return_value="Darwin"),
+            patch("platform.machine", return_value="x86_64"),
+        ):
+            assert preflight_base._apple_metal_discover() == []
+
+    def test_darwin_arm64_returns_single_mps_gpu(self):
+        from modelship.preflight import base as preflight_base
+
+        mock_psutil = self._mock_psutil(total=16 * 1024**3, available=8 * 1024**3)
+        with (
+            patch("platform.system", return_value="Darwin"),
+            patch("platform.machine", return_value="arm64"),
+            patch.dict(sys.modules, {"psutil": mock_psutil, "torch": None}),
+            patch.object(preflight_base, "_sysctl_int", return_value=None),
+            patch.object(preflight_base, "_sysctl_str", return_value="Apple M1 Pro"),
+        ):
+            gpus = preflight_base._apple_metal_discover()
+
+        assert len(gpus) == 1
+        assert gpus[0].kind == "mps"
+        assert gpus[0].index == 0
+        assert gpus[0].name == "Apple M1 Pro"
+
+    def test_torch_mps_recommendation_preferred_over_sysctl(self):
+        from modelship.preflight import base as preflight_base
+
+        mock_psutil = self._mock_psutil(total=16 * 1024**3, available=16 * 1024**3)
+        mock_torch = MagicMock()
+        mock_torch.backends.mps.is_available.return_value = True
+        mock_torch.mps.recommended_max_memory.return_value = 5 * 1024**3
+        with (
+            patch("platform.system", return_value="Darwin"),
+            patch("platform.machine", return_value="arm64"),
+            patch.dict(sys.modules, {"psutil": mock_psutil, "torch": mock_torch}),
+            patch.object(preflight_base, "_sysctl_str", return_value="Apple M1 Pro"),
+        ):
+            gpus = preflight_base._apple_metal_discover()
+
+        # cap (5 GiB, from torch) < available (16 GiB) -> cap wins.
+        assert gpus[0].available_bytes == 5 * 1024**3
+
+    def test_clamp_uses_available_when_smaller_than_cap(self):
+        from modelship.preflight import base as preflight_base
+
+        mock_psutil = self._mock_psutil(total=16 * 1024**3, available=2 * 1024**3)
+        mock_torch = MagicMock()
+        mock_torch.backends.mps.is_available.return_value = True
+        mock_torch.mps.recommended_max_memory.return_value = 10 * 1024**3
+        with (
+            patch("platform.system", return_value="Darwin"),
+            patch("platform.machine", return_value="arm64"),
+            patch.dict(sys.modules, {"psutil": mock_psutil, "torch": mock_torch}),
+            patch.object(preflight_base, "_sysctl_str", return_value="Apple M1 Pro"),
+        ):
+            gpus = preflight_base._apple_metal_discover()
+
+        # available (2 GiB) < cap (10 GiB) -> available wins.
+        assert gpus[0].available_bytes == 2 * 1024**3
+
+    def test_falls_back_to_wired_limit_sysctl_when_torch_unavailable(self):
+        from modelship.preflight import base as preflight_base
+
+        mock_psutil = self._mock_psutil(total=16 * 1024**3, available=16 * 1024**3)
+        with (
+            patch("platform.system", return_value="Darwin"),
+            patch("platform.machine", return_value="arm64"),
+            patch.dict(sys.modules, {"psutil": mock_psutil, "torch": None}),
+            patch.object(preflight_base, "_sysctl_int", return_value=4096),  # MB
+            patch.object(preflight_base, "_sysctl_str", return_value="Apple M1 Pro"),
+        ):
+            gpus = preflight_base._apple_metal_discover()
+
+        assert gpus[0].available_bytes == 4096 * 1024 * 1024
+
+    def test_detect_gpus_prefers_cuda_over_metal(self):
+        from modelship.preflight import base as preflight_base
+
+        cuda_gpu = GPUInfo(index=0, available_bytes=1, name="cuda-gpu", uuid=None)
+        with (
+            patch.object(preflight_base, "_torch_cuda_discover", return_value=[cuda_gpu]),
+            patch.object(preflight_base, "_apple_metal_discover") as mock_metal,
+        ):
+            gpus = preflight_base.detect_gpus()
+
+        assert gpus == [cuda_gpu]
+        mock_metal.assert_not_called()
+
+    def test_detect_gpus_falls_back_to_metal_when_no_cuda(self):
+        from modelship.preflight import base as preflight_base
+
+        mps_gpu = GPUInfo(index=0, available_bytes=1, name="Apple GPU", uuid=None, kind="mps")
+        with (
+            patch.object(preflight_base, "_torch_cuda_discover", return_value=[]),
+            patch.object(preflight_base, "_pynvml_node_discover", return_value=[]),
+            patch.object(preflight_base, "_apple_metal_discover", return_value=[mps_gpu]),
+        ):
+            gpus = preflight_base.detect_gpus()
+
+        assert gpus == [mps_gpu]
+
+
+class TestUnifiedMemory:
+    def test_true_when_any_gpu_is_mps(self):
+        hw = HardwareProfile(gpus=[GPUInfo(index=0, available_bytes=1, name="Apple GPU", kind="mps")])
+        assert hw.unified_memory is True
+
+    def test_false_for_cuda_gpus(self):
+        hw = HardwareProfile(gpus=[GPUInfo(index=0, available_bytes=1, name="cuda-gpu")])
+        assert hw.unified_memory is False
+
+    def test_false_when_no_gpus(self):
+        assert HardwareProfile(gpus=[]).unified_memory is False
+
+
 class TestMergeWithUserOverrides:
     def test_recommendation_fills_missing(self):
         result = merge_with_user_overrides({"max_model_len": 4096}, {}, model_name="m")

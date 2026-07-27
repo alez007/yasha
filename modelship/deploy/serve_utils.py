@@ -119,11 +119,8 @@ def _resolve_node_memory_kwargs() -> dict[str, int]:
 
 
 def _own_cluster_init_kwargs() -> dict[str, object]:
-    """ray.init kwargs to start our own head. Dashboard always starts;
-    MSHIP_RAY_DASHBOARD sets its bind host (default 127.0.0.1), not on/off.
-    MSHIP_RAY_DASHBOARD_PORT overrides Ray's fixed 8265 default — needed to run
-    multiple modelship heads on one host under --network=host.
-    Resources auto-detect when MSHIP_NODE_NUM_*/MSHIP_NODE_MEMORY are unset."""
+    """ray.init kwargs to start our own head. Resources auto-detect when
+    MSHIP_NODE_NUM_*/MSHIP_NODE_MEMORY are unset."""
     kwargs: dict[str, object] = {
         "include_dashboard": True,
         "dashboard_host": os.environ.get("MSHIP_RAY_DASHBOARD", "127.0.0.1"),
@@ -134,16 +131,14 @@ def _own_cluster_init_kwargs() -> dict[str, object]:
         kwargs["num_cpus"] = int(cpus)
     if gpus := os.environ.get("MSHIP_NODE_NUM_GPUS"):
         kwargs["num_gpus"] = int(gpus)
+    elif detect_gpus():
+        # Ray has no Apple accelerator plugin; advertise Metal as one ordinary GPU unit.
+        kwargs["num_gpus"] = 1
     if node_memory := _resolve_node_memory_kwargs():
-        # _memory is a private ray.init kwarg (accepted via **kwargs, popped internally) for
-        # the schedulable 'memory' resource; object_store_memory is public. Same convention
-        # as _metrics_export_port below.
         kwargs["_memory"] = node_memory["memory"]
         kwargs["object_store_memory"] = node_memory["object_store_memory"]
     if os.environ.get("MSHIP_METRICS", "true").lower() == "true":
-        # _metrics_export_port is a private ray.init kwarg (accepted via **kwargs)
-        # that pins Ray's metrics agent — and thus all serve_*/vllm:*/modelship
-        # Prometheus metrics — to a stable port. Guarded by a connect_ray test.
+        # _metrics_export_port is a private ray.init kwarg; guarded by a connect_ray test.
         kwargs["_metrics_export_port"] = int(os.environ.get("RAY_METRICS_EXPORT_PORT", "8079"))
     return kwargs
 
@@ -237,6 +232,13 @@ def _join_ray_cluster(address: str) -> Node:
 
     cpus = os.environ.get("MSHIP_NODE_NUM_CPUS")
     gpus = os.environ.get("MSHIP_NODE_NUM_GPUS")
+    if gpus is not None:
+        num_gpus: int | None = int(gpus)
+    elif detect_gpus():
+        # Same Metal auto-advertise as _own_cluster_init_kwargs.
+        num_gpus = 1
+    else:
+        num_gpus = None
     node_memory = _resolve_node_memory_kwargs()
     # Unlike the head, a joining node never needs a fixed metrics port: nothing external
     # targets it directly, and the head's PrometheusServiceDiscoveryWriter already picks up
@@ -247,7 +249,7 @@ def _join_ray_cluster(address: str) -> Node:
         gcs_address=bootstrap,
         node_ip_address=services.get_node_ip_address(bootstrap),
         num_cpus=int(cpus) if cpus else None,
-        num_gpus=int(gpus) if gpus else None,
+        num_gpus=num_gpus,
         memory=node_memory.get("memory"),
         object_store_memory=node_memory.get("object_store_memory"),
         metrics_export_port=None,

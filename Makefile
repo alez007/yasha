@@ -7,7 +7,7 @@ MSHIP_PLUGIN_WHEEL_DIR ?= .build/plugin-wheels
 PLUGIN_STAMP_DIR := .build/plugin-stamps
 PLUGINS          := $(notdir $(patsubst %/,%,$(wildcard plugins/*/)))
 
-.PHONY: test lint lint-fix release-patch release-minor release-major _release plugin-wheels plugin-wheels-clean
+.PHONY: test lint lint-fix release-patch release-minor release-major _release plugin-wheels plugin-wheels-clean llama-cpp-bump
 
 test:
 	uv run pytest tests/ -v
@@ -40,6 +40,15 @@ $(PLUGIN_STAMP_DIR)/%.stamp: $$(call PLUGIN_SOURCES,%)
 
 plugin-wheels-clean:
 	rm -rf $(MSHIP_PLUGIN_WHEEL_DIR) $(PLUGIN_STAMP_DIR)
+
+# Fires the macOS Metal build for a new llama.cpp tag and returns immediately —
+# it does not wait for the build. The workflow itself publishes the GitHub
+# release and opens a PR with _pins.py updated to the new tag + sha256; review
+# and merge that PR once CI confirms the build (and your own testing) is good.
+llama-cpp-bump:
+	@if [ -z "$(TAG)" ]; then echo "Error: usage: make llama-cpp-bump TAG=b9860" >&2; exit 1; fi
+	@gh workflow run llama-cpp-metal.yml -f tag=$(TAG)
+	@echo "Triggered llama.cpp Metal build for $(TAG) — it will open a PR with the updated pin once done."
 
 release-patch:
 	$(eval NEW_VERSION := $(MAJOR).$(MINOR).$(shell echo $$(($(PATCH)+1))))

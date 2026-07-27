@@ -9,10 +9,12 @@ inherits via its ray distributed executor.
 from __future__ import annotations
 
 import os
+import platform
 from pathlib import Path
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
+from modelship.utils.cache import resolve_cache_root
 
 logger = get_logger("startup")
 
@@ -47,7 +49,7 @@ def build_cache_env_vars() -> dict[str, str]:
 
     Also forwards HF_TOKEN/HF_HUB_OFFLINE when set on the driver, so an actor
     downloading a gated/offline model has the same auth."""
-    base_cache = os.environ.get("MSHIP_CACHE_DIR", "/.cache")
+    base_cache = resolve_cache_root()
     env_vars = {
         "HF_HOME": os.environ.get("HF_HOME", f"{base_cache}/huggingface"),
         "VLLM_CACHE_ROOT": os.environ.get("VLLM_CACHE_ROOT", f"{base_cache}/vllm"),
@@ -135,10 +137,14 @@ def build_deployment_options(config: ModelshipModelConfig, plugin_wheel: Path | 
         # wheel reuse the install.
         runtime_env["pip"] = [str(plugin_wheel)]
 
-    if config.loader == ModelLoader.stable_diffusion_cpp:
+    if config.loader == ModelLoader.stable_diffusion_cpp and platform.system() != "Darwin":
+        # Off Darwin the loader's ggml backend genuinely is CPU-only. On Darwin,
+        # ggml's runtime device registry picks up Metal automatically — forcing
+        # 0 here wouldn't stop the actor from using the GPU, it would just make
+        # Ray believe it isn't, letting it co-schedule another GPU actor onto it.
         if config.num_gpus > 0:
             logger.warning(
-                "num_gpus=%s is ignored for model '%s': stable_diffusion_cpp loader currently only supports CPU.",
+                "num_gpus=%s is ignored for model '%s': stable_diffusion_cpp loader only supports GPU on Metal.",
                 config.num_gpus,
                 config.name,
             )

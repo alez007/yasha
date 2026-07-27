@@ -1,5 +1,6 @@
 import contextlib
 import os
+import platform
 import subprocess
 import sys
 import textwrap
@@ -37,6 +38,21 @@ from modelship.openai.protocol import (
 )
 
 logger = get_logger("infer.deployment")
+
+# llama_server and stable_diffusion_cpp both have Metal backends; vllm/diffusers don't.
+_DARWIN_UNSUPPORTED_LOADERS = {ModelLoader.vllm, ModelLoader.diffusers}
+
+
+def _reject_unsupported_darwin_loader(config: ModelshipModelConfig) -> None:
+    """Checked on the actor's platform, not the driver's."""
+    if platform.system() != "Darwin":
+        return
+    if config.loader in _DARWIN_UNSUPPORTED_LOADERS:
+        raise RuntimeError(
+            f"loader={config.loader.value} is not supported on macOS/Apple Silicon (model '{config.name}'). "
+            "Use loader: llama_server for GGUF models on Metal, or loader: custom for a plugin that "
+            "handles its own backend."
+        )
 
 
 def _reap_child_processes() -> None:
@@ -154,6 +170,7 @@ class ModelDeployment:
         start = time.monotonic()
         self.infer: BaseInfer
         try:
+            _reject_unsupported_darwin_loader(config)
             # Must run before the loader is constructed: preflight (which
             # needs the model file on disk) runs synchronously inside a
             # loader's own __init__, so `_resolved_path` has to be populated
