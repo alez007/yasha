@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.4] - 2026-07-27
+
+### Fixed
+- pin numba, ray, fastapi, and protobuf to unbreak fresh mship installs
+
 ## [0.7.3] - 2026-07-27
 
 ### Added
