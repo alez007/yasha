@@ -8,6 +8,7 @@ from typing import Any
 
 import requests
 
+from modelship.utils.cache import resolve_cache_root
 from modelship.utils.request_id import base_request_id as base_request_id
 from modelship.utils.request_id import random_uuid
 
@@ -74,7 +75,7 @@ def download(url: str, file_path: str, overwrite: bool = False):
 
 
 def cache_dir() -> str:
-    path = os.environ.get("MSHIP_CACHE_DIR", "/.cache")
+    path = resolve_cache_root()
     os.makedirs(path, exist_ok=True)
     return path
 

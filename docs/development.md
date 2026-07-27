@@ -28,10 +28,11 @@ The recommended way to develop Modelship is with VS Code Dev Containers. The con
 4. Start the server. It starts its own Ray head, auto-detecting CPUs/GPUs unless `MSHIP_NODE_NUM_CPUS` / `MSHIP_NODE_NUM_GPUS` are set:
 
    ```bash
-   uv run mship_deploy.py
+   uv run mship deploy
+   # or, without the console script installed: uv run mship_deploy.py
    ```
 
-> **Why the extra steps?** The Dev Container overrides the image's default `CMD` (`uv run --no-sync mship_deploy.py`). Inside a Dev Container you sync deps and start it manually.
+> **Why the extra steps?** The Dev Container overrides the image's default `CMD` (`uv run --no-sync python -m modelship.launcher deploy`). Inside a Dev Container you sync deps and start it manually.
 
 The Dev Container automatically:
 - Builds the dev image from `Dockerfile` (target: `dev`)
@@ -123,7 +124,9 @@ uv run mship_deploy.py
 
 The `llama_server` loader launches a `llama-server` subprocess and finds it via `MSHIP_LLAMA_SERVER_BIN`. Inside the Docker images (dev and prod, cpu/cuda variants) this is preconfigured: a pinned llama.cpp build lives at `/opt/llama.cpp`, and the env var points at its wrapper script. The `cuda` variant ships upstream's CUDA build, which falls back to its bundled CPU backends when no GPU is visible. The `thin` variant ships no binary at all — it never loads a model.
 
-To run outside the image (e.g. directly on a Linux or macOS host), download a build from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) and extract it. The raw `llama-server` binary does **not** run standalone — it dynamically links the `libggml*`/`libllama*` libraries that ship as sibling files in the same archive, so point `MSHIP_LLAMA_SERVER_BIN` at a small wrapper that puts the extracted directory on the loader path:
+On a native `mship` install on macOS, `MSHIP_LLAMA_SERVER_BIN` is auto-provisioned (downloaded, sha256-verified, and cached under `~/.modelship/cache/llama.cpp/`) — see `modelship/provision/llama_server.py`. Set `MSHIP_LLAMA_SERVER_BIN` yourself to skip this and use your own binary.
+
+To run outside the image on Linux (auto-provisioning is macOS-only), download a build from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) and extract it. The raw `llama-server` binary does **not** run standalone — it dynamically links the `libggml*`/`libllama*` libraries that ship as sibling files in the same archive, so point `MSHIP_LLAMA_SERVER_BIN` at a small wrapper that puts the extracted directory on the loader path:
 
 ```bash
 #!/bin/sh

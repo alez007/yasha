@@ -248,6 +248,55 @@ class TestLlamaServerPreflightGpu:
         assert rec["n_ctx"] == 131072 // 4 // 256 * 256
 
 
+class TestLlamaServerPreflightUnifiedMemory:
+    """hw.unified_memory=True (Apple Silicon, GPUInfo.kind='mps') must never fall
+    through to _recommend_gpu_partial — its separate RAM budget would double-count
+    the same physical bytes already spent against vram_budget."""
+
+    def test_full_offload_still_works_on_unified_memory(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        hw = HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "Apple GPU", kind="mps")], ram_bytes=64 * 1024**3)
+
+        with (
+            patch("modelship.preflight.llama_cpp._read_gguf_metadata", return_value=_LLAMA_META),
+            patch("modelship.preflight.llama_cpp._weight_bytes", return_value=4 * 1024**3),
+        ):
+            rec = LlamaServerPreflight().recommend(cfg, hw)
+
+        assert rec["n_gpu_layers"] == 33
+        assert rec["n_ctx"] == 131072
+
+    def test_declines_instead_of_partial_offload_when_budget_tight(self, tmp_path):
+        # Same numbers as test_partial_offload_fits_fewer_layers_at_default_target,
+        # which goes to partial offload for a real (non-unified) GPU — on unified
+        # memory this must decline instead.
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        hw = HardwareProfile(gpus=[GPUInfo(0, 2 * 1024**3, "Apple GPU", kind="mps")], ram_bytes=64 * 1024**3)
+
+        with (
+            patch("modelship.preflight.llama_cpp._read_gguf_metadata", return_value=_LLAMA_META),
+            patch("modelship.preflight.llama_cpp._weight_bytes", return_value=4 * 1024**3),
+        ):
+            rec = LlamaServerPreflight().recommend(cfg, hw)
+
+        assert rec == {}
+
+    def test_cuda_gpu_with_same_budget_still_goes_partial(self, tmp_path):
+        # Control: identical numbers but kind="cuda" (the default) must be
+        # unaffected — partial offload is correct there (separate VRAM/RAM pools).
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        hw = HardwareProfile(gpus=[GPUInfo(0, 2 * 1024**3, "test")], ram_bytes=64 * 1024**3)
+
+        with (
+            patch("modelship.preflight.llama_cpp._read_gguf_metadata", return_value=_LLAMA_META),
+            patch("modelship.preflight.llama_cpp._weight_bytes", return_value=4 * 1024**3),
+        ):
+            rec = LlamaServerPreflight().recommend(cfg, hw)
+
+        assert rec
+        assert 0 < rec["n_gpu_layers"] < 33
+
+
 class TestShardedGgufWeightBytes:
     def test_sums_sibling_shards(self, tmp_path):
         shard1 = tmp_path / "model-00001-of-00002.gguf"

@@ -1,0 +1,64 @@
+name: Build llama.cpp (macOS Metal)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - modelship/_pins.py
+      - .github/workflows/llama-cpp-metal.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout modelship
+        uses: actions/checkout@v4
+
+      - name: Read pinned tag
+        id: pin
+        run: |
+          TAG=$(python3 -c "import sys; sys.path.insert(0, 'modelship'); import _pins; print(_pins.LLAMA_CPP_TAG)")
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout llama.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: ${{ steps.pin.outputs.tag }}
+          path: llama.cpp
+
+      - name: Build
+        working-directory: llama.cpp
+        run: |
+          cmake -B build -DGGML_METAL_USE_BF16=ON -DGGML_METAL_EMBED_LIBRARY=ON \
+                         -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
+          cmake --build build --config Release -j "$(sysctl -n hw.ncpu)" --target llama-server
+
+      - name: Package
+        working-directory: llama.cpp
+        run: |
+          TAG=${{ steps.pin.outputs.tag }}
+          NAME="llama-server-${TAG}-macos-arm64-metal"
+          mkdir "$NAME"
+          cp build/bin/llama-server "$NAME"/
+          cp build/bin/*.dylib "$NAME"/ 2>/dev/null || true
+          cp LICENSE "$NAME"/
+          tar czf "${NAME}.tar.gz" "$NAME"
+          shasum -a 256 "${NAME}.tar.gz" | awk '{print $1}' > "${NAME}.tar.gz.sha256"
+
+      - name: Publish release
+        working-directory: llama.cpp
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=${{ steps.pin.outputs.tag }}
+          NAME="llama-server-${TAG}-macos-arm64-metal"
+          gh release create "llamacpp-${TAG}-metal" \
+            --repo "${{ github.repository }}" \
+            --title "llama.cpp ${TAG} (macOS Metal)" \
+            --notes "Own-CI build of ggml-org/llama.cpp ${TAG} with CMAKE_OSX_DEPLOYMENT_TARGET=14.0. sha256: $(cat ${NAME}.tar.gz.sha256)" \
+            --prerelease \
+            "${NAME}.tar.gz" "${NAME}.tar.gz.sha256"

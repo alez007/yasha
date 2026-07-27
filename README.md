@@ -117,6 +117,18 @@ curl http://localhost:8000/v1/responses \
 
 The response includes both `output_text` and a first-class `reasoning` output item — the same server-side conversation state (`previous_response_id`) and tool-calling support work here as they do on GPU-backed models. `/v1/chat/completions` remains available too, if that's what your client speaks.
 
+### Apple Silicon (native, no Docker)
+
+On a Mac, install `mship` directly and get full Metal GPU offload for GGUF models via `llama_server` (and image generation via `stable_diffusion_cpp`) — no container, no Linux VM. Install Xcode Command Line Tools first — `[metal]` compiles `stable-diffusion-cpp-python` from source on first install (a few minutes; `xcode-select -p` checks if you already have it):
+
+```bash
+xcode-select --install          # first-time only; skip if already installed
+uv tool install "modelship[metal]"
+mship deploy --config models.yaml
+```
+
+`uv tool install` auto-fetches the pinned Python 3.12.10 interpreter. `pip install "modelship[metal]"` also works if you already have that exact version (same Xcode CLI Tools prerequisite applies). Bare `pip install modelship`, `modelship[cuda]`, or `modelship[cpu]` are not supported install paths — those extras are for the Docker images only.
+
 ### GPU (vLLM, Diffusers)
 
 For high-throughput GPU inference, use the `-cuda` image and add `--gpus all`. You'll also need the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) and an `HF_TOKEN` for gated models. Example `models.yaml` entries for vLLM, Diffusers, and multi-GPU setups live in [docs/model-configuration.md](docs/model-configuration.md); ready-to-run configs are in [config/examples/](config/examples/).

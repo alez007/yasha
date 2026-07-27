@@ -392,7 +392,7 @@ class TestBuildDeploymentOptions:
         opts = build_deployment_options(config)
         assert opts["ray_actor_options"]["num_gpus"] == 0
 
-    def test_stable_diffusion_cpp_force_cpu(self):
+    def test_stable_diffusion_cpp_force_cpu_off_darwin(self):
         config = ModelshipModelConfig(
             name="test-model",
             model="some-model",
@@ -400,8 +400,24 @@ class TestBuildDeploymentOptions:
             loader=ModelLoader.stable_diffusion_cpp,
             num_gpus=1,
         )
-        opts = build_deployment_options(config)
+        with patch("modelship.deploy.actor_options.platform.system", return_value="Linux"):
+            opts = build_deployment_options(config)
         assert opts["ray_actor_options"]["num_gpus"] == 0
+
+    def test_stable_diffusion_cpp_honors_num_gpus_on_darwin(self):
+        # ggml picks up Metal via its own runtime backend registry regardless of
+        # what Ray thinks — forcing 0 here would just make Ray co-schedule
+        # another GPU actor onto the same physical GPU.
+        config = ModelshipModelConfig(
+            name="test-model",
+            model="some-model",
+            usecase=ModelUsecase.image,
+            loader=ModelLoader.stable_diffusion_cpp,
+            num_gpus=1,
+        )
+        with patch("modelship.deploy.actor_options.platform.system", return_value="Darwin"):
+            opts = build_deployment_options(config)
+        assert opts["ray_actor_options"]["num_gpus"] == 1
 
     def test_passthrough_env_vars_forwarded_to_replicas(self, monkeypatch):
         # --no-metrics / logging / gateway set on the driver must reach the replica
@@ -843,6 +859,31 @@ class TestConnectRay:
         # Guards the private ray.init kwarg that pins Ray's metrics agent port.
         assert kwargs["_metrics_export_port"] == 8079
 
+    def test_own_cluster_omits_gpus_when_none_detected(self):
+        from modelship.deploy import serve_utils
+
+        with patch.object(serve_utils, "detect_gpus", return_value=[]):
+            kwargs = self._init_call({"MSHIP_USE_EXISTING_RAY_CLUSTER": "false"}, pop=("MSHIP_NODE_NUM_GPUS",))
+        assert "num_gpus" not in kwargs
+
+    def test_own_cluster_metal_detected_advertises_one_gpu(self):
+        from modelship.deploy import serve_utils
+        from modelship.preflight import GPUInfo
+
+        mps_gpu = GPUInfo(index=0, available_bytes=1, name="Apple GPU", kind="mps")
+        with patch.object(serve_utils, "detect_gpus", return_value=[mps_gpu]):
+            kwargs = self._init_call({"MSHIP_USE_EXISTING_RAY_CLUSTER": "false"}, pop=("MSHIP_NODE_NUM_GPUS",))
+        assert kwargs["num_gpus"] == 1
+
+    def test_own_cluster_explicit_zero_gpus_wins_over_metal_detection(self):
+        from modelship.deploy import serve_utils
+        from modelship.preflight import GPUInfo
+
+        mps_gpu = GPUInfo(index=0, available_bytes=1, name="Apple GPU", kind="mps")
+        with patch.object(serve_utils, "detect_gpus", return_value=[mps_gpu]):
+            kwargs = self._init_call({"MSHIP_USE_EXISTING_RAY_CLUSTER": "false", "MSHIP_NODE_NUM_GPUS": "0"})
+        assert kwargs["num_gpus"] == 0
+
     def test_own_cluster_node_memory_splits_into_memory_and_object_store(self):
         kwargs = self._init_call({"MSHIP_USE_EXISTING_RAY_CLUSTER": "false", "MSHIP_NODE_MEMORY": str(10 * 1024**3)})
         # 30% object store (Ray's own resolve_object_store_memory), 70% schedulable 'memory'.
@@ -1029,13 +1070,30 @@ class TestJoinRayCluster:
         assert kw["num_gpus"] == 2
 
     def test_omits_resources_when_unset(self):
-        kw = self._join({}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS"))["params_kwargs"]
+        from modelship.deploy import serve_utils
+
+        with patch.object(serve_utils, "detect_gpus", return_value=[]):
+            kw = self._join({}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS"))["params_kwargs"]
         assert kw["num_cpus"] is None
         assert kw["num_gpus"] is None
 
+    def test_metal_detected_advertises_one_gpu_when_unset(self):
+        from modelship.deploy import serve_utils
+        from modelship.preflight import GPUInfo
+
+        mps_gpu = GPUInfo(index=0, available_bytes=1, name="Apple GPU", kind="mps")
+        with patch.object(serve_utils, "detect_gpus", return_value=[mps_gpu]):
+            kw = self._join({}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS"))["params_kwargs"]
+        assert kw["num_gpus"] == 1
+
     def test_explicit_zero_gpus_honored(self):
         # Thin-image case: MSHIP_NODE_NUM_GPUS=0 is a real reservation, not "unset".
-        kw = self._join({"MSHIP_NODE_NUM_GPUS": "0"})["params_kwargs"]
+        from modelship.deploy import serve_utils
+        from modelship.preflight import GPUInfo
+
+        mps_gpu = GPUInfo(index=0, available_bytes=1, name="Apple GPU", kind="mps")
+        with patch.object(serve_utils, "detect_gpus", return_value=[mps_gpu]):
+            kw = self._join({"MSHIP_NODE_NUM_GPUS": "0"})["params_kwargs"]
         assert kw["num_gpus"] == 0
 
     def test_node_memory_splits_into_memory_and_object_store(self):

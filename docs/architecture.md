@@ -39,7 +39,7 @@ Each deployment uses one of the following loaders:
 | `vllm` | vLLM engine | Chat/generation, embeddings, transcription, translation | No — installs on GPU or CPU |
 | `llama_server` | llama-server subprocess | Chat/generation, embeddings, vision (GGUF models) | No — runs on CPU or GPU (GGUF offload) |
 | `diffusers` | HuggingFace Diffusers | Image generation (any `AutoPipelineForText2Image` model) | Yes |
-| `stable_diffusion_cpp` | stable-diffusion.cpp | Image generation (GGUF models: SD1.5/SDXL/SD-Turbo, all-in-one Flux) | No — currently CPU-only |
+| `stable_diffusion_cpp` | stable-diffusion.cpp | Image generation (GGUF models: SD1.5/SDXL/SD-Turbo, all-in-one Flux) | No — CPU everywhere, plus Metal on Apple Silicon |
 | `custom` | Plugin system | TTS backends (Kokoro ONNX, Orpheus), STT backends (whisper.cpp) | No |
 
 The `llama_server` loader provides high-efficiency inference for quantized GGUF models on CPU or GPU (`n_gpu_layers` offload, whole GPUs only — fractional `num_gpus` is rejected) by proxying a `llama-server` subprocess's own OpenAI-compatible API. The `vllm` loader provides higher throughput with continuous batching and PagedAttention, on GPU or CPU.
@@ -111,6 +111,6 @@ See [Plugin Development](plugins.md) for details.
 | `modelship/infer/vllm/vllm_infer.py` | vLLM engine wrapper |
 | `modelship/infer/llama_server/llama_server_infer.py` | llama-server subprocess proxy (GGUF chat/embed/vision) |
 | `modelship/infer/diffusers/diffusers_infer.py` | Diffusers pipeline wrapper |
-| `modelship/infer/stable_diffusion_cpp/stable_diffusion_cpp_infer.py` | stable-diffusion.cpp wrapper (CPU image gen) |
+| `modelship/infer/stable_diffusion_cpp/stable_diffusion_cpp_infer.py` | stable-diffusion.cpp wrapper (CPU/Metal image gen) |
 | `modelship/plugins/base_plugin.py` | Plugin base classes |
 | `config/models.yaml` | Model configuration |

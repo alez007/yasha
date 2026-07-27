@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -17,12 +18,15 @@ class GPUInfo:
     available_bytes: int  # free VRAM at preflight time, not the device's total capacity
     name: str
     uuid: str | None = None  # e.g. "GPU-<uuid>"; None when the probe can't read it (see per-probe notes)
+    kind: str = "cuda"  # "cuda" or "mps" (Apple Silicon unified-memory GPU)
 
 
 @dataclass(frozen=True)
 class HardwareProfile:
     """Per-actor view of the hardware Ray has assigned. GPU indices here are
-    CUDA-visible indices (i.e. already filtered through `CUDA_VISIBLE_DEVICES`)."""
+    CUDA-visible indices (i.e. already filtered through `CUDA_VISIBLE_DEVICES`),
+    except for an "mps" GPUInfo, which is always index 0 (Apple Silicon exposes a
+    single unified device, no CUDA_VISIBLE_DEVICES-style filtering applies)."""
 
     gpus: list[GPUInfo] = field(default_factory=list)
     ram_bytes: int = 0
@@ -36,6 +40,12 @@ class HardwareProfile:
         doesn't oversize and OOM its neighbours; total is the fallback when the
         available probe read nothing."""
         return self.available_ram_bytes or self.ram_bytes
+
+    @property
+    def unified_memory(self) -> bool:
+        """True when GPU and CPU share one physical memory pool (Apple Silicon).
+        Callers must budget weights against a single pool, never twice."""
+        return any(g.kind == "mps" for g in self.gpus)
 
 
 class BasePreflight(Protocol):
@@ -85,7 +95,11 @@ def detect_gpus() -> list[GPUInfo]:
     (vLLM ray-backend spawns worker sub-actors that hold them). On the driver
     there's no mask, so this sees all physical GPUs — which is what the profile
     generator wants for VRAM tiering. Split out of `discover_hardware` so deploy
-    code can read just the GPUs."""
+    code can read just the GPUs.
+
+    Apple Silicon (Metal/MPS) is checked last, and only when neither CUDA probe
+    found anything — mirrors the CUDA-first/pynvml-fallback order, and means no
+    CUDA host's behavior changes."""
     gpus = _torch_cuda_discover()
     if not gpus:
         gpus = _pynvml_node_discover()
@@ -93,6 +107,8 @@ def detect_gpus() -> list[GPUInfo]:
             logger.debug(
                 "preflight: actor has no direct GPU ownership; using node-level pynvml view (%d GPU(s))", len(gpus)
             )
+    if not gpus:
+        gpus = _apple_metal_discover()
     return gpus
 
 
@@ -324,6 +340,72 @@ def _pynvml_node_discover() -> list[GPUInfo]:
     finally:
         with contextlib.suppress(Exception):
             pynvml.nvmlShutdown()
+
+
+# Conservative fraction of total RAM assumed usable by Metal when the
+# `iogpu.wired_limit_mb` sysctl reads 0 (its default, meaning "OS decides").
+# macOS's real default working-set cap is undocumented and version-dependent,
+# so this is a guess, not a measured fact — prefer torch.mps when available
+# (see below), which reports the OS's own recommendation directly.
+_METAL_DEFAULT_WORKING_SET_FRACTION = 0.7
+
+
+def _apple_metal_discover() -> list[GPUInfo]:
+    """Apple Silicon's unified-memory GPU, exposed as a single synthetic
+    GPUInfo (index 0, kind="mps"). Intel Macs are deliberately excluded —
+    torch MPS is Apple-Silicon-only in practice.
+
+    Prefers `torch.mps.recommended_max_memory()` when torch happens to be
+    importable (an OS-reported figure, not a guess); falls back to a sysctl +
+    psutil heuristic otherwise, since llama_server-only installs have no torch
+    at all. Both paths are torch-optional by design — this must not force a
+    torch dependency onto a loader that doesn't need one."""
+    import platform
+
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        return []
+
+    try:
+        import psutil
+
+        total_ram = psutil.virtual_memory().total
+        available_ram = psutil.virtual_memory().available
+
+        try:
+            import torch
+
+            cap = int(torch.mps.recommended_max_memory()) if torch.backends.mps.is_available() else None
+        except Exception:
+            cap = None
+
+        if cap is None:
+            wired_limit_mb = _sysctl_int("iogpu.wired_limit_mb")
+            cap = (
+                wired_limit_mb * 1024 * 1024 if wired_limit_mb else int(total_ram * _METAL_DEFAULT_WORKING_SET_FRACTION)
+            )
+
+        available_bytes = min(cap, available_ram)
+        name = _sysctl_str("machdep.cpu.brand_string") or "Apple GPU"
+        return [GPUInfo(index=0, available_bytes=available_bytes, name=name, uuid=None, kind="mps")]
+    except Exception:
+        logger.debug("preflight: apple metal probe failed", exc_info=True)
+        return []
+
+
+def _sysctl_int(name: str) -> int | None:
+    try:
+        out = subprocess.run(["sysctl", "-n", name], capture_output=True, text=True, timeout=5, check=True)
+        return int(out.stdout.strip())
+    except Exception:
+        return None
+
+
+def _sysctl_str(name: str) -> str | None:
+    try:
+        out = subprocess.run(["sysctl", "-n", name], capture_output=True, text=True, timeout=5, check=True)
+        return out.stdout.strip() or None
+    except Exception:
+        return None
 
 
 def run_preflight(config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:

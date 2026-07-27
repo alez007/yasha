@@ -37,6 +37,13 @@ dependencies = [
 
 [project.optional-dependencies]
 thin = []
+metal = [
+    "librosa>=0.11.0",
+    "scipy>=1.16.1",
+    "soundfile>=0.13.0",
+    "onnxruntime>=1.20.1",
+    "stable-diffusion-cpp-python>=0.4.7",
+]
 cuda = [
     "torch>=2.10.0",
     "torchvision>=0.25.0",
@@ -83,6 +90,9 @@ dev = [
     "pre-commit>=4.0.0",
     "fakeredis>=2.36.2",
 ]
+
+[project.scripts]
+mship = "modelship.launcher:main"
 
 [project.urls]
 Homepage = "https://github.com/alez007/modelship"
@@ -136,6 +146,10 @@ conflicts = [
   [
     { extra = "cuda" },
     { extra = "cpu" },
+  ],
+  [
+    { extra = "cuda" },
+    { extra = "metal" },
   ],
 ]
 

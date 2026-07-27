@@ -6,10 +6,11 @@ import requests
 
 from modelship.deploy.actor_options import build_cache_env_vars
 from modelship.utils import cache_dir, download, plugins_dir
+from modelship.utils.cache import resolve_cache_root
 
 
 def test_build_cache_env_vars_defaults():
-    with mock.patch.dict(os.environ, {}, clear=True):
+    with mock.patch.dict(os.environ, {"MSHIP_CACHE_DIR": "/.cache"}, clear=True):
         env_vars = build_cache_env_vars()
         assert env_vars["HF_HOME"] == "/.cache/huggingface"
         assert env_vars["VLLM_CACHE_ROOT"] == "/.cache/vllm"
@@ -21,8 +22,8 @@ def test_build_cache_env_vars_defaults():
 
 
 def test_build_cache_env_vars_forwards_hf_token_and_offline():
-    # Needed actor-side so a replica can auth/skip-network the same as the driver.
-    with mock.patch.dict(os.environ, {"HF_TOKEN": "hf_secret", "HF_HUB_OFFLINE": "1"}, clear=True):
+    env = {"MSHIP_CACHE_DIR": "/.cache", "HF_TOKEN": "hf_secret", "HF_HUB_OFFLINE": "1"}
+    with mock.patch.dict(os.environ, env, clear=True):
         env_vars = build_cache_env_vars()
         assert env_vars["HF_TOKEN"] == "hf_secret"
         assert env_vars["HF_HUB_OFFLINE"] == "1"
@@ -42,13 +43,48 @@ def test_build_cache_env_vars_custom_dir():
 def test_utils_cache_dir_default():
     # We don't want to actually create directories in the test environment if we can avoid it,
     # but cache_dir calls os.makedirs.
-    with mock.patch.dict(os.environ, {}, clear=True), mock.patch("os.makedirs"):
+    with mock.patch.dict(os.environ, {"MSHIP_CACHE_DIR": "/.cache"}, clear=True), mock.patch("os.makedirs"):
         assert cache_dir() == "/.cache"
 
 
 def test_utils_plugins_dir():
     with mock.patch.dict(os.environ, {"MSHIP_CACHE_DIR": "/tmp/cache"}, clear=True), mock.patch("os.makedirs"):
         assert plugins_dir() == "/tmp/cache/plugins"
+
+
+class TestResolveCacheRoot:
+    def test_explicit_env_var_wins(self):
+        with mock.patch.dict(os.environ, {"MSHIP_CACHE_DIR": "/custom/cache"}, clear=True):
+            assert resolve_cache_root() == "/custom/cache"
+
+    def test_writable_container_cache_dir_used(self):
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("os.path.isdir", return_value=True),
+            mock.patch("os.access", return_value=True),
+        ):
+            assert resolve_cache_root() == "/.cache"
+
+    def test_present_but_unwritable_container_cache_dir_falls_back(self):
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("os.path.isdir", return_value=True),
+            mock.patch("os.access", return_value=False),
+            mock.patch("os.path.expanduser", return_value="/home/user/.modelship/cache"),
+            mock.patch("os.makedirs") as mock_makedirs,
+        ):
+            assert resolve_cache_root() == "/home/user/.modelship/cache"
+        mock_makedirs.assert_called_once_with("/home/user/.modelship/cache", exist_ok=True)
+
+    def test_absent_container_cache_dir_falls_back(self):
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("os.path.isdir", return_value=False),
+            mock.patch("os.path.expanduser", return_value="/home/user/.modelship/cache"),
+            mock.patch("os.makedirs") as mock_makedirs,
+        ):
+            assert resolve_cache_root() == "/home/user/.modelship/cache"
+        mock_makedirs.assert_called_once_with("/home/user/.modelship/cache", exist_ok=True)
 
 
 class _FakeResponse:

@@ -58,6 +58,29 @@ walkthrough.
     disk-backed storage instead of `/dev/shm` if the container's shared
     memory is too small for the object store.
 
+## Native install (Apple Silicon)
+
+No Docker required — `mship` installs directly and runs its own Ray head with
+full Metal GPU offload for `llama_server` (GGUF chat/embeddings/vision) and
+`stable_diffusion_cpp` (image generation). Install Xcode Command Line Tools
+first: `[metal]` compiles `stable-diffusion-cpp-python` from source on first
+install, which fails partway through with a raw compiler error if no
+compiler is present. `xcode-select -p` checks whether you already have it.
+
+```bash
+xcode-select --install          # first-time only; skip if already installed
+uv tool install "modelship[metal]"
+mship deploy --config models.yaml
+```
+
+`uv tool install` auto-fetches the pinned Python 3.12.10 interpreter;
+`pip install "modelship[metal]"` works too if that exact version is already
+present (same Xcode CLI Tools prerequisite applies). The first install
+compiles stable-diffusion.cpp and takes a few minutes — that's expected, not
+a hang. Bare `pip install modelship`, `modelship[cuda]`, and
+`modelship[cpu]` are not supported install paths; those extras exist only
+for the Docker images.
+
 ## Local development
 
 For building from source, running inside the dev container, or a manual

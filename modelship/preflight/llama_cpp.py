@@ -213,6 +213,17 @@ class LlamaServerPreflight:
                 )
                 return {"n_ctx": suggested, "n_gpu_layers": total_layers}
 
+        if hw.unified_memory:
+            # Partial offload would double-count VRAM/RAM as separate pools; they're the same bytes here.
+            logger.warning(
+                "preflight '%s': unified-memory budget only supports n_ctx=%d (< %d) at full "
+                "offload; skipping recommendation",
+                config.name,
+                max(ctx_full, 0),
+                _MIN_NCTX,
+            )
+            return {}
+
         return self._recommend_gpu_partial(
             config, hw, meta, kv_per_layer, layer_bytes, vram_budget, total_layers, ctx_cap
         )
