@@ -2,13 +2,14 @@ name: Build llama.cpp (macOS Metal)
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - modelship/_pins.py
-      - .github/workflows/llama-cpp-metal.yml
+    inputs:
+      tag:
+        description: "llama.cpp tag to build (e.g. b9860)"
+        required: true
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   build:
@@ -17,17 +18,11 @@ jobs:
       - name: Checkout modelship
         uses: actions/checkout@v4
 
-      - name: Read pinned tag
-        id: pin
-        run: |
-          TAG=$(python3 -c "import sys; sys.path.insert(0, 'modelship'); import _pins; print(_pins.LLAMA_CPP_TAG)")
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
       - name: Checkout llama.cpp
         uses: actions/checkout@v4
         with:
           repository: ggml-org/llama.cpp
-          ref: ${{ steps.pin.outputs.tag }}
+          ref: ${{ inputs.tag }}
           path: llama.cpp
 
       - name: Build
@@ -38,27 +33,53 @@ jobs:
           cmake --build build --config Release -j "$(sysctl -n hw.ncpu)" --target llama-server
 
       - name: Package
+        id: package
         working-directory: llama.cpp
         run: |
-          TAG=${{ steps.pin.outputs.tag }}
+          TAG=${{ inputs.tag }}
           NAME="llama-server-${TAG}-macos-arm64-metal"
           mkdir "$NAME"
           cp build/bin/llama-server "$NAME"/
           cp build/bin/*.dylib "$NAME"/ 2>/dev/null || true
           cp LICENSE "$NAME"/
           tar czf "${NAME}.tar.gz" "$NAME"
-          shasum -a 256 "${NAME}.tar.gz" | awk '{print $1}' > "${NAME}.tar.gz.sha256"
+          SHA=$(shasum -a 256 "${NAME}.tar.gz" | awk '{print $1}')
+          echo "$SHA" > "${NAME}.tar.gz.sha256"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
 
       - name: Publish release
         working-directory: llama.cpp
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=${{ steps.pin.outputs.tag }}
+          TAG=${{ inputs.tag }}
           NAME="llama-server-${TAG}-macos-arm64-metal"
           gh release create "llamacpp-${TAG}-metal" \
             --repo "${{ github.repository }}" \
             --title "llama.cpp ${TAG} (macOS Metal)" \
-            --notes "Own-CI build of ggml-org/llama.cpp ${TAG} with CMAKE_OSX_DEPLOYMENT_TARGET=14.0. sha256: $(cat ${NAME}.tar.gz.sha256)" \
+            --notes "Own-CI build of ggml-org/llama.cpp ${TAG} with CMAKE_OSX_DEPLOYMENT_TARGET=14.0. sha256: ${{ steps.package.outputs.sha256 }}" \
             --prerelease \
             "${NAME}.tar.gz" "${NAME}.tar.gz.sha256"
+
+      - name: Open pin-bump PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=${{ inputs.tag }}
+          SHA=${{ steps.package.outputs.sha256 }}
+          BRANCH="llama-cpp/${TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          sed -i '' "s/^LLAMA_CPP_TAG = .*/LLAMA_CPP_TAG = \"${TAG}\"/" modelship/_pins.py
+          sed -i '' "s/^LLAMA_CPP_METAL_SHA256 = .*/LLAMA_CPP_METAL_SHA256 = \"${SHA}\"/" modelship/_pins.py
+          git add modelship/_pins.py
+          git commit -m "chore: bump llama.cpp Metal build to ${TAG}"
+          git push origin "$BRANCH" --force
+          gh pr create \
+            --repo "${{ github.repository }}" \
+            --title "chore: bump llama.cpp Metal build to ${TAG}" \
+            --body "Own-CI Metal build published: https://github.com/${{ github.repository }}/releases/tag/llamacpp-${TAG}-metal
+
+          The Linux Docker images (\`LLAMA_CPP_IMAGE_CUDA\`/\`LLAMA_CPP_IMAGE_CPU\` in \`Dockerfile\`) pin llama.cpp separately, by upstream image digest — bump those too if this PR is meant to move the whole project to ${TAG}." \
+            || echo "PR create failed or already exists for branch $BRANCH"
