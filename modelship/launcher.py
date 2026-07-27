@@ -23,7 +23,7 @@ _LLAMA_CPP_METAL_ASSET_URL = (
     f"https://github.com/alez007/modelship/releases/download/llamacpp-{_LLAMA_CPP_TAG}-metal/"
     f"llama-server-{_LLAMA_CPP_TAG}-macos-arm64-metal.tar.gz"
 )
-_LLAMA_CPP_METAL_SHA256 = ""
+_LLAMA_CPP_METAL_SHA256 = "da78f8718171af05705e2b0bba9c0e82c6a879501978deafcf02c9f63f5313d0"
 
 
 class LlamaServerProvisionError(RuntimeError):
