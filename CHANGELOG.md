@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.3] - 2026-07-27
+
+### Added
+- trigger llama.cpp Metal builds on demand via make llama-cpp-bump
+- native mship CLI with Metal support for Apple Silicon
+
+### Fixed
+- bump Dockerfile llama.cpp Docker image pins in the Metal bump workflow
+- publish under PyPI project name mship, not modelship
+
+### Changed
+- bump llama.cpp to b9859
+- publish llama.cpp Metal builds to a dedicated releases repo
+- publish to PyPI without waiting on Docker builds
+- fold llama.cpp Metal provisioning into launcher, drop _pins.py
+
 ## [0.7.2] - 2026-07-24
 
 ### Added
