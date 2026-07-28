@@ -155,12 +155,15 @@ async def write_background(
 
 async def touch(store: StateStore, identity: str, response_id: str) -> bool:
     """Heartbeat tick: refresh ``_mship.updated_at``. Returns ``False`` (stop
-    heartbeating) if the snapshot is gone or no longer carries ``_mship``."""
+    heartbeating) if the snapshot is gone, no longer carries ``_mship``, or has
+    already reached a terminal status — never overwrites a terminal write."""
     snapshot = await read_async(store, identity, response_id)
     if snapshot is None:
         return False
     mship = snapshot.get("_mship")
     if not isinstance(mship, dict):
+        return False
+    if (snapshot.get("response") or {}).get("status") in TERMINAL_STATUSES:
         return False
     mship["updated_at"] = time.time()
     await store.set_async(_key(identity, response_id), snapshot, ttl_seconds=ttl_seconds())
