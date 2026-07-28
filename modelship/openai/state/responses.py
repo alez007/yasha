@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import time
+from typing import cast
 
 from modelship.logging import get_logger
 from modelship.state import StateStore
@@ -46,6 +47,14 @@ TERMINAL_STATUSES = frozenset({"completed", "incomplete", "failed", "cancelled"}
 # poller gives up on it and reports `failed`.
 _STALE_ENV = "MSHIP_RESPONSES_STALE_S"
 _DEFAULT_STALE_S = 30.0
+
+# Separate, short-lived namespace for a background+stream run's replayable event log
+# ("responses-stream/<identity>/<response_id>"), distinct from the response snapshot
+# itself. Nobody resumes a stream from days ago, so its TTL is far shorter than the
+# response TTL above.
+_STREAM_NAMESPACE = "responses-stream"
+_STREAM_TTL_ENV = "MSHIP_RESPONSES_STREAM_BUFFER_TTL_S"
+_DEFAULT_STREAM_TTL_S = 600.0
 
 
 def ttl_seconds() -> float | None:
@@ -197,6 +206,41 @@ async def write_terminal_if_not_terminal(store: StateStore, identity: str, respo
         {"response": response, "input_items": snapshot.get("input_items") or []},
         ttl_seconds=ttl_seconds(),
     )
+
+
+def stream_buffer_ttl_seconds() -> float:
+    """Configured event-buffer TTL for background+stream resume (always positive)."""
+    raw = os.environ.get(_STREAM_TTL_ENV)
+    if not raw:
+        return _DEFAULT_STREAM_TTL_S
+    try:
+        ttl = float(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a number; falling back to %ss.", _STREAM_TTL_ENV, raw, _DEFAULT_STREAM_TTL_S)
+        return _DEFAULT_STREAM_TTL_S
+    return ttl if ttl > 0 else _DEFAULT_STREAM_TTL_S
+
+
+def _stream_key(identity: str, response_id: str) -> str:
+    return f"{_STREAM_NAMESPACE}/{identity}/{response_id}"
+
+
+async def append_stream_event(store: StateStore, identity: str, response_id: str, event: dict) -> None:
+    """Durably buffer one streamed event for later replay (background+stream resume)."""
+    await store.append_async(_stream_key(identity, response_id), event, ttl_seconds=stream_buffer_ttl_seconds())
+
+
+async def read_stream_events_after(
+    store: StateStore, identity: str, response_id: str, after_sequence: int
+) -> list[dict]:
+    """Buffered events after *after_sequence*, in order. Empty once discarded/expired."""
+    events = await store.read_from_async(_stream_key(identity, response_id), after_sequence=after_sequence)
+    return cast("list[dict]", events)
+
+
+async def discard_stream_buffer(store: StateStore, identity: str, response_id: str) -> None:
+    """Drop the event buffer early (run reached a terminal status) rather than waiting on its TTL."""
+    await store.delete_async(_stream_key(identity, response_id))
 
 
 def history_items(snapshot: dict) -> list[dict]:

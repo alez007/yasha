@@ -91,6 +91,37 @@ class TestBackends:
         await store.delete_async("k")
         assert await store.get_async("k") is None
 
+    @pytest.mark.asyncio
+    async def test_append_then_read_from_roundtrips_in_order(self, store):
+        for i in range(3):
+            await store.append_async("log/a", {"sequence_number": i, "n": i * 10})
+        assert await store.read_from_async("log/a") == [
+            {"sequence_number": 0, "n": 0},
+            {"sequence_number": 1, "n": 10},
+            {"sequence_number": 2, "n": 20},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_read_from_excludes_after_sequence_and_below(self, store):
+        for i in range(3):
+            await store.append_async("log/a", {"sequence_number": i})
+        assert await store.read_from_async("log/a", after_sequence=0) == [
+            {"sequence_number": 1},
+            {"sequence_number": 2},
+        ]
+        assert await store.read_from_async("log/a", after_sequence=2) == []
+
+    @pytest.mark.asyncio
+    async def test_read_from_absent_key_returns_empty(self, store):
+        assert await store.read_from_async("log/nope") == []
+
+    @pytest.mark.asyncio
+    async def test_append_is_isolated_per_key(self, store):
+        await store.append_async("log/a", {"sequence_number": 0})
+        await store.append_async("log/b", {"sequence_number": 0})
+        assert len(await store.read_from_async("log/a")) == 1
+        assert len(await store.read_from_async("log/b")) == 1
+
 
 class TestMemoryStoreActor:
     """The dict logic that lives inside MemoryStoreActor, exercised via the plain
@@ -116,6 +147,28 @@ class TestMemoryStoreActor:
         clock["t"] = 1011.0
         assert store.get("k") is None
         assert store.list("k") == []
+
+    def test_append_max_len_bounds_to_trailing_entries(self):
+        store = _MemoryStore()
+        for i in range(5):
+            store.append("log/a", {"sequence_number": i}, max_len=3)
+        assert store.read_from("log/a") == [{"sequence_number": 2}, {"sequence_number": 3}, {"sequence_number": 4}]
+
+    def test_append_ttl_expires_like_set(self, monkeypatch):
+        clock = {"t": 1000.0}
+        monkeypatch.setattr("time.time", lambda: clock["t"])
+        store = _MemoryStore()
+        store.append("log/a", {"sequence_number": 0}, ttl_seconds=10)
+        assert store.read_from("log/a") == [{"sequence_number": 0}]
+        clock["t"] = 1011.0
+        assert store.read_from("log/a") == []
+
+    def test_append_isolates_stored_event_from_caller_mutation(self):
+        store = _MemoryStore()
+        event = {"sequence_number": 0, "x": 1}
+        store.append("log/a", event)
+        event["x"] = 999
+        assert store.read_from("log/a") == [{"sequence_number": 0, "x": 1}]
 
 
 class TestMemoryStoreActorSweep:
@@ -234,6 +287,23 @@ class TestRedisStateStore:
         assert store._sync_client.pttl("modelship/state/k") > 0
         store.set("k2", {"x": 1})  # no ttl
         assert store._sync_client.pttl("modelship/state/k2") == -1  # no expiry
+
+    @pytest.mark.asyncio
+    async def test_append_uses_a_native_stream(self):
+        store = _fake_redis_store()
+        await store.append_async("log/a", {"sequence_number": 0, "type": "x"})
+        await store.append_async("log/a", {"sequence_number": 1, "type": "y"})
+        assert store._sync_client.type("modelship/state/log/a") == "stream"
+        assert await store.read_from_async("log/a") == [
+            {"sequence_number": 0, "type": "x"},
+            {"sequence_number": 1, "type": "y"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_append_ttl_sets_native_expiry(self):
+        store = _fake_redis_store()
+        await store.append_async("log/a", {"sequence_number": 0}, ttl_seconds=100)
+        assert store._sync_client.pttl("modelship/state/log/a") > 0
 
     def test_corrupt_value_treated_as_missing(self):
         store = _fake_redis_store()

@@ -183,6 +183,61 @@ class TestBackgroundHeartbeat:
         assert snap["_mship"]["updated_at"] == 1.0
 
 
+class TestStreamBuffer:
+    @pytest.mark.asyncio
+    async def test_append_then_read_roundtrips(self, store):
+        await responses_state.append_stream_event(
+            store, "u1", "resp_1", {"type": "response.created", "sequence_number": 0}
+        )
+        await responses_state.append_stream_event(
+            store, "u1", "resp_1", {"type": "response.output_text.delta", "sequence_number": 1}
+        )
+        events = await responses_state.read_stream_events_after(store, "u1", "resp_1", -1)
+        assert [e["sequence_number"] for e in events] == [0, 1]
+
+    @pytest.mark.asyncio
+    async def test_read_after_sequence_excludes_seen(self, store):
+        await responses_state.append_stream_event(store, "u1", "resp_1", {"sequence_number": 0})
+        await responses_state.append_stream_event(store, "u1", "resp_1", {"sequence_number": 1})
+        events = await responses_state.read_stream_events_after(store, "u1", "resp_1", 0)
+        assert [e["sequence_number"] for e in events] == [1]
+
+    @pytest.mark.asyncio
+    async def test_read_absent_buffer_returns_empty(self, store):
+        assert await responses_state.read_stream_events_after(store, "u1", "nope", -1) == []
+
+    @pytest.mark.asyncio
+    async def test_discard_removes_buffer(self, store):
+        await responses_state.append_stream_event(store, "u1", "resp_1", {"sequence_number": 0})
+        await responses_state.discard_stream_buffer(store, "u1", "resp_1")
+        assert await responses_state.read_stream_events_after(store, "u1", "resp_1", -1) == []
+        # idempotent — discarding an absent buffer is not an error
+        await responses_state.discard_stream_buffer(store, "u1", "resp_1")
+
+    @pytest.mark.asyncio
+    async def test_scoped_by_identity(self, store):
+        await responses_state.append_stream_event(store, "u1", "resp_1", {"sequence_number": 0})
+        assert await responses_state.read_stream_events_after(store, "u2", "resp_1", -1) == []
+
+
+class TestStreamBufferTtl:
+    def test_defaults_to_600s(self, monkeypatch):
+        monkeypatch.delenv("MSHIP_RESPONSES_STREAM_BUFFER_TTL_S", raising=False)
+        assert responses_state.stream_buffer_ttl_seconds() == 600.0
+
+    def test_env_override(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_RESPONSES_STREAM_BUFFER_TTL_S", "30")
+        assert responses_state.stream_buffer_ttl_seconds() == 30.0
+
+    def test_non_positive_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_RESPONSES_STREAM_BUFFER_TTL_S", "0")
+        assert responses_state.stream_buffer_ttl_seconds() == 600.0
+
+    def test_bad_value_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_RESPONSES_STREAM_BUFFER_TTL_S", "soon")
+        assert responses_state.stream_buffer_ttl_seconds() == 600.0
+
+
 class TestTtl:
     def test_defaults_to_30_days(self, monkeypatch):
         monkeypatch.delenv("MSHIP_RESPONSES_TTL_S", raising=False)

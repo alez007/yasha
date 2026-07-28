@@ -597,8 +597,6 @@ class ModelshipAPI:
             # Run continues detached after this response sends; a live disconnect-watch
             # would self-abort it once the HTTP response closes.
             watcher.stop()
-            if request.stream:
-                raise responses_utils.background_stream_error()
             if request.store is False:
                 raise responses_utils.background_store_false_error()
 
@@ -632,6 +630,8 @@ class ModelshipAPI:
         )
 
         if request.background:
+            # Captured before run_background forces request.stream=True on its own copy.
+            wants_stream = bool(request.stream)
             response_dict = await responses_utils.start_background(
                 self._state_store, identity, request, req_id, input_items_for_turn
             )
@@ -645,10 +645,16 @@ class ModelshipAPI:
                     store=self._state_store,
                     response_id=response_dict["id"],
                     input_items=input_items_for_turn,
+                    stream_buffer=wants_stream,
                 )
             )
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
+            if wants_stream:
+                return StreamingResponse(
+                    frame_sse(responses_utils.tail_background_events(self._state_store, identity, response_dict["id"])),
+                    media_type="text/event-stream",
+                )
             return JSONResponse(content=response_dict, status_code=200)
 
         # Under stream=True the remote() result is an async-iterable
@@ -871,10 +877,23 @@ class ModelshipAPI:
                     conn_cache.pop(next(iter(conn_cache)))
 
     @app.get("/v1/responses/{response_id}")
-    async def get_response(self, response_id: str, raw_request: Request):
+    async def get_response(
+        self, response_id: str, raw_request: Request, stream: bool = False, starting_after: int = -1
+    ):
         self._set_request_id(random_uuid())
         identity = self._set_identity(raw_request)
+        # Confirms existence/ownership up front, so an unknown id still 404s cleanly —
+        # once a StreamingResponse starts, an in-loop miss can only end the stream quietly.
         snapshot = await responses_utils.load_snapshot(self._state_store, identity, response_id)
+        if stream:
+            return StreamingResponse(
+                frame_sse(
+                    responses_utils.tail_background_events(
+                        self._state_store, identity, response_id, after_sequence=starting_after
+                    )
+                ),
+                media_type="text/event-stream",
+            )
         # Orphan detection: a dead drain task surfaces as `failed` here rather than hanging forever.
         snapshot = await responses_utils.reconcile_staleness(self._state_store, identity, response_id, snapshot)
         # Stored verbatim, so this is a passthrough — no re-derivation to drift.

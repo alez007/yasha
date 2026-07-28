@@ -25,6 +25,21 @@ def _poll_until_terminal(client, response_id: str, *, timeout_s: float = 60.0, i
     raise AssertionError(f"response {response_id} did not reach a terminal status within {timeout_s}s")
 
 
+def _iter_sse_events(lines):
+    """Parse raw SSE lines (as yielded by `httpx.Response.iter_lines`) into event dicts."""
+    event_type = None
+    for line in lines:
+        if line.startswith("event: "):
+            event_type = line[len("event: ") :]
+        elif line.startswith("data: "):
+            data = line[len("data: ") :]
+            if data == "[DONE]":
+                return
+            payload = json.loads(data)
+            payload.setdefault("type", event_type)
+            yield payload
+
+
 @pytest.mark.integration
 @pytest.mark.llama_server
 class TestResponsesLlamaServer:
@@ -501,14 +516,50 @@ class TestResponsesBackground:
         assert fetched["status"] == "completed"
         assert "_mship" not in fetched
 
-    def test_background_and_stream_is_400(self):
-        response = httpx.post(
+    def test_background_and_stream_streams_live_and_completes(self):
+        with httpx.stream(
+            "POST",
             f"{OPENAI_API_BASE}/responses",
-            json={"model": "chat-capable", "input": "hi", "background": True, "stream": True},
+            json={"model": "chat-capable", "input": "Say hello in one word.", "background": True, "stream": True},
             timeout=60,
-        )
-        assert response.status_code == 400, response.text
-        assert "background" in response.json()["error"]["message"]
+        ) as response:
+            assert response.status_code == 200, response.text
+            events = list(_iter_sse_events(response.iter_lines()))
+
+        types = [e["type"] for e in events]
+        assert types[0] == "response.created"
+        assert types[-1] == "response.completed"
+        assert events[-1]["response"]["status"] == "completed"
+        assert events[-1]["response"]["background"] is True
+
+    def test_background_stream_resume_after_disconnect(self):
+        response_id = None
+        seen = []
+        with httpx.stream(
+            "POST",
+            f"{OPENAI_API_BASE}/responses",
+            json={"model": "chat-capable", "input": "Say hello in one word.", "background": True, "stream": True},
+            timeout=60,
+        ) as response:
+            for event in _iter_sse_events(response.iter_lines()):
+                seen.append(event)
+                response_id = event["response"]["id"]
+                break  # simulate a disconnect right after the first event
+
+        assert response_id is not None
+        last_seq = seen[-1]["sequence_number"]
+
+        # Resume from where the disconnected client left off — the background run
+        # kept going server-side the whole time (it never watched this connection).
+        with httpx.stream(
+            "GET", f"{OPENAI_API_BASE}/responses/{response_id}", params={"stream": "true", "starting_after": last_seq}
+        ) as response:
+            assert response.status_code == 200, response.text
+            resumed = list(_iter_sse_events(response.iter_lines()))
+
+        assert resumed, "resume produced no events"
+        assert resumed[-1]["type"] == "response.completed"
+        assert resumed[-1]["response"]["status"] == "completed"
 
     def test_background_and_store_false_is_400(self):
         response = httpx.post(

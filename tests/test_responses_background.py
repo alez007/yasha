@@ -198,16 +198,6 @@ class TestBackgroundCreate:
 
 class TestGuards:
     @pytest.mark.asyncio
-    async def test_background_and_stream_is_400(self, api):
-        _wire(api, _background_gen_factory())
-        request = ResponsesRequest(model="m", input="hi", background=True, stream=True)
-
-        with pytest.raises(HTTPException) as exc:
-            await api.create_response(request, _raw_request())
-        assert exc.value.status_code == 400
-        assert api._background_tasks == set()
-
-    @pytest.mark.asyncio
     async def test_background_and_store_false_is_400(self, api):
         _wire(api, _background_gen_factory())
         request = ResponsesRequest(model="m", input="hi", background=True, store=False)
@@ -365,3 +355,115 @@ class TestOrphanDetection:
         result = await api.get_response("resp_fresh", _raw_request())
 
         assert json.loads(bytes(result.body))["status"] == "in_progress"
+
+
+def _parse_sse(body: str) -> list[dict]:
+    events = []
+    for frame in body.split("\n\n"):
+        lines = [line for line in frame.split("\n") if line]
+        if not lines:
+            continue
+        data_line = next((line for line in lines if line.startswith("data: ")), None)
+        if data_line is None:
+            continue
+        data = data_line[len("data: ") :]
+        if data == "[DONE]":
+            continue
+        events.append(json.loads(data))
+    return events
+
+
+async def _consume_body(result) -> str:
+    chunks = await asyncio.wait_for(_collect(result), timeout=5.0)
+    return "".join(chunks)
+
+
+async def _collect(result):
+    return [chunk async for chunk in result.body_iterator]
+
+
+class TestBackgroundStream:
+    @pytest.mark.asyncio
+    async def test_background_and_stream_streams_live_and_completes(self, api):
+        # A real gap between events (unlike the other fixtures' back-to-back yields)
+        # so the tailer's poll genuinely observes `response.created` while buffered,
+        # rather than racing a drain task that finishes before the first poll runs.
+        def _slow_gen_factory(*args, **kwargs):
+            response_id = args[5] if len(args) > 5 else kwargs.get("response_id")
+
+            async def gen():
+                yield {"type": "response.created", "sequence_number": 0, "response": {"id": response_id}}
+                await asyncio.sleep(0.4)
+                yield {
+                    "type": "response.completed",
+                    "sequence_number": 1,
+                    "response": {
+                        "id": response_id,
+                        "object": "response",
+                        "status": "completed",
+                        "background": True,
+                        "output": [
+                            {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "hello background!"}],
+                            }
+                        ],
+                    },
+                }
+
+            return gen()
+
+        _wire(api, _slow_gen_factory)
+        request = ResponsesRequest(model="m", input="hi", background=True, stream=True)
+
+        result = await api.create_response(request, _raw_request())
+        assert result.media_type == "text/event-stream"
+
+        body = await _consume_body(result)
+        events = _parse_sse(body)
+
+        assert events[0]["type"] == "response.created"
+        assert events[-1]["type"] == "response.completed"
+        assert events[-1]["response"]["status"] == "completed"
+        assert events[-1]["response"]["output"][0]["content"][0]["text"] == "hello background!"
+
+        await _drain_background_tasks(api)
+
+    @pytest.mark.asyncio
+    async def test_get_stream_resumes_from_buffered_events(self, api):
+        response_id = "resp_1"
+        _stored_background(api, response_id, status="completed")
+        key = f"responses-stream/unscoped/{response_id}"
+        await api._state_store.append_async(key, {"type": "response.created", "sequence_number": 0, "response": {}})
+        await api._state_store.append_async(
+            key, {"type": "response.output_text.delta", "sequence_number": 1, "delta": "hi"}
+        )
+        await api._state_store.append_async(
+            key,
+            {
+                "type": "response.completed",
+                "sequence_number": 2,
+                "response": {"id": response_id, "object": "response", "status": "completed"},
+            },
+        )
+
+        result = await api.get_response(response_id, _raw_request(), stream=True, starting_after=0)
+        body = await _consume_body(result)
+        events = _parse_sse(body)
+
+        # starting_after=0 excludes the seq-0 event that was already seen before disconnect.
+        assert [e["sequence_number"] for e in events] == [1, 2]
+        assert events[-1]["type"] == "response.completed"
+
+    @pytest.mark.asyncio
+    async def test_get_stream_on_terminal_response_synthesizes_terminal_event(self, api):
+        _stored_background(api, "resp_done", status="completed")
+
+        result = await api.get_response("resp_done", _raw_request(), stream=True)
+        body = await _consume_body(result)
+        events = _parse_sse(body)
+
+        assert len(events) == 1
+        assert events[0]["type"] == "response.completed"
+        assert events[0]["response"]["status"] == "completed"

@@ -598,10 +598,13 @@ falls back to a stateless answer.
 `"background": true` returns a `status: "queued"` response immediately instead of
 blocking on generation; poll `GET` until `status` reaches a terminal value
 (`completed`/`incomplete`/`failed`/`cancelled`). It requires `store` (so there's
-something to poll) and, for now, is HTTP-only — not combinable with `stream: true`.
-Use `redis://` (`MSHIP_STATE_STORE`) rather than the default `memory://` for
-production background use, since a background response must outlive the request
-that created it.
+something to poll). Combined with `"stream": true`, the initial call instead streams
+live as generation happens, and a disconnected client can resume with
+`GET /v1/responses/{id}?stream=true&starting_after=<last sequence_number seen>` — the
+replay buffer behind that is short-lived (`MSHIP_RESPONSES_STREAM_BUFFER_TTL_S`,
+default 600s) since nobody resumes a dropped stream from days ago. Use `redis://`
+(`MSHIP_STATE_STORE`) rather than the default `memory://` for production background
+use, since a background response must outlive the request that created it.
 
 Conversations are scoped to the caller's identity, so one caller can never read or
 continue another's. **With no auth configured every caller shares the single

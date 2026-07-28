@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+from typing import cast
 
 import redis
 import redis.asyncio as aioredis
@@ -127,3 +128,29 @@ class RedisStateStore(StateStore):
             async for k in self._async().scan_iter(match=match):
                 keys.append(k)
         return [k[len(_PREFIX) :] for k in keys if _in_namespace(k[len(_PREFIX) :], prefix)]
+
+    async def append_async(
+        self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
+    ) -> None:
+        # Redis Streams give a native O(1) append. Entry ids are derived from the
+        # event's own sequence_number (1-based: id "0-0" is reserved by Redis) so
+        # read_from_async's range query maps directly onto the same cursor callers
+        # already use (ResponsesStreamTranslator's sequence_number).
+        seq = event.get("sequence_number") if isinstance(event, dict) else None
+        entry_id = f"{int(seq) + 1}-0" if isinstance(seq, int) else "*"
+        maxlen_kwargs = {"maxlen": max_len, "approximate": True} if max_len is not None else {}
+        with _mapped(f"redis xadd {key!r}"):
+            await self._async().xadd(_slug(key), {"data": json.dumps(event)}, id=entry_id, **maxlen_kwargs)
+            if ttl_seconds is not None:
+                await self._async().pexpire(_slug(key), cast(int, self._px(ttl_seconds)))
+
+    async def read_from_async(self, key: str, *, after_sequence: int = -1) -> list[JsonValue]:
+        start_id = f"({after_sequence + 1}-0"
+        with _mapped(f"redis xrange {key!r}"):
+            entries = await self._async().xrange(_slug(key), min=start_id, max="+")
+        events = []
+        for _entry_id, fields in entries or []:
+            decoded = _decode(fields.get("data")) if isinstance(fields, dict) else None
+            if decoded is not None:
+                events.append(decoded)
+        return events
