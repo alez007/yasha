@@ -232,6 +232,7 @@ class BaseInfer[Prepared](ABC):
         *,
         request_id: str,
         client_error: Callable[[Exception], str | None] = lambda _exc: None,
+        response_id: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Drive a Responses event stream: start() -> process() per chunk ->
         finish()/fail(). Yields plain event dicts; SSE/WS framing happens at the
@@ -240,9 +241,11 @@ class BaseInfer[Prepared](ABC):
         `client_error(exc)` returns a client-safe message for `fail()`, or None to
         log the full trace and use a generic message. `chunks.aclose()` in `finally`
         is required: closing this generator early doesn't propagate into `chunks`
-        via `async for` the way `yield from` would for a sync generator.
+        via `async for` the way `yield from` would for a sync generator. `response_id`,
+        when given (a background run pinning the id its queued placeholder already
+        used), is threaded straight into the translator instead of it minting its own.
         """
-        translator = ResponsesStreamTranslator(request)
+        translator = ResponsesStreamTranslator(request, response_id=response_id)
         try:
             for event in translator.start():
                 yield event
@@ -378,14 +381,20 @@ class BaseInfer[Prepared](ABC):
         return await self._create_chat_completion_no_stream(request, prepared, raw_request)
 
     async def create_response(
-        self, request: ResponsesRequest, raw_request: RawRequestProxy
+        self, request: ResponsesRequest, raw_request: RawRequestProxy, *, response_id: str | None = None
     ) -> ErrorResponse | ResponseObject | AsyncGenerator[dict[str, Any], None]:
-        """Responses counterpart of `create_chat_completion` — see its docstring."""
+        """Responses counterpart of `create_chat_completion` — see its docstring.
+
+        `response_id`, when given, is a background run's already-minted id, threaded
+        through to the streaming seam so every envelope this call produces carries it
+        instead of `ResponsesStreamTranslator` minting a fresh one. Unused on the
+        non-streaming seam: a background run's inner call always sets `stream=True`.
+        """
         prepared = await self._prepare_responses(request, raw_request)
         if isinstance(prepared, ErrorResponse):
             return prepared
         if request.stream:
-            return self._create_response_stream(request, prepared, raw_request)
+            return self._create_response_stream(request, prepared, raw_request, response_id=response_id)
         return await self._create_response_no_stream(request, prepared, raw_request)
 
     async def _prepare_chat(
@@ -418,9 +427,15 @@ class BaseInfer[Prepared](ABC):
         raise NotImplementedError
 
     def _create_response_stream(
-        self, request: ResponsesRequest, prepared: Prepared, raw_request: RawRequestProxy
+        self,
+        request: ResponsesRequest,
+        prepared: Prepared,
+        raw_request: RawRequestProxy,
+        *,
+        response_id: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Streaming Responses seam. See `_create_chat_completion_stream`."""
+        """Streaming Responses seam. See `_create_chat_completion_stream`. `response_id`
+        is forwarded straight to `_stream_responses` — see `create_response`'s docstring."""
         raise NotImplementedError
 
     async def _create_response_no_stream(

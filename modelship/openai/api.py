@@ -195,6 +195,9 @@ class ModelshipAPI:
         # request. The gateway owns this rather than the loaders: GET/DELETE carry no
         # model, so they could not be routed to one.
         self._state_store = get_state_store()
+        # Detached background:true drain tasks (see create_response). Held here so
+        # they aren't GC'd mid-run; a done-callback discards each on completion.
+        self._background_tasks: set[asyncio.Task] = set()
         stamp_gateway(gateway_name)
         # Routing state is reconciled from the coordinator, the cluster-wide source
         # of truth — not pushed by the driver (a push hits only one replica). Each
@@ -591,6 +594,18 @@ class ModelshipAPI:
         watcher = RequestWatcher(raw_request, req_id, model=model, endpoint="create_response")
         headers = dict(raw_request.headers)
 
+        if request.background:
+            # No client socket to watch: the HTTP response returns immediately and the
+            # run continues detached, so a live disconnect-watch would (once this very
+            # response finishes sending) falsely mark the run's own req_id disconnected
+            # and self-abort it seconds after it started. Stop it before anything else,
+            # regardless of which branch below is ultimately taken.
+            watcher.stop()
+            if request.stream:
+                raise responses_utils.background_stream_error()
+            if request.store is False:
+                raise responses_utils.background_store_false_error()
+
         # Resolve conversation history here, before the Ray hop: the loader only ever
         # sees a flat `input`, and a store outage fails the request before any GPU
         # work starts. Costs nothing when previous_response_id is unset.
@@ -609,14 +624,37 @@ class ModelshipAPI:
             input_items_for_turn = responses_utils.as_input_items(request.input)
 
         logger.info(
-            "responses model=%s input_items=%s max_output_tokens=%s stream=%s store=%s previous_response_id=%s",
+            "responses model=%s input_items=%s max_output_tokens=%s stream=%s store=%s previous_response_id=%s"
+            " background=%s",
             model,
             1 if isinstance(request.input, str) else len(request.input),
             request.max_output_tokens,
             bool(request.stream),
             request.store is not False,
             request.previous_response_id,
+            bool(request.background),
         )
+
+        if request.background:
+            response_dict = await responses_utils.start_background(
+                self._state_store, identity, request, req_id, input_items_for_turn
+            )
+            task = asyncio.ensure_future(
+                responses_utils.run_background(
+                    handle,
+                    request,
+                    headers,
+                    req_id,
+                    identity,
+                    store=self._state_store,
+                    response_id=response_dict["id"],
+                    input_items=input_items_for_turn,
+                )
+            )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+            return JSONResponse(content=response_dict, status_code=200)
+
         # Under stream=True the remote() result is an async-iterable
         # DeploymentResponseGenerator; Ray's stub widens it to a union because it
         # doesn't overload on the stream literal, so narrow it explicitly.
@@ -841,8 +879,19 @@ class ModelshipAPI:
         self._set_request_id(random_uuid())
         identity = self._set_identity(raw_request)
         snapshot = await responses_utils.load_snapshot(self._state_store, identity, response_id)
+        # Orphan detection: a background run whose drain task died without writing a
+        # terminal status (replica crash, node loss) surfaces as `failed` here rather
+        # than staying `in_progress` forever. No-op for anything else.
+        snapshot = await responses_utils.reconcile_staleness(self._state_store, identity, response_id, snapshot)
         # Stored verbatim, so this is a passthrough — no re-derivation to drift.
         return JSONResponse(content=snapshot["response"])
+
+    @app.post("/v1/responses/{response_id}/cancel")
+    async def cancel_response(self, response_id: str, raw_request: Request):
+        self._set_request_id(random_uuid())
+        identity = self._set_identity(raw_request)
+        response = await responses_utils.cancel_background(self._state_store, identity, response_id)
+        return JSONResponse(content=response)
 
     @app.delete("/v1/responses/{response_id}")
     async def delete_response(self, response_id: str, raw_request: Request):
@@ -850,7 +899,11 @@ class ModelshipAPI:
         identity = self._set_identity(raw_request)
         # Read first: delete is idempotent by contract, so it alone can't tell an
         # unknown id from a real removal.
-        await responses_utils.load_snapshot(self._state_store, identity, response_id)
+        snapshot = await responses_utils.load_snapshot(self._state_store, identity, response_id)
+        # DELETE on an in-flight background run implies cancel — signal it before
+        # removing the snapshot so the drain task's next heartbeat tick tears the run
+        # down instead of finishing and re-creating what was just deleted.
+        await responses_utils.signal_background_cancel_if_in_progress(snapshot)
         await responses_utils.delete_snapshot(self._state_store, identity, response_id)
         return JSONResponse(content={"id": response_id, "object": "response", "deleted": True})
 

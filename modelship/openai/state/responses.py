@@ -24,6 +24,7 @@ Responses.
 from __future__ import annotations
 
 import os
+import time
 
 from modelship.logging import get_logger
 from modelship.state import StateStore
@@ -38,6 +39,16 @@ _NAMESPACE = "responses"
 _TTL_ENV = "MSHIP_RESPONSES_TTL_S"
 _DEFAULT_TTL_S = 30 * 24 * 60 * 60.0  # 30 days, matching OpenAI's retention
 
+# A background response's status once it can no longer change.
+TERMINAL_STATUSES = frozenset({"completed", "incomplete", "failed", "cancelled"})
+
+# How stale a background run's heartbeat (`_mship.updated_at`) may get before a poller
+# gives up on it and reports `failed`. A generous multiple of the drain task's ~5s
+# heartbeat tick, so one missed tick (a GC pause, a slow store round-trip) never
+# false-fails a run that's actually still alive.
+_STALE_ENV = "MSHIP_RESPONSES_STALE_S"
+_DEFAULT_STALE_S = 30.0
+
 
 def ttl_seconds() -> float | None:
     """Configured conversation TTL; ``None`` (no expiry) when set to <= 0."""
@@ -50,6 +61,19 @@ def ttl_seconds() -> float | None:
         logger.warning("%s=%r is not a number; falling back to %ss.", _TTL_ENV, raw, _DEFAULT_TTL_S)
         return _DEFAULT_TTL_S
     return ttl if ttl > 0 else None
+
+
+def stale_seconds() -> float:
+    """Configured heartbeat-staleness threshold for orphan detection (always positive)."""
+    raw = os.environ.get(_STALE_ENV)
+    if not raw:
+        return _DEFAULT_STALE_S
+    try:
+        threshold = float(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a number; falling back to %ss.", _STALE_ENV, raw, _DEFAULT_STALE_S)
+        return _DEFAULT_STALE_S
+    return threshold if threshold > 0 else _DEFAULT_STALE_S
 
 
 def _key(identity: str, response_id: str) -> str:
@@ -106,6 +130,87 @@ async def write_async(
 async def delete_async(store: StateStore, identity: str, response_id: str) -> None:
     """Drop the snapshot for *response_id*. Idempotent (per the store contract)."""
     await store.delete_async(_key(identity, response_id))
+
+
+async def write_background(
+    store: StateStore,
+    identity: str,
+    response_id: str,
+    *,
+    response: dict,
+    input_items: list[dict],
+    req_id: str,
+) -> None:
+    """Persist the initial ``queued`` placeholder for a background response, with the
+    ``_mship`` sidecar a background run needs and nothing else does: ``req_id`` (what
+    ``POST /{id}/cancel`` signals in the shared ``DisconnectRegistry``) and
+    ``updated_at`` (the drain task's heartbeat, refreshed by :func:`touch`).
+
+    The sidecar is dropped the moment the response reaches a terminal status — see
+    :func:`write_terminal_if_not_terminal` — so anything that needs to know "is this a
+    background response" keys off ``response["background"]`` instead, which survives.
+    """
+    await store.set_async(
+        _key(identity, response_id),
+        {
+            "response": response,
+            "input_items": input_items,
+            "_mship": {"req_id": req_id, "updated_at": time.time()},
+        },
+        ttl_seconds=ttl_seconds(),
+    )
+
+
+async def touch(store: StateStore, identity: str, response_id: str) -> bool:
+    """Heartbeat tick for the background drain task: refresh ``_mship.updated_at``.
+
+    Returns ``False`` — meaning "stop, don't keep heartbeating" — if the snapshot is
+    gone (deleted mid-run) or no longer carries an ``_mship`` sidecar (already
+    terminalized by a concurrent ``POST /{id}/cancel``); ``True`` otherwise.
+    """
+    snapshot = await read_async(store, identity, response_id)
+    if snapshot is None:
+        return False
+    mship = snapshot.get("_mship")
+    if not isinstance(mship, dict):
+        return False
+    mship["updated_at"] = time.time()
+    await store.set_async(_key(identity, response_id), snapshot, ttl_seconds=ttl_seconds())
+    return True
+
+
+def is_stale(snapshot: dict, threshold_s: float) -> bool:
+    """Whether *snapshot*'s heartbeat is older than *threshold_s*. ``False`` for a
+    snapshot with no ``_mship`` sidecar (not a live background run)."""
+    mship = snapshot.get("_mship")
+    if not isinstance(mship, dict):
+        return False
+    updated_at = mship.get("updated_at")
+    if not isinstance(updated_at, int | float):
+        return False
+    return (time.time() - updated_at) > threshold_s
+
+
+async def write_terminal_if_not_terminal(store: StateStore, identity: str, response_id: str, *, response: dict) -> None:
+    """Write *response* as the snapshot's new state, unless it's already gone or
+    already terminal. Drops the ``_mship`` sidecar (a terminal snapshot never has one).
+
+    This is the single write path every "did this run end badly" writer shares — the
+    drain task's failure path, the heartbeat-staleness orphan check on ``GET``, and
+    ``POST /{id}/cancel`` — so none of them can regress an already-terminal status
+    (e.g. a cancel racing a completion) or resurrect a snapshot a ``DELETE`` removed.
+    """
+    snapshot = await read_async(store, identity, response_id)
+    if snapshot is None:
+        return
+    current_status = (snapshot.get("response") or {}).get("status")
+    if current_status in TERMINAL_STATUSES:
+        return
+    await store.set_async(
+        _key(identity, response_id),
+        {"response": response, "input_items": snapshot.get("input_items") or []},
+        ttl_seconds=ttl_seconds(),
+    )
 
 
 def history_items(snapshot: dict) -> list[dict]:

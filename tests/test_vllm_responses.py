@@ -63,16 +63,21 @@ async def test_no_render_pipeline_falls_back_to_not_supported():
 
 
 @pytest.mark.asyncio
-async def test_background_rejected_before_engine_ops_touched():
+async def test_background_is_not_rejected_before_engine_ops_touched():
+    # background:true is a gateway-level concept (queue/poll/cancel — see
+    # modelship.openai.utils.responses); the loader itself just sees an echoed flag
+    # and reaches engine_ops like any other request. `render_and_params` is made to
+    # fail with an already-handled exception so this stays a unit test of the gating
+    # (does it get called at all) rather than needing the full pipeline mocked out.
     infer = _make_infer()
     request = ResponsesRequest(model="m", input="hi", background=True)
 
     with patch("modelship.infer.vllm.vllm_infer.engine_ops") as mock_ops:
+        mock_ops.render_and_params = AsyncMock(side_effect=VllmValidationError("stop here"))
         result = await infer.create_response(request, raw_request=_FakeRawRequest())
 
     assert isinstance(result, ErrorResponse)
-    assert result._http_status == 400
-    mock_ops.render_and_params.assert_not_called()
+    mock_ops.render_and_params.assert_called_once()
 
 
 @pytest.mark.asyncio

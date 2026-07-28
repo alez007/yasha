@@ -768,6 +768,8 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         request: ResponsesRequest,
         prepared: _VllmPrepared,
         raw_request: RawRequestProxy,
+        *,
+        response_id: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Native streaming Responses path: feeds `BaseInfer._stream_responses` directly
         from `engine_ops.stream_chat_completion`'s typed chunks — no chat SSE text
@@ -793,7 +795,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         if logger.isEnabledFor(TRACE):
             chunks = _trace_chunks(chunks, request_id)
         async for event in self._stream_responses(
-            request, chunks, request_id=request_id, client_error=_vllm_stream_error
+            request, chunks, request_id=request_id, client_error=_vllm_stream_error, response_id=response_id
         ):
             yield event
 

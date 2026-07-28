@@ -39,10 +39,12 @@ def responses_request_to_chat(request: ResponsesRequest) -> ChatCompletionReques
     ``previous_response_id`` is already resolved into ``input`` by the gateway before
     the Ray hop; it survives here only to be echoed back. Raises
     :class:`UnsupportedResponsesFeatureError` for features the adapter can't fulfill.
-    """
-    if request.background:
-        raise UnsupportedResponsesFeatureError("background mode is not supported on /v1/responses.")
 
+    ``background`` is handled entirely at the gateway (see ``modelship.openai.utils.responses``):
+    a background run is always dispatched to the loader with ``stream=True`` regardless of
+    what the client asked for, so by the time a request reaches here ``background`` is just
+    an echoed flag, not something this translation needs to reject or otherwise act on.
+    """
     messages = messages_from_input(request.input, request.instructions)
 
     kwargs: dict[str, Any] = {
@@ -270,12 +272,15 @@ def build_response_object(
     created_at: int | None = None,
     completed_at: int | None = None,
     error: Any | None = None,
+    background: bool = False,
 ) -> ResponseObject:
     """Build a ``ResponseObject``, echoing the request settings OpenAI returns.
 
     Shared by the non-streaming adapter and the streaming translator so both produce
     an identical envelope shape. ``response_id``/``created_at`` let streaming keep one
-    stable id across events; ``completed_at``/``error`` apply only to terminal events.
+    stable id across events; ``completed_at``/``error`` apply only to terminal events;
+    ``background`` stamps the echoed ``background`` field for a background run's own
+    envelopes (every other caller passes it as the default ``False``).
     """
     kwargs: dict[str, Any] = {
         "model": model or request.model or "",
@@ -283,6 +288,7 @@ def build_response_object(
         "output": output,
         "usage": usage,
         "incomplete_details": incomplete,
+        "background": background,
         "instructions": request.instructions,
         "max_output_tokens": request.max_output_tokens,
         # Effective values, not a bare echo: OpenAI's own defaults when unset.

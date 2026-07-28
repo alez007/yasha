@@ -813,7 +813,10 @@ class TestResponsesProjection:
         assert result.usage.input_tokens == 10
 
     @pytest.mark.asyncio
-    async def test_background_rejected_before_any_http_call(self):
+    async def test_background_is_not_special_cased_at_the_loader(self):
+        # background:true is a gateway-level concept (queue/poll/cancel — see
+        # modelship.openai.utils.responses); the loader itself just sees an echoed
+        # flag and processes the call like any other.
         called = False
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -824,9 +827,9 @@ class TestResponsesProjection:
         infer = _infer_with_client(handler)
         result = await infer.create_response(_responses_request(background=True), RawRequestProxy(None, {}))
 
-        assert isinstance(result, ErrorResponse)
-        assert result._http_status == 400
-        assert called is False
+        assert not isinstance(result, ErrorResponse)
+        assert called is True
+        assert result.background is True
 
     @pytest.mark.asyncio
     async def test_no_client_falls_back_to_not_supported(self):
