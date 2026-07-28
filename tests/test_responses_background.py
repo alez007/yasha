@@ -12,7 +12,7 @@ from fastapi import HTTPException
 
 from modelship.openai.api import ModelshipAPI
 from modelship.openai.protocol import ResponsesRequest
-from modelship.state import MemoryStoreActor
+from modelship.state import MemoryStoreActor, StateStoreUnavailableError
 
 _ModelshipAPI = ModelshipAPI.func_or_class
 _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
@@ -385,9 +385,8 @@ async def _collect(result):
 class TestBackgroundStream:
     @pytest.mark.asyncio
     async def test_background_and_stream_streams_live_and_completes(self, api):
-        # A real gap between events (unlike the other fixtures' back-to-back yields)
-        # so the tailer's poll genuinely observes `response.created` while buffered,
-        # rather than racing a drain task that finishes before the first poll runs.
+        # A real gap between events so the tailer's poll observes `response.created`
+        # while buffered, rather than racing a drain task that finishes first.
         def _slow_gen_factory(*args, **kwargs):
             response_id = args[5] if len(args) > 5 else kwargs.get("response_id")
 
@@ -467,3 +466,15 @@ class TestBackgroundStream:
         assert len(events) == 1
         assert events[0]["type"] == "response.completed"
         assert events[0]["response"]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_get_stream_ends_cleanly_on_buffer_read_outage(self, api):
+        _stored_background(api, "resp_1", status="in_progress")
+        with patch.object(
+            api._state_store, "read_from_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))
+        ):
+            result = await api.get_response("resp_1", _raw_request(), stream=True)
+            body = await _consume_body(result)
+
+        # Ends the stream quietly rather than raising mid-response (headers already sent).
+        assert _parse_sse(body) == []

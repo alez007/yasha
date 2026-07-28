@@ -352,14 +352,9 @@ _pending_buffer_appends: set[asyncio.Task] = set()
 
 
 async def buffer_stream_events(gen, store: StateStore, *, identity: str, response_id: str):
-    """Tee every event dict flowing through *gen* into the durable replay log, so a
-    disconnected client (or the original background+stream caller) can catch up via
-    `tail_background_events`. Non-terminal appends are fire-and-forget — a store
-    hiccup must never add latency to the drain task's own forwarding. The terminal
-    append is awaited, then the buffer is discarded immediately after (nothing left
-    to resume); a concurrent tailer that misses this exact race window still gets the
-    same content from the response snapshot's own terminal write, which always lands
-    first (see `persist_response`)."""
+    """Tee every event dict flowing through *gen* into the durable replay log.
+    Non-terminal appends are fire-and-forget; the terminal one is awaited, then the
+    buffer is discarded immediately after."""
     async for item in gen:
         if isinstance(item, dict):
             if item.get("type") in _TERMINAL_EVENT_OR_FAILED:
@@ -375,17 +370,17 @@ async def buffer_stream_events(gen, store: StateStore, *, identity: str, respons
 
 
 async def _buffer_append_best_effort(store: StateStore, identity: str, response_id: str, event: dict) -> None:
+    # Fire-and-forget, so any failure must not become an unhandled task-exception log
+    # spam. CancelledError is a BaseException, so it still propagates through this.
     try:
         await responses_state.append_stream_event(store, identity, response_id, event)
-    except StateStoreUnavailableError:
-        logger.warning("State store unavailable buffering event for response %s", response_id)
+    except Exception:
+        logger.warning("Failed to buffer event for response %s", response_id, exc_info=True)
 
 
 def _terminal_event_from_response(response: dict, after_sequence: int) -> dict | None:
     """Synthesize the terminal event a tailer missed, from the response's own final
-    state — covers a tailer starting after the buffer was already discarded, or a run
-    that finished before it started tailing at all. No event exists for `cancelled`
-    (never produced by the loader stream itself), so tailing simply ends there."""
+    state. No event exists for `cancelled`; tailing simply ends there."""
     event_type = {
         "completed": "response.completed",
         "incomplete": "response.incomplete",
@@ -397,12 +392,14 @@ def _terminal_event_from_response(response: dict, after_sequence: int) -> dict |
 
 
 async def tail_background_events(store: StateStore, identity: str, response_id: str, *, after_sequence: int = -1):
-    """Live/resumed view of a background+stream run: replay buffered events after
-    *after_sequence*, then poll until a terminal event or the response's own snapshot
-    reaches a terminal status. Ends the generator (no error) rather than raising if the
-    response is deleted mid-tail — a client already streaming can't be handed a 404."""
+    """Replay buffered events after *after_sequence*, then poll until terminal.
+    Ends quietly (no error) if the response is deleted mid-tail."""
     while True:
-        events = await responses_state.read_stream_events_after(store, identity, response_id, after_sequence)
+        try:
+            events = await responses_state.read_stream_events_after(store, identity, response_id, after_sequence)
+        except StateStoreUnavailableError:
+            logger.exception("State store unavailable tailing response %s", response_id)
+            return
         if events:
             for event in events:
                 after_sequence = event.get("sequence_number", after_sequence)
@@ -468,13 +465,9 @@ async def run_background(
     input_items: list[Any],
     stream_buffer: bool = False,
 ) -> None:
-    """Detached-task body for `background:true`: drives the deployment's streaming
-    Responses generator to completion, persisting every terminal transition. Never
-    raises — every exit path ends in an already-terminal snapshot or a stored
-    `failed` one. Always runs the inner call with `stream=True` regardless of the
-    client's own request, so there are real transitions to persist. `stream_buffer=True`
-    (the client also asked for `stream:true`) additionally tees every event into the
-    durable replay log a live/resuming poller reads from."""
+    """Detached-task body for `background:true`: drives the streaming Responses
+    generator to completion, persisting every terminal transition. `stream_buffer=True`
+    also tees every event into the durable replay log a poller reads from."""
     request.stream = True
     registry = get_disconnect_registry()
     response_gen = cast(
