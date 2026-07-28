@@ -351,31 +351,48 @@ _TERMINAL_EVENT_OR_FAILED = (*TERMINAL_EVENT_TYPES, "response.failed")
 _pending_buffer_appends: set[asyncio.Task] = set()
 
 
-async def buffer_stream_events(gen, store: StateStore, *, identity: str, response_id: str):
-    """Tee every event dict flowing through *gen* into the durable replay log.
-    Non-terminal appends are fire-and-forget; the terminal one is awaited, then the
-    buffer is discarded immediately after."""
+class _StreamBuffer:
+    """Appends events to the replay log one at a time, in event order, without
+    blocking the caller on each individual write. `flush_and_discard` waits for
+    every scheduled append before dropping the buffer, so a straggler can't land
+    (or fail with a Redis stream-id conflict) after it's gone."""
+
+    def __init__(self, store: StateStore, identity: str, response_id: str) -> None:
+        self._store = store
+        self._identity = identity
+        self._response_id = response_id
+        self._pending: asyncio.Task | None = None
+
+    def append(self, event: dict) -> None:
+        self._pending = asyncio.ensure_future(self._chained_append(self._pending, event))
+        _pending_buffer_appends.add(self._pending)
+        self._pending.add_done_callback(_pending_buffer_appends.discard)
+
+    async def _chained_append(self, prev: asyncio.Task | None, event: dict) -> None:
+        if prev is not None:
+            await prev
+        try:
+            await responses_state.append_stream_event(self._store, self._identity, self._response_id, event)
+        except Exception:
+            logger.warning("Failed to buffer event for response %s", self._response_id, exc_info=True)
+
+    async def flush_and_discard(self) -> None:
+        if self._pending is not None:
+            await self._pending
+            self._pending = None
+        with contextlib.suppress(StateStoreUnavailableError):
+            await responses_state.discard_stream_buffer(self._store, self._identity, self._response_id)
+
+
+async def buffer_stream_events(gen, buffer: _StreamBuffer):
+    """Tee every event dict flowing through *gen* into *buffer*, flushing and
+    discarding it once a terminal event passes through."""
     async for item in gen:
         if isinstance(item, dict):
+            buffer.append(item)
             if item.get("type") in _TERMINAL_EVENT_OR_FAILED:
-                with contextlib.suppress(StateStoreUnavailableError):
-                    await responses_state.append_stream_event(store, identity, response_id, item)
-                with contextlib.suppress(StateStoreUnavailableError):
-                    await responses_state.discard_stream_buffer(store, identity, response_id)
-            else:
-                task = asyncio.ensure_future(_buffer_append_best_effort(store, identity, response_id, item))
-                _pending_buffer_appends.add(task)
-                task.add_done_callback(_pending_buffer_appends.discard)
+                await buffer.flush_and_discard()
         yield item
-
-
-async def _buffer_append_best_effort(store: StateStore, identity: str, response_id: str, event: dict) -> None:
-    # Fire-and-forget, so any failure must not become an unhandled task-exception log
-    # spam. CancelledError is a BaseException, so it still propagates through this.
-    try:
-        await responses_state.append_stream_event(store, identity, response_id, event)
-    except Exception:
-        logger.warning("Failed to buffer event for response %s", response_id, exc_info=True)
 
 
 def _terminal_event_from_response(response: dict, after_sequence: int) -> dict | None:
@@ -475,8 +492,9 @@ async def run_background(
         handle.respond.options(stream=True).remote(request, headers, registry, req_id, identity, response_id),
     )
     piped = persist_response(response_gen, store, identity=identity, input_items=input_items, conditional=True)
-    if stream_buffer:
-        piped = buffer_stream_events(piped, store, identity=identity, response_id=response_id)
+    buffer = _StreamBuffer(store, identity, response_id) if stream_buffer else None
+    if buffer is not None:
+        piped = buffer_stream_events(piped, buffer)
 
     try:
         drain_task = asyncio.ensure_future(_drain_background_stream(piped, response_id))
@@ -511,11 +529,10 @@ async def run_background(
                 )
                 await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
     finally:
-        # Idempotent: the normal-completion path already discarded it via buffer_stream_events.
-        # Covers the abnormal exits above, which never see a terminal event to trigger that.
-        if stream_buffer:
-            with contextlib.suppress(StateStoreUnavailableError):
-                await responses_state.discard_stream_buffer(store, identity, response_id)
+        # Idempotent: the terminal path already flushed via buffer_stream_events; this
+        # is what covers the abnormal exits above, which never reach a terminal event.
+        if buffer is not None:
+            await buffer.flush_and_discard()
 
 
 async def _drain_background_stream(piped, response_id: str) -> tuple[bool, dict | None]:

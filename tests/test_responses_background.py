@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from modelship.openai.api import ModelshipAPI
 from modelship.openai.protocol import ResponsesRequest
+from modelship.openai.utils.responses import _StreamBuffer
 from modelship.state import MemoryStoreActor, StateStoreUnavailableError
 
 _ModelshipAPI = ModelshipAPI.func_or_class
@@ -478,3 +479,45 @@ class TestBackgroundStream:
 
         # Ends the stream quietly rather than raising mid-response (headers already sent).
         assert _parse_sse(body) == []
+
+
+class TestStreamBufferOrdering:
+    @pytest.mark.asyncio
+    async def test_appends_land_in_event_order_even_if_an_earlier_one_is_slower(self):
+        landed = []
+
+        async def fake_append(store, identity, response_id, event):
+            await asyncio.sleep(0.05 if event["sequence_number"] == 0 else 0)
+            landed.append(event["sequence_number"])
+
+        with (
+            patch("modelship.openai.utils.responses.responses_state.append_stream_event", fake_append),
+            patch("modelship.openai.utils.responses.responses_state.discard_stream_buffer", AsyncMock()),
+        ):
+            buf = _StreamBuffer(MagicMock(), "u1", "resp_1")
+            buf.append({"sequence_number": 0})
+            buf.append({"sequence_number": 1})
+            await buf.flush_and_discard()
+
+        assert landed == [0, 1]
+
+    @pytest.mark.asyncio
+    async def test_flush_and_discard_waits_for_the_pending_append_first(self):
+        order = []
+
+        async def fake_append(store, identity, response_id, event):
+            await asyncio.sleep(0.05)
+            order.append("append")
+
+        async def fake_discard(store, identity, response_id):
+            order.append("discard")
+
+        with (
+            patch("modelship.openai.utils.responses.responses_state.append_stream_event", fake_append),
+            patch("modelship.openai.utils.responses.responses_state.discard_stream_buffer", fake_discard),
+        ):
+            buf = _StreamBuffer(MagicMock(), "u1", "resp_1")
+            buf.append({"sequence_number": 0})
+            await buf.flush_and_discard()
+
+        assert order == ["append", "discard"]
