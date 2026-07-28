@@ -814,9 +814,7 @@ class TestResponsesProjection:
 
     @pytest.mark.asyncio
     async def test_background_is_not_special_cased_at_the_loader(self):
-        # background:true is a gateway-level concept (queue/poll/cancel — see
-        # modelship.openai.utils.responses); the loader itself just sees an echoed
-        # flag and processes the call like any other.
+        # background:true is handled at the gateway; the loader sees only an echoed flag.
         called = False
 
         def handler(request: httpx.Request) -> httpx.Response:

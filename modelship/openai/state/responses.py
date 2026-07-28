@@ -42,10 +42,8 @@ _DEFAULT_TTL_S = 30 * 24 * 60 * 60.0  # 30 days, matching OpenAI's retention
 # A background response's status once it can no longer change.
 TERMINAL_STATUSES = frozenset({"completed", "incomplete", "failed", "cancelled"})
 
-# How stale a background run's heartbeat (`_mship.updated_at`) may get before a poller
-# gives up on it and reports `failed`. A generous multiple of the drain task's ~5s
-# heartbeat tick, so one missed tick (a GC pause, a slow store round-trip) never
-# false-fails a run that's actually still alive.
+# How stale a background run's heartbeat (`_mship.updated_at`) may get before a
+# poller gives up on it and reports `failed`.
 _STALE_ENV = "MSHIP_RESPONSES_STALE_S"
 _DEFAULT_STALE_S = 30.0
 
@@ -141,15 +139,9 @@ async def write_background(
     input_items: list[dict],
     req_id: str,
 ) -> None:
-    """Persist the initial ``queued`` placeholder for a background response, with the
-    ``_mship`` sidecar a background run needs and nothing else does: ``req_id`` (what
-    ``POST /{id}/cancel`` signals in the shared ``DisconnectRegistry``) and
-    ``updated_at`` (the drain task's heartbeat, refreshed by :func:`touch`).
-
-    The sidecar is dropped the moment the response reaches a terminal status — see
-    :func:`write_terminal_if_not_terminal` — so anything that needs to know "is this a
-    background response" keys off ``response["background"]`` instead, which survives.
-    """
+    """Persist the initial ``queued`` placeholder with the ``_mship`` sidecar: ``req_id``
+    (what cancel signals in ``DisconnectRegistry``) and ``updated_at`` (heartbeat).
+    Dropped at terminal status — see :func:`write_terminal_if_not_terminal`."""
     await store.set_async(
         _key(identity, response_id),
         {
@@ -162,12 +154,8 @@ async def write_background(
 
 
 async def touch(store: StateStore, identity: str, response_id: str) -> bool:
-    """Heartbeat tick for the background drain task: refresh ``_mship.updated_at``.
-
-    Returns ``False`` — meaning "stop, don't keep heartbeating" — if the snapshot is
-    gone (deleted mid-run) or no longer carries an ``_mship`` sidecar (already
-    terminalized by a concurrent ``POST /{id}/cancel``); ``True`` otherwise.
-    """
+    """Heartbeat tick: refresh ``_mship.updated_at``. Returns ``False`` (stop
+    heartbeating) if the snapshot is gone or no longer carries ``_mship``."""
     snapshot = await read_async(store, identity, response_id)
     if snapshot is None:
         return False
@@ -193,13 +181,8 @@ def is_stale(snapshot: dict, threshold_s: float) -> bool:
 
 async def write_terminal_if_not_terminal(store: StateStore, identity: str, response_id: str, *, response: dict) -> None:
     """Write *response* as the snapshot's new state, unless it's already gone or
-    already terminal. Drops the ``_mship`` sidecar (a terminal snapshot never has one).
-
-    This is the single write path every "did this run end badly" writer shares — the
-    drain task's failure path, the heartbeat-staleness orphan check on ``GET``, and
-    ``POST /{id}/cancel`` — so none of them can regress an already-terminal status
-    (e.g. a cancel racing a completion) or resurrect a snapshot a ``DELETE`` removed.
-    """
+    already terminal. Drops the ``_mship`` sidecar. Shared by every writer that could
+    otherwise regress a terminal status (cancel, drain failure, staleness check)."""
     snapshot = await read_async(store, identity, response_id)
     if snapshot is None:
         return

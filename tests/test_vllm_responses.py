@@ -64,11 +64,7 @@ async def test_no_render_pipeline_falls_back_to_not_supported():
 
 @pytest.mark.asyncio
 async def test_background_is_not_rejected_before_engine_ops_touched():
-    # background:true is a gateway-level concept (queue/poll/cancel — see
-    # modelship.openai.utils.responses); the loader itself just sees an echoed flag
-    # and reaches engine_ops like any other request. `render_and_params` is made to
-    # fail with an already-handled exception so this stays a unit test of the gating
-    # (does it get called at all) rather than needing the full pipeline mocked out.
+    # background:true is handled at the gateway; here it just reaches engine_ops like any request.
     infer = _make_infer()
     request = ResponsesRequest(model="m", input="hi", background=True)
 

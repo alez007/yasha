@@ -1,10 +1,6 @@
 """Real-cluster integration tests for /v1/responses: server-side conversation
 state, reasoning, the llama_server loader's native path, and background mode
-(Phase E1). Split out of test_integration.py so this file's scope is just
-/v1/responses; the shared cluster/model-deploy fixtures (`mship_cluster`,
-`model_deployer`, `client`, `MODEL_CONFIGS`) live in conftest.py so this file
-and test_integration.py run against the same live cluster in one session.
-"""
+(Phase E1). Shared cluster/model-deploy fixtures live in conftest.py."""
 
 import concurrent.futures
 import json

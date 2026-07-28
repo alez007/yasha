@@ -1,11 +1,6 @@
-"""Route-level tests for `background:true` on /v1/responses (Phase E1).
-
-Background dispatch spawns a detached drain task via `asyncio.ensure_future`
-(held in `api._background_tasks`) rather than returning it synchronously from
-`create_response`, so most tests here call `_drain_background_tasks(api)` after
-triggering the route to let that task actually run before asserting on the
-stored snapshot.
-"""
+"""Route-level tests for `background:true` on /v1/responses (Phase E1). The drain
+task runs detached, so most tests call `_drain_background_tasks(api)` after
+triggering the route before asserting on the stored snapshot."""
 
 import asyncio
 import json
@@ -25,12 +20,8 @@ _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
 
 @pytest.fixture(autouse=True)
 def _fake_disconnect_registry():
-    """`utils.responses` imports `get_disconnect_registry` directly (like `api.py`
-    does), so `conftest.neutralize_request_watcher`'s patch of `infer_config`'s copy
-    doesn't reach it — background mode's cancel/signal path never goes through
-    `RequestWatcher`. Fake it here instead of touching a real (auto-started) Ray
-    actor, matching "tests mock out Ray Serve/actors" rather than spinning up a
-    cluster per CLAUDE.md."""
+    """`utils.responses` imports `get_disconnect_registry` directly, so the
+    conftest-level patch on `infer_config`'s copy doesn't reach it — fake it here."""
     registry = MagicMock()
     registry.set.remote = AsyncMock()
     with patch("modelship.openai.utils.responses.get_disconnect_registry", return_value=registry):
@@ -77,9 +68,7 @@ def _stored_background(
 
 
 def _wire(api, side_effect):
-    """Wire `handle.respond.options(...).remote(...)` to `side_effect`, called fresh
-    on every call — background mode dispatches an internal call separate from
-    whatever (if anything) a test issued directly."""
+    """Wire `handle.respond.options(...).remote(...)` to `side_effect`."""
     handle = MagicMock()
     handle.respond.options.return_value.remote.side_effect = side_effect
     api.models = {"m": {"m-a1b2c": handle}}
@@ -89,9 +78,7 @@ def _wire(api, side_effect):
 
 def _background_gen_factory(text="hello background!", status="completed"):
     """A fake `handle.respond` remote-call side effect: reads the injected
-    `response_id` (positional arg 5: request, headers, registry, req_id, identity,
-    response_id) so the terminal event lines up with the id the placeholder was
-    written under, exactly like the real `ResponsesStreamTranslator` injection does."""
+    `response_id` (positional arg 5) so the terminal event's id matches the placeholder's."""
 
     def _make_gen(*args, **kwargs):
         response_id = args[5] if len(args) > 5 else kwargs.get("response_id")

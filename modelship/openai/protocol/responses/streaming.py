@@ -123,9 +123,7 @@ class ResponsesStreamTranslator:
 
     def __init__(self, request: ResponsesRequest, *, response_id: str | None = None):
         self.request = request
-        # An injected id lets a background run's drain task keep the same id across
-        # the queued placeholder, every streamed envelope, and the terminal snapshot;
-        # every other caller leaves this unset and gets a freshly minted one.
+        # Injected for a background run to keep the same id across placeholder/stream/snapshot.
         self.response_id = response_id or f"resp_{random_uuid()}"
         self.created_at: int | None = None  # pinned after the first envelope
         self.model = request.model or ""

@@ -394,9 +394,7 @@ class TestRequestRejections:
         assert chat.messages == [{"role": "user", "content": "hello"}]
 
     def test_background_is_accepted(self):
-        # background is handled entirely at the gateway (queue/poll/cancel — see
-        # modelship.openai.utils.responses); by the time a request reaches here it's
-        # just an echoed flag on an internal stream=True call, not something to reject.
+        # background is handled entirely at the gateway; here it's just an echoed flag.
         chat = responses_request_to_chat(_req(background=True))
         assert chat.messages == [{"role": "user", "content": "hello"}]
 

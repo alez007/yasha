@@ -1,12 +1,6 @@
-"""Shared test fixtures.
-
-Also home to the integration-suite's session-scoped cluster infrastructure
-(`mship_cluster`, `model_deployer`, `client`, `MODEL_CONFIGS`) — shared here
-rather than duplicated per file so `test_integration.py` and
-`test_responses_integration.py` (and any other `@pytest.mark.integration`
-file) run against the *same* live cluster within one pytest session instead
-of each starting its own.
-"""
+"""Shared test fixtures, including the integration suite's session-scoped cluster
+infrastructure (`mship_cluster`, `model_deployer`, `client`, `MODEL_CONFIGS`), so
+every `@pytest.mark.integration` file shares one live cluster per session."""
 
 import subprocess
 import time
@@ -243,13 +237,7 @@ class _Deployer:
                     "stop_start",
                     "--prune-ray-sessions",
                     "false",
-                    # Attach to mship_cluster's already-running head rather than trying
-                    # (and failing, or worse — colliding) to start a second one. Without
-                    # this, connect_ray's own-head branch's `_own_cluster_init_kwargs()`
-                    # auto-detects the GPU and passes num_gpus, which on a GPU host
-                    # either hits Ray's "num_cpus/num_gpus not allowed when connecting
-                    # to an existing cluster" rejection or, worse, races a second head
-                    # into existence against the first one's still-live session.
+                    # Attach to mship_cluster's already-running head instead of starting a second one.
                     "--use-existing-ray-cluster",
                 ],
                 stdout=log_file,
@@ -276,14 +264,9 @@ def mship_cluster(tmp_path_factory):
     empty_config = tmp_dir / "empty-models.yaml"
     log_path = tmp_dir / "mship_deploy.log"
 
-    # Clear any stale cluster, but don't pre-start a head ourselves: mship_deploy.py
-    # starts its own head by default. Pre-starting one here (a former `ray start
-    # --head ...` call) put `mship_deploy.py`'s own `ray.init()` into Ray's
-    # attach-to-existing-cluster mode instead, which rejects the explicit
-    # `num_gpus`/`num_cpus` `_own_cluster_init_kwargs()` passes whenever the host
-    # actually has a GPU (`ValueError: When connecting to an existing cluster,
-    # num_cpus and num_gpus must not be provided`), hanging every integration test
-    # on a GPU host at the readiness poll below.
+    # Clear any stale cluster, but don't pre-start a head: mship_deploy.py starts
+    # its own by default, and a pre-started head forces its ray.init() into
+    # attach-mode, which rejects the explicit num_gpus/num_cpus it passes on a GPU host.
     subprocess.run(["ray", "stop", "--force"], check=False)
 
     with open(empty_config, "w") as f:

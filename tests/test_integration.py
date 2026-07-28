@@ -717,10 +717,7 @@ class TestChatLlamaServer:
             messages=[{"role": "user", "content": "Say hello in one word."}],
             tools=[_WEATHER_TOOL],
             tool_choice="required",
-            # Qwen3-0.6B reasons before answering (see the class docstring); a tight
-            # budget occasionally lets the chain-of-thought consume it entirely with
-            # no room left for the actual answer — 512 gives it real headroom.
-            max_tokens=512,
+            max_tokens=512,  # headroom for the reasoning preamble to not crowd out the answer
         )
         message = completion.choices[0].message
         assert message.content, f"expected the free-text branch to stay reachable, got message={message!r}"
@@ -737,9 +734,7 @@ class TestChatLlamaServer:
             messages=[{"role": "user", "content": "Say hello in one word."}],
             tools=[_WEATHER_TOOL],
             tool_choice={"type": "function", "function": {"name": "get_weather"}},
-            # See test_tool_choice_required_is_a_noop_on_hermes_family: 512 gives the
-            # reasoning preamble headroom so it doesn't crowd out the actual answer.
-            max_tokens=512,
+            max_tokens=512,  # headroom for the reasoning preamble to not crowd out the answer
         )
         message = completion.choices[0].message
         assert message.content, f"expected the free-text branch to stay reachable, got message={message!r}"

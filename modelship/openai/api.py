@@ -195,8 +195,7 @@ class ModelshipAPI:
         # request. The gateway owns this rather than the loaders: GET/DELETE carry no
         # model, so they could not be routed to one.
         self._state_store = get_state_store()
-        # Detached background:true drain tasks (see create_response). Held here so
-        # they aren't GC'd mid-run; a done-callback discards each on completion.
+        # Detached background:true drain tasks; held so they aren't GC'd mid-run.
         self._background_tasks: set[asyncio.Task] = set()
         stamp_gateway(gateway_name)
         # Routing state is reconciled from the coordinator, the cluster-wide source
@@ -595,11 +594,8 @@ class ModelshipAPI:
         headers = dict(raw_request.headers)
 
         if request.background:
-            # No client socket to watch: the HTTP response returns immediately and the
-            # run continues detached, so a live disconnect-watch would (once this very
-            # response finishes sending) falsely mark the run's own req_id disconnected
-            # and self-abort it seconds after it started. Stop it before anything else,
-            # regardless of which branch below is ultimately taken.
+            # Run continues detached after this response sends; a live disconnect-watch
+            # would self-abort it once the HTTP response closes.
             watcher.stop()
             if request.stream:
                 raise responses_utils.background_stream_error()
@@ -879,9 +875,7 @@ class ModelshipAPI:
         self._set_request_id(random_uuid())
         identity = self._set_identity(raw_request)
         snapshot = await responses_utils.load_snapshot(self._state_store, identity, response_id)
-        # Orphan detection: a background run whose drain task died without writing a
-        # terminal status (replica crash, node loss) surfaces as `failed` here rather
-        # than staying `in_progress` forever. No-op for anything else.
+        # Orphan detection: a dead drain task surfaces as `failed` here rather than hanging forever.
         snapshot = await responses_utils.reconcile_staleness(self._state_store, identity, response_id, snapshot)
         # Stored verbatim, so this is a passthrough — no re-derivation to drift.
         return JSONResponse(content=snapshot["response"])
@@ -900,9 +894,7 @@ class ModelshipAPI:
         # Read first: delete is idempotent by contract, so it alone can't tell an
         # unknown id from a real removal.
         snapshot = await responses_utils.load_snapshot(self._state_store, identity, response_id)
-        # DELETE on an in-flight background run implies cancel — signal it before
-        # removing the snapshot so the drain task's next heartbeat tick tears the run
-        # down instead of finishing and re-creating what was just deleted.
+        # DELETE on an in-flight background run implies cancel.
         await responses_utils.signal_background_cancel_if_in_progress(snapshot)
         await responses_utils.delete_snapshot(self._state_store, identity, response_id)
         return JSONResponse(content={"id": response_id, "object": "response", "deleted": True})

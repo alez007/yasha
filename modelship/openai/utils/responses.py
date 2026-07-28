@@ -1,12 +1,5 @@
-"""Utility helpers for ``/v1/responses``, in two halves:
-
-- Shaping: turning a loader's parsed chat output into Responses ``output[]`` items
-  (mirrors ``utils.chat``'s chat-completion equivalents; used loader-side).
-- Gateway-side conversation-state plumbing: history resolution, response
-  persistence, and snapshot lookup, wrapped in HTTPException so ``api.py``'s route
-  handlers stay one-liners. None of this touches Ray dispatch or FastAPI routing
-  itself — it's pure state-store orchestration over an explicit ``store``/``identity``.
-"""
+"""Utility helpers for ``/v1/responses``: loader-side output shaping plus
+gateway-side conversation-state plumbing (history, persistence, snapshots)."""
 
 from __future__ import annotations
 
@@ -66,12 +59,8 @@ RESPONSE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 def build_responses_items_from_parsed(parsed: ParsedChatOutput) -> list[ResponseOutputItem]:
-    """Shape one parsed choice into Responses ``output[]`` items.
-
-    Sibling to `chat.build_from_parsed`: same DTO in, Responses items out instead
-    of a `ChatCompletionResponse`. Order matches OpenAI's own: reasoning
-    first, then the assistant message, then one `function_call` per tool call.
-    """
+    """Shape one parsed choice into Responses ``output[]`` items: reasoning, then
+    message, then one ``function_call`` per tool call."""
     output: list[ResponseOutputItem] = []
     if parsed.reasoning:
         output.append(ResponseReasoningItem(summary=[ResponseReasoningSummary(text=parsed.reasoning)]))
@@ -97,12 +86,7 @@ def build_response_from_parsed(
     model: str,
 ) -> ResponseObject:
     """Build a non-streaming ``ResponseObject`` from one loader's parsed chat output.
-
-    Shared by every loader's non-streaming `create_response`: each shapes its own
-    `ParsedChatOutput` from its native response format, then hands it here for the
-    status/usage/envelope assembly (`build_response_object` + `_status_for` +
-    `_usage_from_chat`) that used to be duplicated per loader.
-    """
+    Shared status/usage/envelope assembly for every loader's non-streaming `create_response`."""
     status, incomplete = _status_for(finish_reason)
     return build_response_object(
         request,
@@ -111,18 +95,12 @@ def build_response_from_parsed(
         usage=_usage_from_chat(usage),
         incomplete=incomplete,
         model=model,
-        # Only a `completed` response is actually done; `incomplete`/`failed` aren't.
         completed_at=int(time.time()) if status == "completed" else None,
         background=bool(request.background),
     )
 
 
-# Structured rather than a bare "summarize this" — a flat prose summary loses the
-# details a continuation actually needs. Preserve, in this order: the user's
-# explicit intent; key facts, decisions, names, and identifiers; specific file
-# paths, code, and command output already produced; errors hit and how they were
-# resolved (including any correction the user gave); work still pending; and
-# exactly what was in progress, so the next turn picks up without re-deriving it.
+# Structured rather than a bare "summarize this" so a continuation loses nothing essential.
 _COMPACTION_SYSTEM_PROMPT = (
     "Summarize this conversation so it can be continued from a fresh context window "
     "with nothing essential lost. Structure the summary with these sections, in order: "
@@ -140,13 +118,7 @@ _COMPACTION_SYSTEM_PROMPT = (
 
 def build_summarization_request(model: str, items: list[Any], instructions: str | None = None) -> ChatCompletionRequest:
     """The internal chat request ``/v1/responses/compact`` issues to summarize *items*.
-
-    Reuses ``messages_from_input`` so a compaction item nested in *items* (a chain
-    that was already compacted once) decodes the same way it would on ``/v1/responses``.
-    May raise ``UnsupportedResponsesFeatureError`` for an item shape it can't translate.
-    *instructions*, if given, is inserted as an additional system message alongside
-    the fixed compaction prompt, so a caller can steer what the summary preserves.
-    """
+    *instructions*, if given, is inserted as an extra system message."""
     messages = messages_from_input(items, None)
     messages.insert(0, {"role": "system", "content": _COMPACTION_SYSTEM_PROMPT})
     if instructions:
@@ -156,22 +128,14 @@ def build_summarization_request(model: str, items: list[Any], instructions: str 
 
 def build_compaction(*, summary_items: list[Any], usage: UsageInfo) -> CompactResource:
     """Build a ``CompactResource`` from a ``/v1/responses/compact`` summarization call.
-
-    ``id``/``created_at`` are freshly minted rather than echoing the request: a
-    compaction result is never persisted under its own id, so there's nothing to key
-    a future GET on (out of scope, see the compaction plan).
-    """
+    ``id``/``created_at`` are freshly minted; a compaction result is never persisted."""
     encrypted_content = compaction_crypto.encrypt_items(summary_items)
     return CompactResource(output=[CompactionItem(encrypted_content=encrypted_content)], usage=_usage_from_chat(usage))
 
 
 def responses_validation_error(exc: ValidationError) -> ErrorResponse:
-    """400 for a pydantic ``ValidationError`` surfaced by ``responses_request_to_chat``
-    (e.g. a bad ``reasoning.effort`` value) — same shape as every other rejection.
-
-    ``ValidationError.args`` is always empty (pydantic never populates it), so
-    ``str(exc)`` — its full per-field error report — is the message to use.
-    """
+    """400 for a pydantic ``ValidationError`` surfaced by ``responses_request_to_chat``,
+    same shape as every other rejection."""
     return create_error_response(message=str(exc), err_type="invalid_request_error")
 
 
@@ -180,9 +144,7 @@ def responses_validation_error(exc: ValidationError) -> ErrorResponse:
 
 class ResponsesApiError(HTTPException):
     """An ``HTTPException`` that also carries a full OpenAI-shaped ``ErrorResponse``,
-    so one raise renders correctly for both the HTTP route and the WS turn-runner.
-    Subclasses ``HTTPException`` so existing ``status_code``/``pytest.raises`` checks still work.
-    """
+    so one raise renders correctly for both the HTTP route and the WS turn-runner."""
 
     def __init__(self, err: ErrorResponse):
         self.err = err
@@ -280,12 +242,7 @@ async def resolve_history_items(
     store: StateStore, identity: str, *, previous_response_id: str | None, input_: str | list[Any] | None
 ) -> list[Any]:
     """Prepend the conversation stored under ``previous_response_id`` to this turn's
-    input. 404 if unknown, 503 if the store is unreachable — an outage must never
-    masquerade as a legitimately unknown id.
-
-    Field-based (rather than taking a ``ResponsesRequest``) so ``/v1/responses`` and
-    ``/v1/responses/compact`` share this without either faking the other's request type.
-    """
+    input. 404 if unknown, 503 if the store is unreachable."""
     this_turn = as_input_items(input_) if input_ is not None else []
     if previous_response_id is None:
         return this_turn
@@ -300,9 +257,7 @@ async def resolve_history_items(
         raise _not_found_error(previous_response_id, previous=True)
     status = (snapshot.get("response") or {}).get("status")
     if status in ("queued", "in_progress"):
-        # A background run's placeholder/in-progress snapshot has no output yet —
-        # continuing from it would silently rebuild history as input only, missing
-        # the very output a real continuation depends on.
+        # No output yet to continue from.
         raise _previous_in_progress_error(previous_response_id)
     return [*responses_state.history_items(snapshot), *this_turn]
 
@@ -315,14 +270,10 @@ async def resolve_history(store: StateStore, identity: str, request: ResponsesRe
 
 
 async def persist_response(gen, store: StateStore, *, identity: str, input_items: list[Any]):
-    """Tee `respond`'s output, storing the snapshot as it passes.
-
-    Covers both streaming and non-streaming: a `ResponseObject` is the whole
-    body, while a stream's terminal event dict carries the same object. Persists
-    *before* yielding the terminal item so a store failure can still change what
-    the client is told. Operates on plain event dicts — `gen` is upstream of any
-    transport framing.
-    """
+    """Tee `respond`'s output, storing the snapshot as it passes. Covers both
+    streaming (terminal event dict) and non-streaming (`ResponseObject` is the
+    whole body); persists before yielding so a store failure changes what the
+    client is told."""
     async for item in gen:
         if isinstance(item, ResponseObject):
             try:
@@ -363,11 +314,7 @@ async def persist_response(gen, store: StateStore, *, identity: str, input_items
 
 
 async def load_snapshot(store: StateStore, identity: str, response_id: str) -> dict:
-    """The stored snapshot for *response_id*, scoped to the caller's identity.
-
-    Isolation needs no comparison: another caller's identity builds a different
-    key, so it simply misses and 404s.
-    """
+    """The stored snapshot for *response_id*, scoped to the caller's identity."""
     if not RESPONSE_ID_RE.match(response_id):
         raise _not_found_error(response_id)
     try:
@@ -381,11 +328,8 @@ async def load_snapshot(store: StateStore, identity: str, response_id: str) -> d
 
 
 async def delete_snapshot(store: StateStore, identity: str, response_id: str) -> None:
-    """Delete the snapshot for *response_id*.
-
-    Caller must confirm existence first (via :func:`load_snapshot`) — delete is
-    idempotent by contract, so it alone can't tell an unknown id from a real removal.
-    """
+    """Delete the snapshot for *response_id*. Caller must confirm existence first
+    via :func:`load_snapshot`."""
     try:
         await responses_state.delete_async(store, identity, response_id)
     except StateStoreUnavailableError:
@@ -395,18 +339,15 @@ async def delete_snapshot(store: StateStore, identity: str, response_id: str) ->
 
 # --- Background mode (background:true) ---
 
-# Heartbeat cadence for a background run's drain task. Independent of the staleness
-# threshold in state/responses.py, which is a generous multiple of this.
+# Drain task's heartbeat cadence; state/responses.py's staleness threshold is a multiple of this.
 _HEARTBEAT_INTERVAL_S = 5.0
 
 
 async def start_background(
     store: StateStore, identity: str, request: ResponsesRequest, req_id: str, input_items: list[Any]
 ) -> dict:
-    """Mint a response id and persist the initial `queued` placeholder for a
-    background request. Returns the serialized `ResponseObject` to return to the
-    client immediately — the same id the drain task's inner call and every
-    subsequent snapshot write will reuse."""
+    """Mint a response id, persist the initial `queued` placeholder, and return
+    the serialized `ResponseObject` to send back to the client immediately."""
     response_id = f"resp_{random_uuid()}"
     response = build_response_object(
         request,
@@ -440,18 +381,11 @@ async def run_background(
     response_id: str,
     input_items: list[Any],
 ) -> None:
-    """Detached-task body for a `background:true` request: drives the model
-    deployment's streaming Responses generator to completion, persisting every
-    terminal transition into the store. Never raises — every exit path either
-    leaves an already-terminal snapshot alone (cancel/delete won the race) or
-    ends in a stored `failed` snapshot, so a poller is never left watching a
-    run whose worker silently died.
-
-    The inner call always runs with `request.stream = True` regardless of what
-    the client asked for (the client got the queued placeholder already) — this
-    is what gives the drain task real `in_progress`/terminal transitions to
-    persist instead of a single all-at-once non-streaming result.
-    """
+    """Detached-task body for `background:true`: drives the deployment's streaming
+    Responses generator to completion, persisting every terminal transition. Never
+    raises — every exit path ends in an already-terminal snapshot or a stored
+    `failed` one. Always runs the inner call with `stream=True` regardless of the
+    client's own request, so there are real transitions to persist."""
     request.stream = True
     registry = get_disconnect_registry()
     response_gen = cast(
@@ -465,18 +399,11 @@ async def run_background(
     try:
         done, _pending = await asyncio.wait({drain_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED)
         if drain_task not in done:
-            # Heartbeat found the snapshot cancelled or deleted before the stream
-            # ended on its own: stop draining, no further write — the cancel route
-            # (or DELETE) already own this snapshot's terminal fate.
+            # Heartbeat found the snapshot cancelled/deleted: stop draining, no further write.
             drain_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await drain_task
-            # Best-effort: cancels the assignment if still queued, or `ray.cancel`s
-            # the in-flight object ref (and transitively the model deployment's own
-            # generation) if already assigned. The DisconnectRegistry signal above is
-            # the primary abort path; this is belt-and-suspenders for a run that's
-            # still sitting in Ray Serve's queue and hasn't started polling it yet.
-            response_gen.cancel()
+            response_gen.cancel()  # best-effort abort; registry signal above is the primary path
             return
         saw_ok_terminal, failed_response = drain_task.result()
     except Exception:
@@ -488,16 +415,10 @@ async def run_background(
             await heartbeat_task
 
     if failed_response is not None:
-        # A loader-side `response.failed` event — `persist_response` deliberately
-        # doesn't persist those (a failed run isn't a continuable conversation turn
-        # for the interactive path), but a background poller still needs to see it.
+        # persist_response doesn't persist response.failed events; the poller needs it stored.
         await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed_response)
     elif not saw_ok_terminal:
-        # The remote generator ended without any terminal event at all — most likely
-        # a disconnect-registry-triggered cancellation racing this same check (in
-        # which case the snapshot is already `cancelled` and this is a no-op), or an
-        # actor crash. Either way, a poller must not be left watching `in_progress`
-        # forever.
+        # Stream ended with no terminal event (cancel race or actor crash) — don't leave a poller hanging.
         snapshot = await responses_state.read_async(store, identity, response_id)
         if snapshot is not None:
             failed = _mark_failed(
@@ -508,22 +429,14 @@ async def run_background(
 
 async def _drain_background_stream(piped, response_id: str) -> tuple[bool, dict | None]:
     """Consume *piped* (the `persist_response`-wrapped event stream) to completion.
-
-    Returns `(saw_ok_terminal, failed_response)`: `saw_ok_terminal` is True once a
-    `completed`/`incomplete` event passes through (already persisted by
-    `persist_response` itself); `failed_response` carries the `response.failed`
-    payload for a loader-side failure, which `persist_response` deliberately does
-    not persist (see its docstring) — the caller persists it instead.
-    """
+    Returns `(saw_ok_terminal, failed_response)` — `failed_response` carries a
+    loader-side `response.failed` payload, which `persist_response` doesn't persist itself."""
     saw_ok_terminal = False
     failed_response: dict | None = None
     try:
         async for item in piped:
             if not isinstance(item, dict):
-                # persist_response's own ErrorResponse signal: the terminal write
-                # itself failed. Nothing left here to persist that isn't already
-                # covered by the heartbeat-staleness fallback on a future poll.
-                continue
+                continue  # persist_response's own terminal-write-failed signal; nothing new to persist
             event_type = item.get("type")
             if event_type in TERMINAL_EVENT_TYPES:
                 saw_ok_terminal = True
@@ -535,13 +448,8 @@ async def _drain_background_stream(piped, response_id: str) -> tuple[bool, dict 
 
 
 async def _heartbeat_loop(store: StateStore, identity: str, response_id: str) -> None:
-    """Refresh the drain task's heartbeat every `_HEARTBEAT_INTERVAL_S` for as long as
-    the snapshot is still a live, non-terminal background run. Returns the instant
-    `touch` reports the run is no longer heartbeat-owned (cancelled or deleted) —
-    `run_background` reads that as the signal to stop draining. Runs independently of
-    whether any chunks have arrived yet, so a run still queued behind Ray Serve
-    backpressure is still heartbeat-protected and still cancel-responsive.
-    """
+    """Refresh the drain task's heartbeat every `_HEARTBEAT_INTERVAL_S` until `touch`
+    reports the run is no longer heartbeat-owned (cancelled or deleted)."""
     while True:
         await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
         still_running = await responses_state.touch(store, identity, response_id)
@@ -550,13 +458,9 @@ async def _heartbeat_loop(store: StateStore, identity: str, response_id: str) ->
 
 
 async def cancel_background(store: StateStore, identity: str, response_id: str) -> dict:
-    """Cancel an in-flight background response: signal the shared `DisconnectRegistry`
-    with the run's request id, then optimistically mark the snapshot `cancelled`.
-
-    Idempotent: an already-terminal response is returned unchanged. 400s on a
-    response that was never a background run — checked off `response["background"]`,
-    not `_mship` (which is already gone for a terminal background response).
-    """
+    """Cancel an in-flight background response: signal `DisconnectRegistry` with the
+    run's request id, then mark the snapshot `cancelled`. Idempotent on an already-
+    terminal response; 400s if it was never a background run."""
     snapshot = await load_snapshot(store, identity, response_id)
     response = snapshot["response"]
     if not response.get("background"):
@@ -579,9 +483,7 @@ async def cancel_background(store: StateStore, identity: str, response_id: str) 
 async def signal_background_cancel_if_in_progress(snapshot: dict) -> None:
     """`DELETE /{id}` on an in-flight background run implies cancel: signal the
     registry (same mechanism `cancel_background` uses) before the caller deletes the
-    snapshot, so the drain task's next heartbeat tick (or its `aclose()` once the
-    stream itself ends) tears the run down instead of leaving it running unobserved
-    with nothing left to write its result to."""
+    snapshot, so the drain task's next heartbeat tick tears the run down."""
     response = snapshot.get("response") or {}
     if not response.get("background") or response.get("status") in responses_state.TERMINAL_STATUSES:
         return
@@ -594,9 +496,7 @@ async def signal_background_cancel_if_in_progress(snapshot: dict) -> None:
 
 async def reconcile_staleness(store: StateStore, identity: str, response_id: str, snapshot: dict) -> dict:
     """`GET`-time orphan detection: if *snapshot* is a non-terminal background run
-    whose heartbeat has gone stale (its drain task died without writing a terminal
-    status — replica crash, node loss), transition it to `failed` and persist that
-    before returning. A no-op for anything else."""
+    with a stale heartbeat, transition it to `failed` and persist. No-op otherwise."""
     response = snapshot.get("response") or {}
     if response.get("status") not in ("queued", "in_progress"):
         return snapshot
