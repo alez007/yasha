@@ -104,6 +104,36 @@ def _background_gen_factory(text="hello background!", status="completed"):
     return _make_gen
 
 
+def _completes_after_callback_factory(callback, text="hello background!"):
+    """Like `_background_gen_factory`, but runs `callback()` between the `created`
+    and `completed` events — deterministically races a genuine completion against
+    whatever `callback` does (e.g. cancel/delete) landing in the store first."""
+
+    def _make_gen(*args, **kwargs):
+        response_id = args[5] if len(args) > 5 else kwargs.get("response_id")
+
+        async def gen():
+            yield {"type": "response.created", "sequence_number": 0, "response": {"id": response_id}}
+            await callback(response_id)
+            yield {
+                "type": "response.completed",
+                "sequence_number": 1,
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "status": "completed",
+                    "background": True,
+                    "output": [
+                        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}
+                    ],
+                },
+            }
+
+        return gen()
+
+    return _make_gen
+
+
 def _hanging_gen_factory(started: asyncio.Event, release: asyncio.Event):
     """A fake remote-call side effect that yields one event, signals `started`, then
     blocks on `release` — simulating a run still in flight, so a test can cancel or
@@ -234,6 +264,24 @@ class TestCancel:
         assert json.loads(bytes(get_result.body))["status"] == "cancelled"
 
     @pytest.mark.asyncio
+    async def test_cancel_wins_race_against_a_genuine_completion(self, api):
+        # A cancel that lands in the store while the generation is still mid-flight
+        # must not be clobbered by that generation's own later, unconditional-looking
+        # completion write.
+        async def _cancel_mid_stream(response_id):
+            await api.cancel_response(response_id, _raw_request())
+
+        _wire(api, _completes_after_callback_factory(_cancel_mid_stream))
+        request = ResponsesRequest(model="m", input="hi", background=True)
+        result = await api.create_response(request, _raw_request())
+        response_id = json.loads(bytes(result.body))["id"]
+
+        await _drain_background_tasks(api)
+
+        get_result = await api.get_response(response_id, _raw_request())
+        assert json.loads(bytes(get_result.body))["status"] == "cancelled"
+
+    @pytest.mark.asyncio
     async def test_cancel_on_terminal_background_is_idempotent(self, api):
         _stored_background(api, "resp_done", status="completed")
 
@@ -275,6 +323,22 @@ class TestDeleteImpliesCancel:
         # The drain task finishes only after the delete; it must not resurrect what
         # was just removed.
         release.set()
+        await _drain_background_tasks(api)
+
+        assert api._state_store.get(f"responses/unscoped/{response_id}") is None
+
+    @pytest.mark.asyncio
+    async def test_delete_wins_race_against_a_genuine_completion(self, api):
+        # A delete that lands mid-flight must not be resurrected by that generation's
+        # own later, unconditional-looking completion write.
+        async def _delete_mid_stream(response_id):
+            await api.delete_response(response_id, _raw_request())
+
+        _wire(api, _completes_after_callback_factory(_delete_mid_stream))
+        request = ResponsesRequest(model="m", input="hi", background=True)
+        result = await api.create_response(request, _raw_request())
+        response_id = json.loads(bytes(result.body))["id"]
+
         await _drain_background_tasks(api)
 
         assert api._state_store.get(f"responses/unscoped/{response_id}") is None

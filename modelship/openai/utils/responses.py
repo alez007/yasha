@@ -269,17 +269,21 @@ async def resolve_history(store: StateStore, identity: str, request: ResponsesRe
     )
 
 
-async def persist_response(gen, store: StateStore, *, identity: str, input_items: list[Any]):
-    """Tee `respond`'s output, storing the snapshot as it passes. Covers both
-    streaming (terminal event dict) and non-streaming (`ResponseObject` is the
-    whole body); persists before yielding so a store failure changes what the
-    client is told."""
+async def persist_response(gen, store: StateStore, *, identity: str, input_items: list[Any], conditional: bool = False):
+    """Tee `respond`'s output, storing the snapshot as it passes. `conditional=True`
+    (background mode) routes the terminal write through `write_terminal_if_not_terminal`
+    so a concurrent cancel/delete always wins over a genuine completion."""
     async for item in gen:
         if isinstance(item, ResponseObject):
             try:
-                await responses_state.write_async(
-                    store, identity, item.id, response=item.model_dump(mode="json"), input_items=input_items
-                )
+                if conditional:
+                    await responses_state.write_terminal_if_not_terminal(
+                        store, identity, item.id, response=item.model_dump(mode="json")
+                    )
+                else:
+                    await responses_state.write_async(
+                        store, identity, item.id, response=item.model_dump(mode="json"), input_items=input_items
+                    )
             except StateStoreUnavailableError:
                 logger.exception("State store unavailable persisting response %s", item.id)
                 yield create_error_response(
@@ -303,7 +307,12 @@ async def persist_response(gen, store: StateStore, *, identity: str, input_items
             continue
 
         try:
-            await responses_state.write_async(store, identity, response_id, response=response, input_items=input_items)
+            if conditional:
+                await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=response)
+            else:
+                await responses_state.write_async(
+                    store, identity, response_id, response=response, input_items=input_items
+                )
         except StateStoreUnavailableError:
             logger.exception("State store unavailable persisting streamed response %s", response.get("id"))
             yield store_failure_event(
@@ -392,7 +401,7 @@ async def run_background(
         "DeploymentResponseGenerator[Any]",
         handle.respond.options(stream=True).remote(request, headers, registry, req_id, identity, response_id),
     )
-    piped = persist_response(response_gen, store, identity=identity, input_items=input_items)
+    piped = persist_response(response_gen, store, identity=identity, input_items=input_items, conditional=True)
 
     drain_task = asyncio.ensure_future(_drain_background_stream(piped, response_id))
     heartbeat_task = asyncio.ensure_future(_heartbeat_loop(store, identity, response_id))
