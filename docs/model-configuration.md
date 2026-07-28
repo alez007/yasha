@@ -584,15 +584,24 @@ curl localhost:8000/v1/responses -H 'Content-Type: application/json' \
 
 | Route | Purpose |
 |---|---|
-| `POST /v1/responses` | `store` (default **true**) persists the response; `previous_response_id` continues from one |
-| `GET /v1/responses/{id}` | Fetch a stored response |
-| `DELETE /v1/responses/{id}` | Drop a stored response |
+| `POST /v1/responses` | `store` (default **true**) persists the response; `previous_response_id` continues from one; `background: true` queues instead of blocking |
+| `GET /v1/responses/{id}` | Fetch a stored response — for a background response, poll this until `status` is terminal |
+| `DELETE /v1/responses/{id}` | Drop a stored response; on an in-flight background response this implies cancel |
+| `POST /v1/responses/{id}/cancel` | Cancel an in-flight background response |
 | `GET /v1/responses/{id}/input_items` | The input a stored response was produced from |
 
 Send `"store": false` to opt a response out of being stored — it then has no id to
 continue from. An unknown, expired or already-deleted `previous_response_id` is a
 `404`; if the state store is unreachable the request is a `503` and never silently
 falls back to a stateless answer.
+
+`"background": true` returns a `status: "queued"` response immediately instead of
+blocking on generation; poll `GET` until `status` reaches a terminal value
+(`completed`/`incomplete`/`failed`/`cancelled`). It requires `store` (so there's
+something to poll) and, for now, is HTTP-only — not combinable with `stream: true`.
+Use `redis://` (`MSHIP_STATE_STORE`) rather than the default `memory://` for
+production background use, since a background response must outlive the request
+that created it.
 
 Conversations are scoped to the caller's identity, so one caller can never read or
 continue another's. **With no auth configured every caller shares the single

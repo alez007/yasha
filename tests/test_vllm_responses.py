@@ -63,16 +63,17 @@ async def test_no_render_pipeline_falls_back_to_not_supported():
 
 
 @pytest.mark.asyncio
-async def test_background_rejected_before_engine_ops_touched():
+async def test_background_is_not_rejected_before_engine_ops_touched():
+    # background:true is handled at the gateway; here it just reaches engine_ops like any request.
     infer = _make_infer()
     request = ResponsesRequest(model="m", input="hi", background=True)
 
     with patch("modelship.infer.vllm.vllm_infer.engine_ops") as mock_ops:
+        mock_ops.render_and_params = AsyncMock(side_effect=VllmValidationError("stop here"))
         result = await infer.create_response(request, raw_request=_FakeRawRequest())
 
     assert isinstance(result, ErrorResponse)
-    assert result._http_status == 400
-    mock_ops.render_and_params.assert_not_called()
+    mock_ops.render_and_params.assert_called_once()
 
 
 @pytest.mark.asyncio

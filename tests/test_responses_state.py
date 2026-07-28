@@ -144,6 +144,45 @@ class TestUnavailableVsAbsent:
             responses_state.read(Down(), "u1", "resp_1")
 
 
+class TestBackgroundHeartbeat:
+    @pytest.mark.asyncio
+    async def test_touch_refreshes_updated_at(self, store):
+        await responses_state.write_background(
+            store, "u1", "resp_1", response={**_response(), "status": "in_progress"}, input_items=[], req_id="req-1"
+        )
+        assert await responses_state.touch(store, "u1", "resp_1") is True
+        snap = await responses_state.read_async(store, "u1", "resp_1")
+        assert snap["_mship"]["updated_at"] > 0
+
+    @pytest.mark.asyncio
+    async def test_touch_on_absent_snapshot_returns_false(self, store):
+        assert await responses_state.touch(store, "u1", "nope") is False
+
+    @pytest.mark.asyncio
+    async def test_touch_without_mship_returns_false(self, store):
+        await responses_state.write_async(store, "u1", "resp_1", response=_response(), input_items=[])
+        assert await responses_state.touch(store, "u1", "resp_1") is False
+
+    @pytest.mark.asyncio
+    async def test_touch_does_not_overwrite_an_already_terminal_snapshot(self, store):
+        # Simulates the heartbeat losing a race against a terminal write: the
+        # snapshot moved to `cancelled` (e.g. via write_terminal_if_not_terminal)
+        # while a stale `_mship` sidecar somehow still lingers. touch() must
+        # defer to the terminal status rather than blindly writing it back.
+        await store.set_async(
+            "responses/u1/resp_1",
+            {
+                "response": {**_response(), "status": "cancelled"},
+                "input_items": [],
+                "_mship": {"req_id": "req-1", "updated_at": 1.0},
+            },
+        )
+        assert await responses_state.touch(store, "u1", "resp_1") is False
+        snap = await responses_state.read_async(store, "u1", "resp_1")
+        assert snap["response"]["status"] == "cancelled"
+        assert snap["_mship"]["updated_at"] == 1.0
+
+
 class TestTtl:
     def test_defaults_to_30_days(self, monkeypatch):
         monkeypatch.delenv("MSHIP_RESPONSES_TTL_S", raising=False)

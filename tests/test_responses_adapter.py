@@ -393,9 +393,10 @@ class TestRequestRejections:
         chat = responses_request_to_chat(_req(previous_response_id="resp_1"))
         assert chat.messages == [{"role": "user", "content": "hello"}]
 
-    def test_background_rejected(self):
-        with pytest.raises(UnsupportedResponsesFeatureError, match="background"):
-            responses_request_to_chat(_req(background=True))
+    def test_background_is_accepted(self):
+        # background is handled entirely at the gateway; here it's just an echoed flag.
+        chat = responses_request_to_chat(_req(background=True))
+        assert chat.messages == [{"role": "user", "content": "hello"}]
 
     def test_hosted_tool_rejected(self):
         with pytest.raises(UnsupportedResponsesFeatureError, match="hosted tool"):

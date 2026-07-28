@@ -292,12 +292,13 @@ class ModelDeployment:
         disconnect_registry: Any,
         request_id: str | None = None,
         identity: str | None = None,
+        response_id: str | None = None,
     ):
         self._set_request_id(request_id)
         self._set_identity(identity)
         proxy = RawRequestProxy(disconnect_registry, request_headers, request_id)
         start = time.monotonic()
-        result = await self.infer.create_response(request, proxy)
+        result = await self.infer.create_response(request, proxy, response_id=response_id)
         if isinstance(result, AsyncGenerator):
             try:
                 async for chunk in result:

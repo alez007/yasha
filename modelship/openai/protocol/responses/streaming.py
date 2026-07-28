@@ -121,9 +121,10 @@ class ResponsesStreamTranslator:
     strings — framing happens at the gateway edge (see :func:`frame_sse`).
     """
 
-    def __init__(self, request: ResponsesRequest):
+    def __init__(self, request: ResponsesRequest, *, response_id: str | None = None):
         self.request = request
-        self.response_id = f"resp_{random_uuid()}"
+        # Injected for a background run to keep the same id across placeholder/stream/snapshot.
+        self.response_id = response_id or f"resp_{random_uuid()}"
         self.created_at: int | None = None  # pinned after the first envelope
         self.model = request.model or ""
         self._seq = 0
@@ -180,6 +181,7 @@ class ResponsesStreamTranslator:
             created_at=self.created_at,
             completed_at=completed_at,
             error=error,
+            background=bool(self.request.background),
         )
         # Pin created_at after the first build so every envelope is identical.
         self.created_at = response.created_at

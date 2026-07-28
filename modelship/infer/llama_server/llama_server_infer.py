@@ -577,7 +577,12 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
                 logger.log(TRACE, "chat response %s (stream): %r", request_id, "".join(buffered))
 
     async def _create_response_stream(
-        self, request: ResponsesRequest, prepared: dict[str, Any], raw_request: RawRequestProxy
+        self,
+        request: ResponsesRequest,
+        prepared: dict[str, Any],
+        raw_request: RawRequestProxy,
+        *,
+        response_id: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Native streaming Responses path: feeds `BaseInfer._stream_responses` directly
         from `_raw_stream_chunks`'s typed chunks, same source `_stream_chat_completion_body`
@@ -587,7 +592,7 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         stream = _raw_stream_chunks(self._client, prepared, model_name=self.model_config.name, request_id=request_id)
         chunks = self.run_cancellable_stream(stream, raw_request)
         async for event in self._stream_responses(
-            request, chunks, request_id=request_id, client_error=_llama_stream_error
+            request, chunks, request_id=request_id, client_error=_llama_stream_error, response_id=response_id
         ):
             yield event
 

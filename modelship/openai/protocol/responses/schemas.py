@@ -177,7 +177,7 @@ class ResponseObject(OpenAIBaseModel):
     object: Literal["response"] = "response"
     created_at: int = Field(default_factory=lambda: int(time.time()))
     completed_at: int | None = None
-    status: Literal["completed", "failed", "incomplete", "in_progress"] = "completed"
+    status: Literal["queued", "in_progress", "completed", "incomplete", "failed", "cancelled"] = "completed"
     model: str
     output: list[ResponseOutputItem] = Field(default_factory=list)
     usage: ResponseUsage | None = None
