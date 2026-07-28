@@ -193,18 +193,6 @@ def _previous_in_progress_error(response_id: str) -> ResponsesApiError:
     )
 
 
-def background_stream_error() -> ResponsesApiError:
-    return ResponsesApiError(
-        create_error_response(
-            "background:true cannot be combined with stream:true over HTTP "
-            "(background streaming is not yet supported).",
-            err_type="invalid_request_error",
-            status_code=HTTPStatus.BAD_REQUEST,
-            param="background",
-        )
-    )
-
-
 def background_store_false_error() -> ResponsesApiError:
     return ResponsesApiError(
         create_error_response(
@@ -337,19 +325,122 @@ async def load_snapshot(store: StateStore, identity: str, response_id: str) -> d
 
 
 async def delete_snapshot(store: StateStore, identity: str, response_id: str) -> None:
-    """Delete the snapshot for *response_id*. Caller must confirm existence first
-    via :func:`load_snapshot`."""
+    """Delete the snapshot for *response_id*, and its stream buffer if it had one
+    (a no-op if it didn't). Caller must confirm existence first via :func:`load_snapshot`."""
     try:
         await responses_state.delete_async(store, identity, response_id)
     except StateStoreUnavailableError:
         logger.exception("State store unavailable deleting response %s", response_id)
         raise _store_unavailable_error() from None
+    with contextlib.suppress(StateStoreUnavailableError):
+        await responses_state.discard_stream_buffer(store, identity, response_id)
 
 
 # --- Background mode (background:true) ---
 
 # Drain task's heartbeat cadence; state/responses.py's staleness threshold is a multiple of this.
 _HEARTBEAT_INTERVAL_S = 5.0
+
+# How often a tailer (live background+stream, or a GET resume) polls the event buffer
+# for new entries.
+_TAIL_POLL_INTERVAL_S = 0.25
+
+_TERMINAL_EVENT_OR_FAILED = (*TERMINAL_EVENT_TYPES, "response.failed")
+
+# Held so a fire-and-forget buffer-append task isn't GC'd mid-write.
+_pending_buffer_appends: set[asyncio.Task] = set()
+
+
+class _StreamBuffer:
+    """Appends events to the replay log one at a time, in event order, without
+    blocking the caller on each individual write. `flush_and_discard` waits for
+    every scheduled append before dropping the buffer, so a straggler can't land
+    (or fail with a Redis stream-id conflict) after it's gone."""
+
+    def __init__(self, store: StateStore, identity: str, response_id: str) -> None:
+        self._store = store
+        self._identity = identity
+        self._response_id = response_id
+        self._pending: asyncio.Task | None = None
+
+    def append(self, event: dict) -> None:
+        self._pending = asyncio.ensure_future(self._chained_append(self._pending, event))
+        _pending_buffer_appends.add(self._pending)
+        self._pending.add_done_callback(_pending_buffer_appends.discard)
+
+    async def _chained_append(self, prev: asyncio.Task | None, event: dict) -> None:
+        if prev is not None:
+            await prev
+        try:
+            await responses_state.append_stream_event(self._store, self._identity, self._response_id, event)
+        except Exception:
+            logger.warning("Failed to buffer event for response %s", self._response_id, exc_info=True)
+
+    async def flush_and_discard(self) -> None:
+        if self._pending is not None:
+            await self._pending
+            self._pending = None
+        with contextlib.suppress(StateStoreUnavailableError):
+            await responses_state.discard_stream_buffer(self._store, self._identity, self._response_id)
+
+
+async def buffer_stream_events(gen, buffer: _StreamBuffer):
+    """Tee every event dict flowing through *gen* into *buffer*, flushing and
+    discarding it once a terminal event passes through."""
+    async for item in gen:
+        if isinstance(item, dict):
+            buffer.append(item)
+            if item.get("type") in _TERMINAL_EVENT_OR_FAILED:
+                await buffer.flush_and_discard()
+        yield item
+
+
+def _terminal_event_from_response(response: dict, after_sequence: int) -> dict | None:
+    """Synthesize the terminal event a tailer missed, from the response's own final
+    state. No event exists for `cancelled`; tailing simply ends there."""
+    event_type = {
+        "completed": "response.completed",
+        "incomplete": "response.incomplete",
+        "failed": "response.failed",
+    }.get(response.get("status") or "")
+    if event_type is None:
+        return None
+    return {"type": event_type, "sequence_number": after_sequence + 1, "response": response}
+
+
+async def tail_background_events(store: StateStore, identity: str, response_id: str, *, after_sequence: int = -1):
+    """Replay buffered events after *after_sequence*, then poll until terminal.
+    Ends quietly (no error) if the response is deleted mid-tail."""
+    while True:
+        try:
+            events = await responses_state.read_stream_events_after(store, identity, response_id, after_sequence)
+        except StateStoreUnavailableError:
+            logger.exception("State store unavailable tailing response %s", response_id)
+            return
+        if events:
+            for event in events:
+                after_sequence = event.get("sequence_number", after_sequence)
+                yield event
+            if events[-1].get("type") in _TERMINAL_EVENT_OR_FAILED:
+                return
+            continue
+
+        try:
+            snapshot = await responses_state.read_async(store, identity, response_id)
+        except StateStoreUnavailableError:
+            logger.exception("State store unavailable tailing response %s", response_id)
+            return
+        if snapshot is None:
+            return
+        snapshot = await reconcile_staleness(store, identity, response_id, snapshot)
+        response = snapshot["response"]
+        if response.get("status") in responses_state.TERMINAL_STATUSES:
+            terminal = _terminal_event_from_response(response, after_sequence)
+            if terminal is not None:
+                yield terminal
+            return
+
+        await asyncio.sleep(_TAIL_POLL_INTERVAL_S)
 
 
 async def start_background(
@@ -389,12 +480,11 @@ async def run_background(
     store: StateStore,
     response_id: str,
     input_items: list[Any],
+    stream_buffer: bool = False,
 ) -> None:
-    """Detached-task body for `background:true`: drives the deployment's streaming
-    Responses generator to completion, persisting every terminal transition. Never
-    raises — every exit path ends in an already-terminal snapshot or a stored
-    `failed` one. Always runs the inner call with `stream=True` regardless of the
-    client's own request, so there are real transitions to persist."""
+    """Detached-task body for `background:true`: drives the streaming Responses
+    generator to completion, persisting every terminal transition. `stream_buffer=True`
+    also tees every event into the durable replay log a poller reads from."""
     request.stream = True
     registry = get_disconnect_registry()
     response_gen = cast(
@@ -402,38 +492,47 @@ async def run_background(
         handle.respond.options(stream=True).remote(request, headers, registry, req_id, identity, response_id),
     )
     piped = persist_response(response_gen, store, identity=identity, input_items=input_items, conditional=True)
+    buffer = _StreamBuffer(store, identity, response_id) if stream_buffer else None
+    if buffer is not None:
+        piped = buffer_stream_events(piped, buffer)
 
-    drain_task = asyncio.ensure_future(_drain_background_stream(piped, response_id))
-    heartbeat_task = asyncio.ensure_future(_heartbeat_loop(store, identity, response_id))
     try:
-        done, _pending = await asyncio.wait({drain_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED)
-        if drain_task not in done:
-            # Heartbeat found the snapshot cancelled/deleted: stop draining, no further write.
-            drain_task.cancel()
+        drain_task = asyncio.ensure_future(_drain_background_stream(piped, response_id))
+        heartbeat_task = asyncio.ensure_future(_heartbeat_loop(store, identity, response_id))
+        try:
+            done, _pending = await asyncio.wait({drain_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED)
+            if drain_task not in done:
+                # Heartbeat found the snapshot cancelled/deleted: stop draining, no further write.
+                drain_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await drain_task
+                response_gen.cancel()  # best-effort abort; registry signal above is the primary path
+                return
+            saw_ok_terminal, failed_response = drain_task.result()
+        except Exception:
+            logger.exception("background response %s: drain task raised unexpectedly", response_id)
+            saw_ok_terminal, failed_response = False, None
+        finally:
+            heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await drain_task
-            response_gen.cancel()  # best-effort abort; registry signal above is the primary path
-            return
-        saw_ok_terminal, failed_response = drain_task.result()
-    except Exception:
-        logger.exception("background response %s: drain task raised unexpectedly", response_id)
-        saw_ok_terminal, failed_response = False, None
-    finally:
-        heartbeat_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat_task
+                await heartbeat_task
 
-    if failed_response is not None:
-        # persist_response doesn't persist response.failed events; the poller needs it stored.
-        await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed_response)
-    elif not saw_ok_terminal:
-        # Stream ended with no terminal event (cancel race or actor crash) — don't leave a poller hanging.
-        snapshot = await responses_state.read_async(store, identity, response_id)
-        if snapshot is not None:
-            failed = _mark_failed(
-                snapshot.get("response") or {}, "Generation ended unexpectedly without a terminal event."
-            )
-            await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
+        if failed_response is not None:
+            # persist_response doesn't persist response.failed events; the poller needs it stored.
+            await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed_response)
+        elif not saw_ok_terminal:
+            # Stream ended with no terminal event (cancel race or actor crash) — don't leave a poller hanging.
+            snapshot = await responses_state.read_async(store, identity, response_id)
+            if snapshot is not None:
+                failed = _mark_failed(
+                    snapshot.get("response") or {}, "Generation ended unexpectedly without a terminal event."
+                )
+                await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
+    finally:
+        # Idempotent: the terminal path already flushed via buffer_stream_events; this
+        # is what covers the abnormal exits above, which never reach a terminal event.
+        if buffer is not None:
+            await buffer.flush_and_discard()
 
 
 async def _drain_background_stream(piped, response_id: str) -> tuple[bool, dict | None]:
@@ -485,6 +584,8 @@ async def cancel_background(store: StateStore, identity: str, response_id: str) 
 
     cancelled = {**response, "status": "cancelled", "completed_at": int(time.time())}
     await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=cancelled)
+    with contextlib.suppress(StateStoreUnavailableError):
+        await responses_state.discard_stream_buffer(store, identity, response_id)
     updated = await load_snapshot(store, identity, response_id)
     return updated["response"]
 
@@ -513,5 +614,7 @@ async def reconcile_staleness(store: StateStore, identity: str, response_id: str
         return snapshot
     failed = _mark_failed(response, "Background response orphaned: its worker stopped reporting progress.")
     await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
+    with contextlib.suppress(StateStoreUnavailableError):
+        await responses_state.discard_stream_buffer(store, identity, response_id)
     updated = await responses_state.read_async(store, identity, response_id)
     return updated if updated is not None else snapshot

@@ -114,6 +114,36 @@ class MemoryStoreActor(StateStore):
             if (not prefix or k == prefix or k.startswith(f"{prefix}/")) and (expires_at is None or now < expires_at)
         ]
 
+    def append(
+        self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
+    ) -> None:
+        # Mutates the actor-local list directly rather than a get+set round trip, so
+        # cost per event is O(1) (amortized), not a rewrite of the whole log.
+        now = time.time()
+        entries, _ = self._data.get(key, ([], None))
+        if not isinstance(entries, list):
+            entries = []
+        entries.append(copy.deepcopy(event))
+        if max_len is not None and len(entries) > max_len:
+            entries = entries[-max_len:]
+        expires_at = now + ttl_seconds if ttl_seconds is not None else None
+        self._data[key] = (entries, expires_at)
+        self._maybe_sweep(now)
+
+    def read_from(self, key: str, *, after_sequence: int = -1) -> list[JsonValue]:
+        entry = self._data.get(key)
+        if entry is None:
+            return []
+        entries, expires_at = entry
+        if expires_at is not None and time.time() >= expires_at:
+            self._data.pop(key, None)
+            return []
+        if not isinstance(entries, list):
+            return []
+        return copy.deepcopy(
+            [e for e in entries if isinstance(e, dict) and e.get("sequence_number", -1) > after_sequence]
+        )
+
     # In-process (this runs as the actor body itself, not over RPC from within):
     # no thread needed, so skip the base's to_thread hop.
     async def get_async(self, key: str) -> JsonValue | None:
@@ -127,6 +157,14 @@ class MemoryStoreActor(StateStore):
 
     async def list_async(self, prefix: str) -> list[str]:
         return self.list(prefix)
+
+    async def append_async(
+        self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
+    ) -> None:
+        self.append(key, event, ttl_seconds=ttl_seconds, max_len=max_len)
+
+    async def read_from_async(self, key: str, *, after_sequence: int = -1) -> list[JsonValue]:
+        return self.read_from(key, after_sequence=after_sequence)
 
 
 def get_or_create_memory_store_actor():
@@ -206,3 +244,11 @@ class MemoryStateStore(StateStore):
 
     async def list_async(self, prefix: str) -> list[str]:
         return await self._acall("list", prefix)
+
+    async def append_async(
+        self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
+    ) -> None:
+        await self._acall("append_async", key, event, ttl_seconds=ttl_seconds, max_len=max_len)
+
+    async def read_from_async(self, key: str, *, after_sequence: int = -1) -> list[JsonValue]:
+        return await self._acall("read_from_async", key, after_sequence=after_sequence)

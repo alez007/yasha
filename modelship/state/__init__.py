@@ -114,6 +114,14 @@ class _InstrumentedStateStore(StateStore):
     async def list_async(self, prefix: str) -> list[str]:
         return await self._arun("list", self._inner.list_async(prefix))
 
+    async def append_async(
+        self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
+    ) -> None:
+        await self._arun("append", self._inner.append_async(key, event, ttl_seconds=ttl_seconds, max_len=max_len))
+
+    async def read_from_async(self, key: str, *, after_sequence: int = -1) -> list[JsonValue]:
+        return await self._arun("read_from", self._inner.read_from_async(key, after_sequence=after_sequence))
+
 
 def _build_memory(parsed: ParseResult) -> StateStore:
     # No connection body: memory:// always names the one cluster-wide actor. Any

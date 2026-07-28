@@ -81,3 +81,17 @@ class StateStore(ABC):
 
     async def list_async(self, prefix: str) -> list[str]:
         return await asyncio.to_thread(self.list, prefix)
+
+    # Ordered append-only log per key. Abstract with no default: a naive get+set
+    # default would read-modify-write the whole log on every event.
+    @abstractmethod
+    async def append_async(
+        self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
+    ) -> None:
+        """Append *event* to the log at *key* (creating it if absent). *max_len*,
+        if given, bounds how many trailing entries are retained."""
+
+    @abstractmethod
+    async def read_from_async(self, key: str, *, after_sequence: int = -1) -> list[JsonValue]:
+        """Entries at *key* with ``sequence_number`` > *after_sequence*, in order.
+        Sequence numbers start at 0, so -1 means "from the start"."""

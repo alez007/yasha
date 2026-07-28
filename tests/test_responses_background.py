@@ -12,7 +12,8 @@ from fastapi import HTTPException
 
 from modelship.openai.api import ModelshipAPI
 from modelship.openai.protocol import ResponsesRequest
-from modelship.state import MemoryStoreActor
+from modelship.openai.utils.responses import _StreamBuffer
+from modelship.state import MemoryStoreActor, StateStoreUnavailableError
 
 _ModelshipAPI = ModelshipAPI.func_or_class
 _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
@@ -198,16 +199,6 @@ class TestBackgroundCreate:
 
 class TestGuards:
     @pytest.mark.asyncio
-    async def test_background_and_stream_is_400(self, api):
-        _wire(api, _background_gen_factory())
-        request = ResponsesRequest(model="m", input="hi", background=True, stream=True)
-
-        with pytest.raises(HTTPException) as exc:
-            await api.create_response(request, _raw_request())
-        assert exc.value.status_code == 400
-        assert api._background_tasks == set()
-
-    @pytest.mark.asyncio
     async def test_background_and_store_false_is_400(self, api):
         _wire(api, _background_gen_factory())
         request = ResponsesRequest(model="m", input="hi", background=True, store=False)
@@ -365,3 +356,168 @@ class TestOrphanDetection:
         result = await api.get_response("resp_fresh", _raw_request())
 
         assert json.loads(bytes(result.body))["status"] == "in_progress"
+
+
+def _parse_sse(body: str) -> list[dict]:
+    events = []
+    for frame in body.split("\n\n"):
+        lines = [line for line in frame.split("\n") if line]
+        if not lines:
+            continue
+        data_line = next((line for line in lines if line.startswith("data: ")), None)
+        if data_line is None:
+            continue
+        data = data_line[len("data: ") :]
+        if data == "[DONE]":
+            continue
+        events.append(json.loads(data))
+    return events
+
+
+async def _consume_body(result) -> str:
+    chunks = await asyncio.wait_for(_collect(result), timeout=5.0)
+    return "".join(chunks)
+
+
+async def _collect(result):
+    return [chunk async for chunk in result.body_iterator]
+
+
+class TestBackgroundStream:
+    @pytest.mark.asyncio
+    async def test_background_and_stream_streams_live_and_completes(self, api):
+        # A real gap between events so the tailer's poll observes `response.created`
+        # while buffered, rather than racing a drain task that finishes first.
+        def _slow_gen_factory(*args, **kwargs):
+            response_id = args[5] if len(args) > 5 else kwargs.get("response_id")
+
+            async def gen():
+                yield {"type": "response.created", "sequence_number": 0, "response": {"id": response_id}}
+                await asyncio.sleep(0.4)
+                yield {
+                    "type": "response.completed",
+                    "sequence_number": 1,
+                    "response": {
+                        "id": response_id,
+                        "object": "response",
+                        "status": "completed",
+                        "background": True,
+                        "output": [
+                            {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "hello background!"}],
+                            }
+                        ],
+                    },
+                }
+
+            return gen()
+
+        _wire(api, _slow_gen_factory)
+        request = ResponsesRequest(model="m", input="hi", background=True, stream=True)
+
+        result = await api.create_response(request, _raw_request())
+        assert result.media_type == "text/event-stream"
+
+        body = await _consume_body(result)
+        events = _parse_sse(body)
+
+        assert events[0]["type"] == "response.created"
+        assert events[-1]["type"] == "response.completed"
+        assert events[-1]["response"]["status"] == "completed"
+        assert events[-1]["response"]["output"][0]["content"][0]["text"] == "hello background!"
+
+        await _drain_background_tasks(api)
+
+    @pytest.mark.asyncio
+    async def test_get_stream_resumes_from_buffered_events(self, api):
+        response_id = "resp_1"
+        _stored_background(api, response_id, status="completed")
+        key = f"responses-stream/unscoped/{response_id}"
+        await api._state_store.append_async(key, {"type": "response.created", "sequence_number": 0, "response": {}})
+        await api._state_store.append_async(
+            key, {"type": "response.output_text.delta", "sequence_number": 1, "delta": "hi"}
+        )
+        await api._state_store.append_async(
+            key,
+            {
+                "type": "response.completed",
+                "sequence_number": 2,
+                "response": {"id": response_id, "object": "response", "status": "completed"},
+            },
+        )
+
+        result = await api.get_response(response_id, _raw_request(), stream=True, starting_after=0)
+        body = await _consume_body(result)
+        events = _parse_sse(body)
+
+        # starting_after=0 excludes the seq-0 event that was already seen before disconnect.
+        assert [e["sequence_number"] for e in events] == [1, 2]
+        assert events[-1]["type"] == "response.completed"
+
+    @pytest.mark.asyncio
+    async def test_get_stream_on_terminal_response_synthesizes_terminal_event(self, api):
+        _stored_background(api, "resp_done", status="completed")
+
+        result = await api.get_response("resp_done", _raw_request(), stream=True)
+        body = await _consume_body(result)
+        events = _parse_sse(body)
+
+        assert len(events) == 1
+        assert events[0]["type"] == "response.completed"
+        assert events[0]["response"]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_get_stream_ends_cleanly_on_buffer_read_outage(self, api):
+        _stored_background(api, "resp_1", status="in_progress")
+        with patch.object(
+            api._state_store, "read_from_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))
+        ):
+            result = await api.get_response("resp_1", _raw_request(), stream=True)
+            body = await _consume_body(result)
+
+        # Ends the stream quietly rather than raising mid-response (headers already sent).
+        assert _parse_sse(body) == []
+
+
+class TestStreamBufferOrdering:
+    @pytest.mark.asyncio
+    async def test_appends_land_in_event_order_even_if_an_earlier_one_is_slower(self):
+        landed = []
+
+        async def fake_append(store, identity, response_id, event):
+            await asyncio.sleep(0.05 if event["sequence_number"] == 0 else 0)
+            landed.append(event["sequence_number"])
+
+        with (
+            patch("modelship.openai.utils.responses.responses_state.append_stream_event", fake_append),
+            patch("modelship.openai.utils.responses.responses_state.discard_stream_buffer", AsyncMock()),
+        ):
+            buf = _StreamBuffer(MagicMock(), "u1", "resp_1")
+            buf.append({"sequence_number": 0})
+            buf.append({"sequence_number": 1})
+            await buf.flush_and_discard()
+
+        assert landed == [0, 1]
+
+    @pytest.mark.asyncio
+    async def test_flush_and_discard_waits_for_the_pending_append_first(self):
+        order = []
+
+        async def fake_append(store, identity, response_id, event):
+            await asyncio.sleep(0.05)
+            order.append("append")
+
+        async def fake_discard(store, identity, response_id):
+            order.append("discard")
+
+        with (
+            patch("modelship.openai.utils.responses.responses_state.append_stream_event", fake_append),
+            patch("modelship.openai.utils.responses.responses_state.discard_stream_buffer", fake_discard),
+        ):
+            buf = _StreamBuffer(MagicMock(), "u1", "resp_1")
+            buf.append({"sequence_number": 0})
+            await buf.flush_and_discard()
+
+        assert order == ["append", "discard"]
