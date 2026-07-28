@@ -132,10 +132,8 @@ class RedisStateStore(StateStore):
     async def append_async(
         self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
     ) -> None:
-        # Redis Streams give a native O(1) append. Entry ids are derived from the
-        # event's own sequence_number (1-based: id "0-0" is reserved by Redis) so
-        # read_from_async's range query maps directly onto the same cursor callers
-        # already use (ResponsesStreamTranslator's sequence_number).
+        # Entry id is 1-based from the event's own sequence_number ("0-0" is
+        # reserved by Redis), so read_from_async's range query maps directly onto it.
         seq = event.get("sequence_number") if isinstance(event, dict) else None
         entry_id = f"{int(seq) + 1}-0" if isinstance(seq, int) else "*"
         maxlen_kwargs = {"maxlen": max_len, "approximate": True} if max_len is not None else {}

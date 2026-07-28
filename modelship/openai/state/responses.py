@@ -49,9 +49,7 @@ _STALE_ENV = "MSHIP_RESPONSES_STALE_S"
 _DEFAULT_STALE_S = 30.0
 
 # Separate, short-lived namespace for a background+stream run's replayable event log
-# ("responses-stream/<identity>/<response_id>"), distinct from the response snapshot
-# itself. Nobody resumes a stream from days ago, so its TTL is far shorter than the
-# response TTL above.
+# ("responses-stream/<identity>/<response_id>"), distinct from the response snapshot.
 _STREAM_NAMESPACE = "responses-stream"
 _STREAM_TTL_ENV = "MSHIP_RESPONSES_STREAM_BUFFER_TTL_S"
 _DEFAULT_STREAM_TTL_S = 600.0
