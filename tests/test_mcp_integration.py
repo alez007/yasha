@@ -8,6 +8,7 @@ it would reach any self-hosted MCP server. No mocking anywhere in this file.
 
 import asyncio
 import threading
+import time
 
 import httpx
 import pytest
@@ -16,6 +17,19 @@ from mcp.server.mcpserver import MCPServer
 
 OPENAI_API_BASE = "http://localhost:8000/v1"
 _PORT = 8934
+
+_TERMINAL_STATUSES = {"completed", "incomplete", "failed", "cancelled"}
+
+
+def _poll_until_terminal(client, response_id: str, *, timeout_s: float = 60.0, interval_s: float = 0.5):
+    """Poll `GET /v1/responses/{id}` (via the SDK) until `status` is terminal."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        resp = client.responses.retrieve(response_id)
+        if resp.status in _TERMINAL_STATUSES:
+            return resp
+        time.sleep(interval_s)
+    raise AssertionError(f"response {response_id} did not reach a terminal status within {timeout_s}s")
 
 
 @pytest.fixture(scope="module")
@@ -145,6 +159,51 @@ class TestMcpIntegration:
         assert mcp_call_items[0].status == "completed"
         assert mcp_call_items[0].output == "total: 6"
         assert mcp_call_items[0].approval_request_id == approval.id
+
+    def test_background_mode_completes_with_real_tool_execution(self, client, dice_server):
+        resp = client.responses.create(
+            model="chat-capable",
+            input="Use the roll tool to roll 2 dice, then tell me the total.",
+            tools=[_mcp_tool(dice_server)],
+            tool_choice="required",
+            max_output_tokens=256,
+            background=True,
+        )
+        assert resp.status in {"queued", "in_progress"}
+        assert resp.background is True
+
+        completed = _poll_until_terminal(client, resp.id)
+        assert completed.status in {"completed", "incomplete"}, completed.model_dump()
+        types = [item.type for item in completed.output]
+        assert "mcp_list_tools" in types
+        assert "mcp_call" in types
+        mcp_call_item = next(item for item in completed.output if item.type == "mcp_call")
+        assert mcp_call_item.status == "completed"
+        # Real tool execution against the real dice server, same as the foreground case.
+        assert mcp_call_item.output == "total: 6"
+        assert completed.output_text.strip()
+
+    def test_background_mode_cancel_mid_flight_stays_cancelled(self, client, dice_server):
+        # Fired immediately (no poll delay), same pattern as the non-MCP background
+        # cancel test — gives the cancel a real window against the MCP loop's own
+        # discovery + tool-call turns before they'd otherwise finish on their own.
+        resp = client.responses.create(
+            model="chat-capable",
+            input="Use the roll tool to roll 2 dice, then tell me the total.",
+            tools=[_mcp_tool(dice_server)],
+            tool_choice="required",
+            max_output_tokens=256,
+            background=True,
+        )
+        cancelled = client.responses.cancel(resp.id)
+        assert cancelled.status in {"cancelled", "completed", "incomplete"}
+        if cancelled.status != "cancelled":
+            pytest.skip("generation finished before the cancel request landed")
+
+        # Give the drain task a moment to wind down, then confirm the status sticks —
+        # the MCP loop's own turn-completion write must not clobber the cancel.
+        final = _poll_until_terminal(client, resp.id, timeout_s=10)
+        assert final.status == "cancelled"
 
     def test_unreachable_mcp_server_fails_the_response(self):
         response = httpx.post(
