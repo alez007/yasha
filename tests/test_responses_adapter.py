@@ -393,6 +393,18 @@ class TestMcpInputItems:
         )
         assert chat.messages[-1] == {"role": "tool", "tool_call_id": "mcp_1", "content": "boom"}
 
+    def test_mcp_call_missing_id_and_name_rejected(self):
+        with pytest.raises(UnsupportedResponsesFeatureError, match="mcp_call"):
+            responses_request_to_chat(_req(input=[{"type": "mcp_call", "output": "9"}]))
+
+    def test_mcp_call_missing_output_and_error_rejected(self):
+        # Regression: a client-sent mcp_call with neither 'output' nor 'error' used to
+        # silently produce a tool message with content=None instead of a clear 400.
+        with pytest.raises(UnsupportedResponsesFeatureError, match=r"output.*error"):
+            responses_request_to_chat(
+                _req(input=[{"type": "mcp_call", "id": "mcp_1", "name": "roll", "arguments": "{}"}])
+            )
+
     def test_mcp_list_tools_and_approval_items_are_skipped(self):
         chat = responses_request_to_chat(
             _req(

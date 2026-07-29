@@ -131,6 +131,12 @@ def messages_from_input(input_: str | list[dict[str, Any]], instructions: str | 
             # Mirrors the function_call branch: an assistant tool_calls message plus its
             # tool-result message, synthesized as a pair since mcp_call has no call_id.
             call_id = item.get("id") or ""
+            name = item.get("name")
+            if not call_id or not name:
+                raise UnsupportedResponsesFeatureError("mcp_call input items require both 'id' and 'name'.")
+            output, error = item.get("output"), item.get("error")
+            if output is None and error is None:
+                raise UnsupportedResponsesFeatureError("mcp_call input items require one of 'output' or 'error'.")
             messages.append(
                 {
                     "role": "assistant",
@@ -140,14 +146,14 @@ def messages_from_input(input_: str | list[dict[str, Any]], instructions: str | 
                             "id": call_id,
                             "type": "function",
                             "function": {
-                                "name": item.get("name", ""),
+                                "name": name,
                                 "arguments": item.get("arguments", ""),
                             },
                         }
                     ],
                 }
             )
-            content = item.get("output") if item.get("error") is None else item.get("error")
+            content = output if error is None else error
             messages.append({"role": "tool", "tool_call_id": call_id, "content": content})
         elif itype in ("mcp_list_tools", "mcp_approval_request", "mcp_approval_response"):
             # Not prompt material: mcp_list_tools is discovery bookkeeping, and approval
