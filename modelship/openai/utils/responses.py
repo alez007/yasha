@@ -599,7 +599,11 @@ async def cancel_background(store: StateStore, identity: str, response_id: str) 
             await registry.set.remote(mship["req_id"])
 
     cancelled = {**response, "status": "cancelled", "completed_at": int(time.time())}
-    await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=cancelled)
+    try:
+        await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=cancelled)
+    except StateStoreUnavailableError:
+        logger.exception("State store unavailable cancelling response %s", response_id)
+        raise _store_unavailable_error() from None
     with contextlib.suppress(StateStoreUnavailableError):
         await responses_state.discard_stream_buffer(store, identity, response_id)
     updated = await load_snapshot(store, identity, response_id)

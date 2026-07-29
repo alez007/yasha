@@ -352,6 +352,20 @@ class TestCancel:
             await api.cancel_response("resp_nope", _raw_request())
         assert exc.value.status_code == 404
 
+    @pytest.mark.asyncio
+    async def test_cancel_store_outage_writing_cancelled_snapshot_is_503(self, api):
+        # Regression: the write of the cancelled snapshot wasn't wrapped, so a store
+        # outage there bubbled as a raw StateStoreUnavailableError (500) instead of
+        # the intended 503 ResponsesApiError every other store write in this module produces.
+        _stored_background(api, "resp_1", status="in_progress")
+
+        with (
+            patch.object(api._state_store, "set_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await api.cancel_response("resp_1", _raw_request())
+        assert exc.value.status_code == 503
+
 
 class TestDeleteImpliesCancel:
     @pytest.mark.asyncio
