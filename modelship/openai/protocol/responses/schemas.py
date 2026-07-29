@@ -1,11 +1,12 @@
 """Pydantic schemas for the ``/v1/responses`` endpoint (OpenAI Responses API).
 
-Phase A is a *stateless* shape adapter: it accepts the Responses request shape
-and returns the Responses response object, translating to/from the existing
-chat-completion pipeline at the gateway edge (the translation logic lives in
-:mod:`modelship.openai.protocol.responses.adapter`). Server-side conversation
-state (``store`` / ``previous_response_id``), background execution, and OpenAI's
-hosted built-in tools are out of scope here and rejected by the adapter.
+Accepts the Responses request shape and returns the Responses response object,
+translating to/from the existing chat-completion pipeline at the gateway edge
+(the translation logic lives in :mod:`modelship.openai.protocol.responses.adapter`).
+Server-side conversation state (``store`` / ``previous_response_id``), background
+execution, and server-side MCP tool execution are all supported. OpenAI's hosted
+built-in tools (web search, code interpreter, ``connector_id`` MCP) are out of
+scope and rejected by the adapter.
 
 Input items are kept as plain ``dict`` (matching ``ChatCompletionMessageParam``)
 so the adapter, not pydantic, owns the role/content/typed-item translation.
@@ -48,6 +49,7 @@ class ResponsesRequest(OpenAIBaseModel):
     store: bool | None = None
     previous_response_id: str | None = None
     background: bool | None = None
+    max_tool_calls: int | None = None
 
 
 class CompactRequest(OpenAIBaseModel):
@@ -112,9 +114,51 @@ class ResponseFunctionToolCall(OpenAIBaseModel):
     status: Literal["in_progress", "completed", "incomplete"] = "completed"
 
 
+class McpListToolsTool(OpenAIBaseModel):
+    name: str
+    input_schema: dict[str, Any]
+    annotations: dict[str, Any] | None = None
+    description: str | None = None
+
+
+class McpListToolsItem(OpenAIBaseModel):
+    type: Literal["mcp_list_tools"] = "mcp_list_tools"
+    id: str = Field(default_factory=lambda: f"mcpl_{random_uuid()}")
+    server_label: str
+    tools: list[McpListToolsTool] = Field(default_factory=list)
+    error: str | None = None
+
+
+class McpCallItem(OpenAIBaseModel):
+    type: Literal["mcp_call"] = "mcp_call"
+    id: str = Field(default_factory=lambda: f"mcp_{random_uuid()}")
+    name: str
+    arguments: str = ""
+    server_label: str
+    approval_request_id: str | None = None
+    error: str | None = None
+    output: str | None = None
+    status: Literal["in_progress", "calling", "completed", "incomplete", "failed"] = "in_progress"
+
+
+class McpApprovalRequestItem(OpenAIBaseModel):
+    type: Literal["mcp_approval_request"] = "mcp_approval_request"
+    id: str = Field(default_factory=lambda: f"mcpr_{random_uuid()}")
+    name: str
+    arguments: str
+    server_label: str
+
+
 # Discriminated only by the literal ``type``; kept as a plain union since we
 # always construct these ourselves rather than parse them from the wire.
-ResponseOutputItem = ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall
+ResponseOutputItem = (
+    ResponseReasoningItem
+    | ResponseOutputMessage
+    | ResponseFunctionToolCall
+    | McpListToolsItem
+    | McpCallItem
+    | McpApprovalRequestItem
+)
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +255,10 @@ __all__ = [
     "CompactRequest",
     "CompactResource",
     "CompactionItem",
+    "McpApprovalRequestItem",
+    "McpCallItem",
+    "McpListToolsItem",
+    "McpListToolsTool",
     "ResponseFunctionToolCall",
     "ResponseInputItem",
     "ResponseInputTokensDetails",

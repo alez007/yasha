@@ -162,6 +162,52 @@ class TestResponsesRoute:
         assert body["usage"]["input_tokens"] == 1
 
 
+class TestMcpRouting:
+    """Wiring only — the loop's own behavior is covered by test_mcp_loop.py.
+    Confirms create_response swaps its generator source to mcp_loop.run_mcp_response
+    when the request declares an mcp tool, and leaves handle.respond untouched."""
+
+    @pytest.mark.asyncio
+    async def test_mcp_tool_routes_through_mcp_loop_not_handle_respond(self, api):
+        handle = MagicMock()
+        api.models = {"m": {"m-a1b2c": handle}}
+        api._round_robin = {"m": 0}
+
+        async def fake_mcp_gen():
+            yield ResponseObject(
+                model="m", output=[ResponseOutputMessage(content=[ResponseOutputText(text="via mcp loop")])]
+            )
+
+        request = ResponsesRequest(
+            model="m", input="hi", tools=[{"type": "mcp", "server_label": "s", "server_url": "http://x"}]
+        )
+        with patch("modelship.openai.api.mcp_loop.run_mcp_response", return_value=fake_mcp_gen()) as run_mcp:
+            result = await api.create_response(request, _raw_request())
+
+        run_mcp.assert_called_once()
+        handle.respond.options.return_value.remote.assert_not_called()
+        body = json.loads(bytes(result.body))
+        assert body["output"][0]["content"][0]["text"] == "via mcp loop"
+
+    @pytest.mark.asyncio
+    async def test_no_mcp_tool_uses_handle_respond_as_before(self, api):
+        handle = MagicMock()
+
+        async def gen():
+            yield ResponseObject(model="m", output=[])
+
+        handle.respond.options.return_value.remote.return_value = gen()
+        api.models = {"m": {"m-a1b2c": handle}}
+        api._round_robin = {"m": 0}
+
+        request = ResponsesRequest(model="m", input="hi")
+        with patch("modelship.openai.api.mcp_loop.run_mcp_response") as run_mcp:
+            await api.create_response(request, _raw_request())
+
+        run_mcp.assert_not_called()
+        handle.respond.options.return_value.remote.assert_called_once()
+
+
 def _response_gen(response_id="resp_new", text="hello!"):
     async def gen():
         yield ResponseObject(

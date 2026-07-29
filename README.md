@@ -56,6 +56,7 @@ Models can be deployed across multiple GPUs, run on CPU-only, or both — multip
 - **Multiple inference backends** — vLLM for high-throughput GPU or CPU inference, llama.cpp for efficient quantized GGUF models on CPU or GPU, Diffusers for image generation, and a plugin system for custom backends
 - **Zero-downtime hot-reloads** — modify your `models.yaml` and run a cluster reconcile; changes are applied incrementally without interrupting the API gateway or unchanged models
 - **Advanced agentic capabilities** — native support for DeepSeek-style reasoning (`<think>` blocks parsed into `reasoning_content`) and universal tool/function calling across the vLLM and GGUF (`llama_server`) backends
+- **Server-side MCP tool execution** — point `/v1/responses` at any self-hosted MCP server (`tools: [{"type": "mcp", ...}]`) and the gateway discovers its tools, calls them, and loops — with an approval flow (`require_approval`) client-driven tool calling doesn't have
 - **Per-model isolated deployments** — each model runs in its own Ray Serve deployment with independent lifecycle, health checks, failure isolation, and configurable replica count
 - **OpenAI-compatible API** — drop-in replacement for any OpenAI SDK client
 - **Streaming** — SSE streaming for chat completions and TTS audio
@@ -70,7 +71,7 @@ Models can be deployed across multiple GPUs, run on CPU-only, or both — multip
 | Endpoint | Usecase |
 |---|---|
 | `POST /v1/chat/completions` | Chat / text generation (streaming and non-streaming) |
-| `POST /v1/responses` | Responses API — text, reasoning, client-driven tool calls, and stored conversations (streaming and non-streaming) |
+| `POST /v1/responses` | Responses API — text, reasoning, client-driven tool calls, server-side MCP tool execution, and stored conversations (streaming and non-streaming) |
 | `GET`/`DELETE /v1/responses/{id}` | Fetch or drop a stored response (`/input_items` lists its input); `background: true` on create + `POST .../cancel` for queued/pollable runs |
 | `POST /v1/embeddings` | Text embeddings |
 | `POST /v1/audio/transcriptions` | Speech-to-text |

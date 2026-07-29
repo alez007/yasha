@@ -143,6 +143,23 @@ class TestWsTurns:
         assert dispatched.input == seed
         assert ws.types == ["response.completed"]
 
+    @pytest.mark.asyncio
+    async def test_mcp_tool_routes_through_mcp_loop_not_handle_respond(self, api):
+        handle = _wire(api, "m", _events())  # unused if wiring is correct
+        ws = _FakeWebSocket()
+
+        async def fake_mcp_gen(*args, **kwargs):
+            yield {"type": "response.created", "sequence_number": 0}
+            yield _terminal("resp_mcp")
+
+        frame = _frame(tools=[{"type": "mcp", "server_label": "s", "server_url": "http://x"}], store=False)
+        with patch("modelship.openai.api.mcp_loop.run_mcp_response", side_effect=fake_mcp_gen) as run_mcp:
+            await api._run_ws_turn(ws, "unscoped", {}, frame, {}, MagicMock(), "req-1")
+
+        run_mcp.assert_called_once()
+        handle.respond.options.return_value.remote.assert_not_called()
+        assert ws.types == ["response.created", "response.completed"]
+
 
 class TestFrameValidation:
     @pytest.mark.asyncio

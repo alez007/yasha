@@ -197,6 +197,64 @@ class TestBackgroundCreate:
         assert "_mship" not in body
 
 
+class TestMcpBackgroundWiring:
+    """Wiring only — mcp_loop's own behavior is covered by test_mcp_loop.py.
+    Confirms run_background routes through mcp_loop.run_mcp_response (with the
+    already-minted response_id) instead of handle.respond when the request
+    declares an mcp tool, and that an mcp_approval_request in its output persists
+    (background mode completes the response even with a pending approval)."""
+
+    @pytest.mark.asyncio
+    async def test_background_mcp_routes_through_loop_and_persists_approval_request(self, api):
+        handle = MagicMock()
+        api.models = {"m": {"m-a1b2c": handle}}
+        api._round_robin = {"m": 0}
+
+        async def fake_mcp_gen(*args, **kwargs):
+            response_id = kwargs.get("response_id")
+            yield {"type": "response.created", "sequence_number": 0, "response": {"id": response_id}}
+            yield {
+                "type": "response.completed",
+                "sequence_number": 1,
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "status": "completed",
+                    "background": True,
+                    "output": [
+                        {
+                            "type": "mcp_approval_request",
+                            "id": "mcpr_1",
+                            "name": "roll",
+                            "arguments": "{}",
+                            "server_label": "dice",
+                        }
+                    ],
+                },
+            }
+
+        request = ResponsesRequest(
+            model="m",
+            input="roll some dice",
+            background=True,
+            tools=[{"type": "mcp", "server_label": "dice", "server_url": "http://x"}],
+        )
+        with patch("modelship.openai.mcp.loop.run_mcp_response", side_effect=fake_mcp_gen) as run_mcp:
+            result = await api.create_response(request, _raw_request())
+            response_id = json.loads(bytes(result.body))["id"]
+            await _drain_background_tasks(api)
+
+        run_mcp.assert_called_once()
+        assert run_mcp.call_args.kwargs["response_id"] == response_id
+        handle.respond.options.return_value.remote.assert_not_called()
+
+        get_result = await api.get_response(response_id, _raw_request())
+        body = json.loads(bytes(get_result.body))
+        assert body["status"] == "completed"
+        assert body["output"][0]["type"] == "mcp_approval_request"
+        assert body["output"][0]["name"] == "roll"
+
+
 class TestGuards:
     @pytest.mark.asyncio
     async def test_background_and_store_false_is_400(self, api):

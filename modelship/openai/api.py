@@ -35,6 +35,7 @@ from modelship.metrics import (
     stamp_gateway,
 )
 from modelship.openai.auth import ApiKeyMiddleware, check_ws_auth, get_api_keys, resolve_identity
+from modelship.openai.mcp import loop as mcp_loop
 from modelship.openai.protocol import (
     TERMINAL_EVENT_TYPES,
     ChatCompletionRequest,
@@ -657,13 +658,16 @@ class ModelshipAPI:
                 )
             return JSONResponse(content=response_dict, status_code=200)
 
-        # Under stream=True the remote() result is an async-iterable
-        # DeploymentResponseGenerator; Ray's stub widens it to a union because it
-        # doesn't overload on the stream literal, so narrow it explicitly.
-        response_gen = cast(
-            "DeploymentResponseGenerator[Any]",
-            handle.respond.options(stream=True).remote(request, headers, watcher.registry, req_id, identity),
-        )
+        if mcp_loop.wants_mcp(request):
+            response_gen = mcp_loop.run_mcp_response(handle, request, headers, watcher.registry, req_id, identity)
+        else:
+            # Under stream=True the remote() result is an async-iterable
+            # DeploymentResponseGenerator; Ray's stub widens it to a union because it
+            # doesn't overload on the stream literal, so narrow it explicitly.
+            response_gen = cast(
+                "DeploymentResponseGenerator[Any]",
+                handle.respond.options(stream=True).remote(request, headers, watcher.registry, req_id, identity),
+            )
         if request.store is not False:
             response_gen = responses_utils.persist_response(
                 response_gen,
@@ -807,10 +811,13 @@ class ModelshipAPI:
         failed = False
         terminal_response: dict[str, Any] | None = None
         try:
-            response_gen = cast(
-                "DeploymentResponseGenerator[Any]",
-                handle.respond.options(stream=True).remote(request, headers, registry, req_id, identity),
-            )
+            if mcp_loop.wants_mcp(request):
+                response_gen = mcp_loop.run_mcp_response(handle, request, headers, registry, req_id, identity)
+            else:
+                response_gen = cast(
+                    "DeploymentResponseGenerator[Any]",
+                    handle.respond.options(stream=True).remote(request, headers, registry, req_id, identity),
+                )
             if request.store is not False:
                 # Same helper HTTP uses — persists before yielding, so a store
                 # failure can still flip the terminal event to response.failed.

@@ -51,11 +51,30 @@ The `llama_server` loader provides high-efficiency inference for quantized GGUF 
 - **Non-streaming** — `utils.responses.build_responses_items_from_parsed` maps the parsed tuple into `output[]` items (`reasoning` → reasoning item, content → message item, tool calls → `function_call` items), then `protocol/responses/adapter.build_response_object` builds the envelope and remaps usage.
 - **Streaming** (`stream: true`) — `ResponsesStreamTranslator` is fed loader-native typed chunks directly (vLLM's `engine_ops.stream_chat_completion`, llama-server's own delta fields) and emits the Responses event protocol (`response.created` → `output_item.added` → `output_text.delta` / `reasoning_summary_text.delta` / `function_call_arguments.delta` → `output_item.done` → `response.completed`), tracking `output_index` / `sequence_number`. Output items are opened lazily on their first delta and closed at stream end, so the translation is independent of how a model interleaves reasoning, text, and tool calls.
 
-**Supported:** text, reasoning (as a first-class `reasoning` output item), client-driven tool calling (`function_call` / `function_call_output` round-trip), server-side conversation state (`store` / `previous_response_id`, `GET`/`DELETE /v1/responses/{id}`, `/input_items`), and `background` (queue/poll/cancel — see below), streaming and non-streaming — on the `vllm` and `llama_server` loaders.
+**Supported:** text, reasoning (as a first-class `reasoning` output item), client-driven tool calling (`function_call` / `function_call_output` round-trip), server-side MCP tool execution (see below), server-side conversation state (`store` / `previous_response_id`, `GET`/`DELETE /v1/responses/{id}`, `/input_items`), and `background` (queue/poll/cancel — see below), streaming and non-streaming — on the `vllm` and `llama_server` loaders.
 
 **404s on other loaders** (`diffusers`, `custom`) — there is no generic fallback; a loader must implement `create_response` itself.
 
-**Rejected with a clear 400** (rather than silently dropped): hosted built-in tools (e.g. `web_search`), and `background: true` combined with an explicit `store: false` over HTTP. Encrypted reasoning (`reasoning.encrypted_content`) is not implemented — server-side state supersedes it as the way to carry reasoning across turns.
+**Rejected with a clear 400** (rather than silently dropped): hosted built-in tools (e.g. `web_search`), OpenAI-hosted MCP connectors (`connector_id`), `tool_choice` forcing a specific `mcp` tool, and `background: true` combined with an explicit `store: false` over HTTP. Encrypted reasoning (`reasoning.encrypted_content`) is not implemented — server-side state supersedes it as the way to carry reasoning across turns.
+
+### Server-side MCP tool execution (`tools: [{"type": "mcp", ...}]`)
+
+Unlike client-driven `function` tools, an `mcp` tool is discovered and executed entirely at the **gateway** (`modelship/openai/mcp/`), never touching a loader — a request with an `mcp` tool is intercepted before the Ray hop (`mcp.loop.wants_mcp`) and driven through `mcp.loop.run_mcp_response` instead of the normal `handle.respond` call. This is why it works uniformly across `vllm`, `llama_server`, and any future loader with zero loader changes, and composes for free with background mode and the WebSocket transport (both already consume the same event-dict generator shape).
+
+The loop: discover the server's tools (`tools/list`, over streamable HTTP via the official `mcp` SDK), expand them into plain `function` tools for the model, run turns against the loader, and execute any resulting tool call (`tools/call`) itself — appending the result and looping, up to 10 turns (or `max_tool_calls`, if set) — before returning a normal completed response with the MCP calls already resolved. A `require_approval` tool instead produces an `mcp_approval_request` item and ends the turn; the client resumes with `previous_response_id` plus an `mcp_approval_response` input item, same as any other continuation.
+
+Because one logical response now spans N loader turns, a gateway-side stream stitcher (`mcp.loop.Stitcher`) owns the outer envelope: it renumbers each turn's `sequence_number`/`output_index`, absorbs each turn's output into one accumulator, and rewrites tool-call events into `mcp_call` events for any call that matches a discovered MCP tool (a plain `function_call` for anything else, handed back to the client unresolved). The client always sees exactly one `response.created` and one terminal event, never one per turn.
+
+Egress is permissive by default (plain `http://`, localhost, and private IPs are all allowed — a self-hosted MCP server rarely has a public cert) except for cloud metadata endpoints, which are blocked unconditionally. `MSHIP_MCP_ALLOWED_HOSTS` (comma-separated) and `MSHIP_MCP_REQUIRE_HTTPS=true` lock this down for multi-tenant deploys.
+
+```python
+resp = client.responses.create(
+    model="reasoning-qwen",
+    input="Roll two dice.",
+    tools=[{"type": "mcp", "server_label": "dice", "server_url": "http://localhost:3000/mcp", "require_approval": "never"}],
+)
+print(resp.output_text)  # the model's answer, with the tool already called
+```
 
 ### Background mode (`background: true`)
 

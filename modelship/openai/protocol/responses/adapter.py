@@ -15,9 +15,16 @@ from cryptography.fernet import InvalidToken
 from modelship.openai import compaction_crypto
 from modelship.openai.protocol.chat import ChatCompletionRequest, StreamOptions
 from modelship.openai.protocol.responses.schemas import (
+    McpApprovalRequestItem,
+    McpCallItem,
+    McpListToolsItem,
+    ResponseFunctionToolCall,
     ResponseInputTokensDetails,
     ResponseObject,
+    ResponseOutputItem,
+    ResponseOutputMessage,
     ResponseOutputTokensDetails,
+    ResponseReasoningItem,
     ResponsesRequest,
     ResponseUsage,
 )
@@ -120,6 +127,32 @@ def messages_from_input(input_: str | list[dict[str, Any]], instructions: str | 
                     ],
                 }
             )
+        elif itype == "mcp_call":
+            # Mirrors the function_call branch: an assistant tool_calls message plus its
+            # tool-result message, synthesized as a pair since mcp_call has no call_id.
+            call_id = item.get("id") or ""
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": item.get("name", ""),
+                                "arguments": item.get("arguments", ""),
+                            },
+                        }
+                    ],
+                }
+            )
+            content = item.get("output") if item.get("error") is None else item.get("error")
+            messages.append({"role": "tool", "tool_call_id": call_id, "content": content})
+        elif itype in ("mcp_list_tools", "mcp_approval_request", "mcp_approval_response"):
+            # Not prompt material: mcp_list_tools is discovery bookkeeping, and approval
+            # request/response are consumed by the MCP loop before the loader ever sees them.
+            continue
         elif itype == "function_call_output":
             # call_id must reference a function_call seen earlier — an orphaned tool result should 400, not silently pass through.
             call_id = item.get("call_id")
@@ -211,6 +244,12 @@ def _tools_to_chat(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] |
     out: list[dict[str, Any]] = []
     for tool in tools:
         ttype = tool.get("type")
+        if ttype == "mcp":
+            # The gateway expands mcp tools into plain function tools before the Ray hop;
+            # reaching here means a loader was called directly, bypassing that expansion.
+            raise UnsupportedResponsesFeatureError(
+                "mcp tools are handled at the gateway and must not reach the loader directly."
+            )
         if ttype != "function":
             raise UnsupportedResponsesFeatureError(
                 f"hosted tool type {ttype!r} is not supported; only client-defined 'function' tools are."
@@ -308,12 +347,20 @@ def build_response_object(
 
 def _echo_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Backfill echoed ``tools[]`` so every ``FunctionTool`` carries all five spec keys
-    (the request may omit optional ones, but the echo requires them present, nullable)."""
+    (the request may omit optional ones, but the echo requires them present, nullable).
+    ``mcp`` tools have their credentials scrubbed (OpenAI redacts the same way) since
+    this echo is both returned to the client and written into the state-store snapshot."""
     if not tools:
         return []
     out: list[dict[str, Any]] = []
     for tool in tools:
-        if tool.get("type") != "function":
+        ttype = tool.get("type")
+        if ttype == "mcp":
+            scrubbed = {**tool, "headers": None}
+            scrubbed.pop("authorization", None)
+            out.append(scrubbed)
+            continue
+        if ttype != "function":
             out.append(tool)
             continue
         out.append(
@@ -345,6 +392,27 @@ def _usage_from_chat(usage: UsageInfo) -> ResponseUsage:
             reasoning_tokens=(completion_details.reasoning_tokens or 0) if completion_details else 0
         ),
     )
+
+
+_OUTPUT_ITEM_CLASSES: dict[str, type[ResponseOutputItem]] = {
+    "reasoning": ResponseReasoningItem,
+    "message": ResponseOutputMessage,
+    "function_call": ResponseFunctionToolCall,
+    "mcp_list_tools": McpListToolsItem,
+    "mcp_call": McpCallItem,
+    "mcp_approval_request": McpApprovalRequestItem,
+}
+
+
+def parse_output_item(d: dict[str, Any]) -> ResponseOutputItem:
+    """Rebuild a typed output item from a dict, dispatching explicitly on ``type``.
+    ``ResponseOutputItem`` is a plain (non-discriminated) union, so letting pydantic
+    smart-match a dict against it risks mis-coercion between the similarly-shaped
+    item classes."""
+    cls = _OUTPUT_ITEM_CLASSES.get(d.get("type", ""))
+    if cls is None:
+        raise UnsupportedResponsesFeatureError(f"unsupported output item type {d.get('type')!r}.")
+    return cls.model_validate(d)
 
 
 def _status_for(

@@ -487,10 +487,19 @@ async def run_background(
     also tees every event into the durable replay log a poller reads from."""
     request.stream = True
     registry = get_disconnect_registry()
-    response_gen = cast(
-        "DeploymentResponseGenerator[Any]",
-        handle.respond.options(stream=True).remote(request, headers, registry, req_id, identity, response_id),
-    )
+    # Local import: modelship.openai.mcp.{spec,egress} import ResponsesApiError from this
+    # module, so importing mcp.loop at module scope here would be a cycle.
+    from modelship.openai.mcp import loop as mcp_loop
+
+    if mcp_loop.wants_mcp(request):
+        response_gen = mcp_loop.run_mcp_response(
+            handle, request, headers, registry, req_id, identity, response_id=response_id
+        )
+    else:
+        response_gen = cast(
+            "DeploymentResponseGenerator[Any]",
+            handle.respond.options(stream=True).remote(request, headers, registry, req_id, identity, response_id),
+        )
     piped = persist_response(response_gen, store, identity=identity, input_items=input_items, conditional=True)
     buffer = _StreamBuffer(store, identity, response_id) if stream_buffer else None
     if buffer is not None:
@@ -506,7 +515,14 @@ async def run_background(
                 drain_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await drain_task
-                response_gen.cancel()  # best-effort abort; registry signal above is the primary path
+                if isinstance(response_gen, DeploymentResponseGenerator):
+                    response_gen.cancel()  # best-effort abort; registry signal above is the primary path
+                else:
+                    # mcp_loop.run_mcp_response: a plain async generator, not a Ray one;
+                    # aclose() throws GeneratorExit into it, which cancels its own
+                    # in-flight inner Ray generator (see loop.py's _events finally block).
+                    with contextlib.suppress(Exception):
+                        await response_gen.aclose()
                 return
             saw_ok_terminal, failed_response = drain_task.result()
         except Exception:

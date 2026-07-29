@@ -339,6 +339,82 @@ class TestEchoedTools:
     def test_no_tools_echoes_empty_list(self):
         assert self._tools_on(_req()) == []
 
+    def test_mcp_tool_credentials_scrubbed(self):
+        tool = {
+            "type": "mcp",
+            "server_label": "s",
+            "server_url": "https://example.com/mcp",
+            "headers": {"X-Api-Key": "secret"},
+            "authorization": "topsecret",
+        }
+        echoed = self._tools_on(_req(tools=[tool]))
+        assert len(echoed) == 1
+        assert echoed[0]["headers"] is None
+        assert "authorization" not in echoed[0]
+        assert echoed[0]["server_url"] == "https://example.com/mcp"
+
+
+class TestMcpInputItems:
+    def test_mcp_call_becomes_tool_call_and_result_pair(self):
+        chat = responses_request_to_chat(
+            _req(
+                input=[
+                    {
+                        "type": "mcp_call",
+                        "id": "mcp_1",
+                        "name": "roll",
+                        "arguments": '{"n":2}',
+                        "server_label": "dice",
+                        "output": "9",
+                    }
+                ]
+            )
+        )
+        messages = chat.messages
+        assert messages[-2]["role"] == "assistant"
+        assert messages[-2]["tool_calls"][0]["id"] == "mcp_1"
+        assert messages[-2]["tool_calls"][0]["function"]["name"] == "roll"
+        assert messages[-1] == {"role": "tool", "tool_call_id": "mcp_1", "content": "9"}
+
+    def test_mcp_call_with_error_uses_error_as_tool_content(self):
+        chat = responses_request_to_chat(
+            _req(
+                input=[
+                    {
+                        "type": "mcp_call",
+                        "id": "mcp_1",
+                        "name": "roll",
+                        "arguments": "{}",
+                        "server_label": "dice",
+                        "error": "boom",
+                    }
+                ]
+            )
+        )
+        assert chat.messages[-1] == {"role": "tool", "tool_call_id": "mcp_1", "content": "boom"}
+
+    def test_mcp_list_tools_and_approval_items_are_skipped(self):
+        chat = responses_request_to_chat(
+            _req(
+                input=[
+                    {"type": "mcp_list_tools", "id": "mcpl_1", "server_label": "dice", "tools": []},
+                    {
+                        "type": "mcp_approval_request",
+                        "id": "mcpr_1",
+                        "name": "roll",
+                        "arguments": "{}",
+                        "server_label": "dice",
+                    },
+                    {"type": "mcp_approval_response", "approval_request_id": "mcpr_1", "approve": True},
+                ]
+            )
+        )
+        assert chat.messages == []
+
+    def test_mcp_tool_type_rejected_by_tools_to_chat(self):
+        with pytest.raises(UnsupportedResponsesFeatureError, match="gateway"):
+            responses_request_to_chat(_req(tools=[{"type": "mcp", "server_label": "s", "server_url": "http://x"}]))
+
 
 class TestReasoningItemSerialization:
     def test_encrypted_content_omitted_when_unset(self):
