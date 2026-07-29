@@ -39,6 +39,8 @@ def validate_server_url(url: str) -> None:
         raise _egress_error("MSHIP_MCP_REQUIRE_HTTPS is set; mcp server_url must use https.")
 
     hostname = parts.hostname or ""
+    if not hostname:
+        raise _egress_error(f"mcp server_url {url!r} is missing a hostname.")
     if hostname.lower() in _METADATA_HOSTS:
         raise _egress_error(f"mcp server_url host {hostname!r} is a cloud metadata endpoint and is always blocked.")
     try:

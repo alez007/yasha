@@ -32,6 +32,12 @@ class TestSchemeValidation:
         validate_server_url("https://example.com/mcp")
 
 
+class TestHostnameRequired:
+    def test_missing_hostname_rejected(self):
+        with pytest.raises(ResponsesApiError, match="hostname"):
+            validate_server_url("http:///mcp")
+
+
 class TestMetadataBlock:
     def test_literal_metadata_ip_blocked(self):
         with pytest.raises(ResponsesApiError, match="metadata"):
