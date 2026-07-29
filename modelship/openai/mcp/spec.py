@@ -72,6 +72,15 @@ def _read_only(tool: McpListToolsTool) -> bool:
     return bool(annotations.get("readOnlyHint") or annotations.get("read_only_hint"))
 
 
+def _tool_names(value: Any, *, spec: McpToolSpec, field: str) -> list[str]:
+    """Validate a ``tool_names`` value as a list of strings. A bare string is itself an
+    iterable of characters, so without this a client-sent string would silently turn
+    ``tool.name in tool_names`` into substring/character membership instead of a 400."""
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise _mcp_error(f"'{field}' must be a list of strings for server {spec.server_label!r}.")
+    return value
+
+
 def filter_tools(spec: McpToolSpec, tools: list[McpListToolsTool]) -> list[McpListToolsTool]:
     """Apply ``allowed_tools``: a plain name list, ``{"tool_names": [...]}``, or
     ``{"read_only": true}`` (keep only tools whose annotations mark them read-only)."""
@@ -88,7 +97,7 @@ def filter_tools(spec: McpToolSpec, tools: list[McpListToolsTool]) -> list[McpLi
         read_only = allowed.get("read_only")
         out = tools
         if names is not None:
-            name_set = set(names)
+            name_set = set(_tool_names(names, spec=spec, field="allowed_tools.tool_names"))
             out = [t for t in out if t.name in name_set]
         if read_only:
             out = [t for t in out if _read_only(t)]
@@ -110,9 +119,15 @@ def requires_approval(spec: McpToolSpec, tool: McpListToolsTool) -> bool:
         always = setting.get("always") or {}
         if not isinstance(never, dict) or not isinstance(always, dict):
             raise _mcp_error(f"unsupported 'require_approval' shape for server {spec.server_label!r}.")
-        if tool.name in (never.get("tool_names") or []):
+        never_names = never.get("tool_names")
+        if never_names is not None and tool.name in _tool_names(
+            never_names, spec=spec, field="require_approval.never.tool_names"
+        ):
             return False
-        if tool.name in (always.get("tool_names") or []):
+        always_names = always.get("tool_names")
+        if always_names is not None and tool.name in _tool_names(
+            always_names, spec=spec, field="require_approval.always.tool_names"
+        ):
             return True
         if never.get("read_only") and _read_only(tool):
             return False

@@ -85,6 +85,13 @@ class TestFilterTools:
         with pytest.raises(ResponsesApiError):
             filter_tools(spec, [_tool("a")])
 
+    def test_string_tool_names_rejected_not_treated_as_char_iterable(self):
+        # A bare string is itself iterable, so set("roll") would silently become
+        # {"r", "o", "l"} and change matching semantics instead of erroring.
+        spec = McpToolSpec(server_label="s", server_url="http://x", allowed_tools={"tool_names": "roll"})
+        with pytest.raises(ResponsesApiError, match="tool_names"):
+            filter_tools(spec, [_tool("r"), _tool("roll")])
+
 
 class TestRequiresApproval:
     def test_unset_defaults_to_always(self):
@@ -124,6 +131,13 @@ class TestRequiresApproval:
         spec = McpToolSpec(server_label="s", server_url="http://x", require_approval={"never": "bogus"})
         with pytest.raises(ResponsesApiError):
             requires_approval(spec, _tool("a"))
+
+    def test_string_tool_names_rejected_not_treated_as_substring_membership(self):
+        # A bare string "roll" is itself iterable, so `"o" in "roll"` is True even
+        # though "o" was never listed as a tool name — this must 400, not bypass approval.
+        spec = McpToolSpec(server_label="s", server_url="http://x", require_approval={"never": {"tool_names": "roll"}})
+        with pytest.raises(ResponsesApiError, match="tool_names"):
+            requires_approval(spec, _tool("o"))
 
 
 class TestCheckCollisions:
