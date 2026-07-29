@@ -462,11 +462,16 @@ async def start_background(
     response_dict = response.model_dump(mode="json")
     try:
         await responses_state.write_background(
-            store, identity, response_id, response=response_dict, input_items=input_items, req_id=req_id
+            store, identity, response_id, response=response_dict, input_items=input_items
         )
     except StateStoreUnavailableError:
         logger.exception("State store unavailable creating background response %s", response_id)
         raise _store_unavailable_error() from None
+    # Best-effort: a failure here just means the first heartbeat tick (up to
+    # _HEARTBEAT_INTERVAL_S later) re-seeds it — the placeholder snapshot above is
+    # already the durable source of truth, so this shouldn't fail the whole request.
+    with contextlib.suppress(Exception):
+        await responses_state.heartbeat(identity, response_id, req_id)
     return response_dict
 
 
@@ -507,11 +512,11 @@ async def run_background(
 
     try:
         drain_task = asyncio.ensure_future(_drain_background_stream(piped, response_id))
-        heartbeat_task = asyncio.ensure_future(_heartbeat_loop(store, identity, response_id))
+        heartbeat_task = asyncio.ensure_future(_heartbeat_loop(identity, response_id, req_id))
         try:
             done, _pending = await asyncio.wait({drain_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED)
             if drain_task not in done:
-                # Heartbeat found the snapshot cancelled/deleted: stop draining, no further write.
+                # Heartbeat found this run cancelled: stop draining, no further write.
                 drain_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await drain_task
@@ -571,14 +576,19 @@ async def _drain_background_stream(piped, response_id: str) -> tuple[bool, dict 
     return saw_ok_terminal, failed_response
 
 
-async def _heartbeat_loop(store: StateStore, identity: str, response_id: str) -> None:
-    """Refresh the drain task's heartbeat every `_HEARTBEAT_INTERVAL_S` until `touch`
-    reports the run is no longer heartbeat-owned (cancelled or deleted)."""
+async def _heartbeat_loop(identity: str, response_id: str, req_id: str) -> None:
+    """Refresh this run's HeartbeatRegistry entry every `_HEARTBEAT_INTERVAL_S`, and
+    stop as soon as `DisconnectRegistry` shows `req_id` cancelled — the same signal
+    `cancel_background`/`signal_background_cancel_if_in_progress` already set, so
+    cancellation is detected without ever touching the response snapshot."""
+    registry = get_disconnect_registry()
     while True:
         await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
-        still_running = await responses_state.touch(store, identity, response_id)
-        if not still_running:
-            return
+        with contextlib.suppress(Exception):
+            await responses_state.heartbeat(identity, response_id, req_id)
+        with contextlib.suppress(Exception):
+            if await registry.is_set.remote(req_id):
+                return
 
 
 async def cancel_background(store: StateStore, identity: str, response_id: str) -> dict:
@@ -592,11 +602,13 @@ async def cancel_background(store: StateStore, identity: str, response_id: str) 
     if response.get("status") in responses_state.TERMINAL_STATUSES:
         return response
 
-    mship = snapshot.get("_mship")
-    if isinstance(mship, dict) and mship.get("req_id"):
+    req_id = None
+    with contextlib.suppress(Exception):
+        req_id = await responses_state.req_id_for(identity, response_id)
+    if req_id:
         registry = get_disconnect_registry()
         with contextlib.suppress(Exception):
-            await registry.set.remote(mship["req_id"])
+            await registry.set.remote(req_id)
 
     cancelled = {**response, "status": "cancelled", "completed_at": int(time.time())}
     try:
@@ -610,18 +622,20 @@ async def cancel_background(store: StateStore, identity: str, response_id: str) 
     return updated["response"]
 
 
-async def signal_background_cancel_if_in_progress(snapshot: dict) -> None:
+async def signal_background_cancel_if_in_progress(identity: str, response_id: str, snapshot: dict) -> None:
     """`DELETE /{id}` on an in-flight background run implies cancel: signal the
     registry (same mechanism `cancel_background` uses) before the caller deletes the
-    snapshot, so the drain task's next heartbeat tick tears the run down."""
+    snapshot, so the drain task's heartbeat loop tears the run down."""
     response = snapshot.get("response") or {}
     if not response.get("background") or response.get("status") in responses_state.TERMINAL_STATUSES:
         return
-    mship = snapshot.get("_mship")
-    if isinstance(mship, dict) and mship.get("req_id"):
+    req_id = None
+    with contextlib.suppress(Exception):
+        req_id = await responses_state.req_id_for(identity, response_id)
+    if req_id:
         registry = get_disconnect_registry()
         with contextlib.suppress(Exception):
-            await registry.set.remote(mship["req_id"])
+            await registry.set.remote(req_id)
 
 
 async def reconcile_staleness(store: StateStore, identity: str, response_id: str, snapshot: dict) -> dict:
@@ -630,7 +644,14 @@ async def reconcile_staleness(store: StateStore, identity: str, response_id: str
     response = snapshot.get("response") or {}
     if response.get("status") not in ("queued", "in_progress"):
         return snapshot
-    if not responses_state.is_stale(snapshot, responses_state.stale_seconds()):
+    try:
+        alive = await responses_state.is_alive(identity, response_id)
+    except Exception:
+        # Registry unreachable: ambiguous, not evidence of staleness — don't risk
+        # marking a genuinely healthy run failed over a transient hiccup.
+        logger.warning("HeartbeatRegistry unavailable reconciling staleness for response %s", response_id)
+        return snapshot
+    if alive:
         return snapshot
     failed = _mark_failed(response, "Background response orphaned: its worker stopped reporting progress.")
     try:

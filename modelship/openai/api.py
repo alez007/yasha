@@ -921,7 +921,7 @@ class ModelshipAPI:
         # unknown id from a real removal.
         snapshot = await responses_utils.load_snapshot(self._state_store, identity, response_id)
         # DELETE on an in-flight background run implies cancel.
-        await responses_utils.signal_background_cancel_if_in_progress(snapshot)
+        await responses_utils.signal_background_cancel_if_in_progress(identity, response_id, snapshot)
         await responses_utils.delete_snapshot(self._state_store, identity, response_id)
         return JSONResponse(content={"id": response_id, "object": "response", "deleted": True})
 

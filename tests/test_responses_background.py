@@ -4,7 +4,6 @@ triggering the route before asserting on the stored snapshot."""
 
 import asyncio
 import json
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +11,8 @@ from fastapi import HTTPException
 
 from modelship.openai.api import ModelshipAPI
 from modelship.openai.protocol import ResponsesRequest
+from modelship.openai.state import responses as responses_state
+from modelship.openai.state.responses import _HeartbeatStore
 from modelship.openai.utils.responses import _StreamBuffer
 from modelship.state import MemoryStoreActor, StateStoreUnavailableError
 
@@ -25,8 +26,52 @@ def _fake_disconnect_registry():
     conftest-level patch on `infer_config`'s copy doesn't reach it — fake it here."""
     registry = MagicMock()
     registry.set.remote = AsyncMock()
+    registry.is_set.remote = AsyncMock(return_value=False)
     with patch("modelship.openai.utils.responses.get_disconnect_registry", return_value=registry):
         yield registry
+
+
+class _FakeHeartbeatRegistry:
+    """Stand-in for the HeartbeatRegistry actor handle, backed by a real
+    _HeartbeatStore. `.remote()` mimics Ray actor-method dispatch, same pattern as
+    `_FakeRegistry` in test_disconnect_registry.py."""
+
+    def __init__(self):
+        self._store = _HeartbeatStore(ttl_seconds=3600.0)
+        self.heartbeat = self._Method(self._heartbeat)
+        self.is_alive = self._Method(self._is_alive)
+        self.req_id = self._Method(self._req_id)
+
+    async def _heartbeat(self, key, req_id):
+        self._store.heartbeat(key, req_id)
+
+    async def _is_alive(self, key):
+        return self._store.is_alive(key)
+
+    async def _req_id(self, key):
+        return self._store.req_id(key)
+
+    def expire(self, identity: str, response_id: str) -> None:
+        """Force this key's entry stale, simulating a dead worker's heartbeat aging
+        out, without waiting out a real TTL."""
+        key = f"responses/{identity}/{response_id}"
+        req_id = self._store.req_id(key)
+        if req_id is not None:
+            self._store._entries[key] = (req_id, -1.0)
+
+    class _Method:
+        def __init__(self, fn):
+            self._fn = fn
+
+        def remote(self, *args):
+            return self._fn(*args)
+
+
+@pytest.fixture(autouse=True)
+def heartbeat_registry():
+    reg = _FakeHeartbeatRegistry()
+    with patch("modelship.openai.state.responses.get_heartbeat_registry", return_value=reg):
+        yield reg
 
 
 @pytest.fixture
@@ -58,14 +103,14 @@ def _stored(api, response_id="resp_1", identity="unscoped", status="completed", 
     )
 
 
-def _stored_background(
+async def _stored_background(
     api, response_id="resp_1", identity="unscoped", status="in_progress", req_id="req-1", output=None
 ):
     response = {"id": response_id, "object": "response", "status": status, "background": True, "output": output or []}
     value = {"response": response, "input_items": []}
-    if status in ("queued", "in_progress"):
-        value["_mship"] = {"req_id": req_id, "updated_at": time.time()}
     api._state_store.set(f"responses/{identity}/{response_id}", value)
+    if status in ("queued", "in_progress"):
+        await responses_state.heartbeat(identity, response_id, req_id)
 
 
 def _wire(api, side_effect):
@@ -268,7 +313,7 @@ class TestGuards:
 
     @pytest.mark.asyncio
     async def test_previous_response_id_in_progress_is_400(self, api):
-        _stored_background(api, "resp_running", status="in_progress")
+        await _stored_background(api, "resp_running", status="in_progress")
         _wire(api, _background_gen_factory())
         request = ResponsesRequest(model="m", input="hi", previous_response_id="resp_running")
 
@@ -279,7 +324,7 @@ class TestGuards:
 
     @pytest.mark.asyncio
     async def test_previous_response_id_queued_is_400(self, api):
-        _stored_background(api, "resp_queued", status="queued")
+        await _stored_background(api, "resp_queued", status="queued")
         _wire(api, _background_gen_factory())
         request = ResponsesRequest(model="m", input="hi", previous_response_id="resp_queued")
 
@@ -332,7 +377,7 @@ class TestCancel:
 
     @pytest.mark.asyncio
     async def test_cancel_on_terminal_background_is_idempotent(self, api):
-        _stored_background(api, "resp_done", status="completed")
+        await _stored_background(api, "resp_done", status="completed")
 
         result = await api.cancel_response("resp_done", _raw_request())
 
@@ -357,7 +402,7 @@ class TestCancel:
         # Regression: the write of the cancelled snapshot wasn't wrapped, so a store
         # outage there bubbled as a raw StateStoreUnavailableError (500) instead of
         # the intended 503 ResponsesApiError every other store write in this module produces.
-        _stored_background(api, "resp_1", status="in_progress")
+        await _stored_background(api, "resp_1", status="in_progress")
 
         with (
             patch.object(api._state_store, "set_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))),
@@ -409,11 +454,9 @@ class TestDeleteImpliesCancel:
 
 class TestOrphanDetection:
     @pytest.mark.asyncio
-    async def test_stale_heartbeat_reports_failed_on_get(self, api):
-        _stored_background(api, "resp_stale", status="in_progress")
-        snapshot = api._state_store.get("responses/unscoped/resp_stale")
-        snapshot["_mship"]["updated_at"] = time.time() - 3600
-        api._state_store.set("responses/unscoped/resp_stale", snapshot)
+    async def test_stale_heartbeat_reports_failed_on_get(self, api, heartbeat_registry):
+        await _stored_background(api, "resp_stale", status="in_progress")
+        heartbeat_registry.expire("unscoped", "resp_stale")
 
         result = await api.get_response("resp_stale", _raw_request())
 
@@ -423,21 +466,19 @@ class TestOrphanDetection:
 
     @pytest.mark.asyncio
     async def test_fresh_heartbeat_stays_in_progress(self, api):
-        _stored_background(api, "resp_fresh", status="in_progress")
+        await _stored_background(api, "resp_fresh", status="in_progress")
 
         result = await api.get_response("resp_fresh", _raw_request())
 
         assert json.loads(bytes(result.body))["status"] == "in_progress"
 
     @pytest.mark.asyncio
-    async def test_store_outage_writing_failed_snapshot_is_503(self, api):
+    async def test_store_outage_writing_failed_snapshot_is_503(self, api, heartbeat_registry):
         # Regression: reconcile_staleness's write of the orphaned-failure snapshot
         # wasn't wrapped, so a store outage there bubbled as a raw
         # StateStoreUnavailableError (500) instead of the documented 503.
-        _stored_background(api, "resp_stale", status="in_progress")
-        snapshot = api._state_store.get("responses/unscoped/resp_stale")
-        snapshot["_mship"]["updated_at"] = time.time() - 3600
-        api._state_store.set("responses/unscoped/resp_stale", snapshot)
+        await _stored_background(api, "resp_stale", status="in_progress")
+        heartbeat_registry.expire("unscoped", "resp_stale")
 
         with (
             patch.object(api._state_store, "set_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))),
@@ -447,13 +488,11 @@ class TestOrphanDetection:
         assert exc.value.status_code == 503
 
     @pytest.mark.asyncio
-    async def test_store_outage_on_post_write_readback_is_503(self, api):
+    async def test_store_outage_on_post_write_readback_is_503(self, api, heartbeat_registry):
         # Regression: reconcile_staleness's final read-back (after the write succeeds)
         # also wasn't wrapped, for the same reason as the write above.
-        _stored_background(api, "resp_stale", status="in_progress")
-        snapshot = api._state_store.get("responses/unscoped/resp_stale")
-        snapshot["_mship"]["updated_at"] = time.time() - 3600
-        api._state_store.set("responses/unscoped/resp_stale", snapshot)
+        await _stored_background(api, "resp_stale", status="in_progress")
+        heartbeat_registry.expire("unscoped", "resp_stale")
 
         real_get_async = api._state_store.get_async
         calls = 0
@@ -550,7 +589,7 @@ class TestBackgroundStream:
     @pytest.mark.asyncio
     async def test_get_stream_resumes_from_buffered_events(self, api):
         response_id = "resp_1"
-        _stored_background(api, response_id, status="completed")
+        await _stored_background(api, response_id, status="completed")
         key = f"responses-stream/unscoped/{response_id}"
         await api._state_store.append_async(key, {"type": "response.created", "sequence_number": 0, "response": {}})
         await api._state_store.append_async(
@@ -575,7 +614,7 @@ class TestBackgroundStream:
 
     @pytest.mark.asyncio
     async def test_get_stream_on_terminal_response_synthesizes_terminal_event(self, api):
-        _stored_background(api, "resp_done", status="completed")
+        await _stored_background(api, "resp_done", status="completed")
 
         result = await api.get_response("resp_done", _raw_request(), stream=True)
         body = await _consume_body(result)
@@ -587,7 +626,7 @@ class TestBackgroundStream:
 
     @pytest.mark.asyncio
     async def test_get_stream_ends_cleanly_on_buffer_read_outage(self, api):
-        _stored_background(api, "resp_1", status="in_progress")
+        await _stored_background(api, "resp_1", status="in_progress")
         with patch.object(
             api._state_store, "read_from_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))
         ):
