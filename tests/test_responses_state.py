@@ -5,6 +5,8 @@ Runs against every backend the store supports, so the layer is proven on the def
 memory:// and on the durable redis:// alike.
 """
 
+from unittest.mock import patch
+
 import pytest
 
 from modelship.openai.state import responses as responses_state
@@ -181,6 +183,35 @@ class TestBackgroundHeartbeat:
         snap = await responses_state.read_async(store, "u1", "resp_1")
         assert snap["response"]["status"] == "cancelled"
         assert snap["_mship"]["updated_at"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_touch_does_not_regress_a_terminal_write_landing_mid_tick(self, store):
+        # Regression: touch() used to do a single read then an unconditional write of
+        # that snapshot. A terminal writer (drain completion, cancel, staleness)
+        # landing between touch's read and its write got silently clobbered back to
+        # non-terminal — permanently, since nothing else re-corrects it once the
+        # drain task has exited.
+        await responses_state.write_background(
+            store, "u1", "resp_1", response={**_response(), "status": "in_progress"}, input_items=[], req_id="req-1"
+        )
+        real_get_async = store.get_async
+        calls = 0
+
+        async def racing_get_async(key):
+            nonlocal calls
+            calls += 1
+            value = await real_get_async(key)
+            if calls == 1:
+                # A concurrent terminal writer lands right between touch()'s two reads.
+                await store.set_async(key, {"response": {**_response(), "status": "cancelled"}, "input_items": []})
+            return value
+
+        with patch.object(store, "get_async", racing_get_async):
+            assert await responses_state.touch(store, "u1", "resp_1") is False
+
+        snap = await responses_state.read_async(store, "u1", "resp_1")
+        assert snap["response"]["status"] == "cancelled"
+        assert "_mship" not in snap
 
 
 class TestStreamBuffer:

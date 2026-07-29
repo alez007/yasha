@@ -160,19 +160,38 @@ async def write_background(
     )
 
 
+async def _touchable_snapshot(store: StateStore, identity: str, response_id: str) -> dict | None:
+    """The current snapshot, or ``None`` if it's gone, has no ``_mship`` sidecar, or
+    is already terminal — the shared gate both of :func:`touch`'s reads apply."""
+    snapshot = await read_async(store, identity, response_id)
+    if snapshot is None:
+        return None
+    if not isinstance(snapshot.get("_mship"), dict):
+        return None
+    if (snapshot.get("response") or {}).get("status") in TERMINAL_STATUSES:
+        return None
+    return snapshot
+
+
 async def touch(store: StateStore, identity: str, response_id: str) -> bool:
     """Heartbeat tick: refresh ``_mship.updated_at``. Returns ``False`` (stop
     heartbeating) if the snapshot is gone, no longer carries ``_mship``, or has
-    already reached a terminal status — never overwrites a terminal write."""
-    snapshot = await read_async(store, identity, response_id)
+    already reached a terminal status — never overwrites a terminal write.
+
+    Reads twice: an initial check, then a fresh re-read right before writing. A
+    terminal writer (drain completion, cancel, staleness) can land in the window the
+    first read is exposed to; writing back that now-stale snapshot would silently
+    regress the response out of its terminal status, and nothing would ever correct
+    it afterwards. The second read closes most of that window (the small remainder —
+    a terminal write landing between the second read and this write — is the same
+    residual race every other guarded writer here accepts, with no compare-and-swap
+    primitive available on the store)."""
+    if await _touchable_snapshot(store, identity, response_id) is None:
+        return False
+    snapshot = await _touchable_snapshot(store, identity, response_id)
     if snapshot is None:
         return False
-    mship = snapshot.get("_mship")
-    if not isinstance(mship, dict):
-        return False
-    if (snapshot.get("response") or {}).get("status") in TERMINAL_STATUSES:
-        return False
-    mship["updated_at"] = time.time()
+    snapshot["_mship"]["updated_at"] = time.time()
     await store.set_async(_key(identity, response_id), snapshot, ttl_seconds=ttl_seconds())
     return True
 
