@@ -329,7 +329,7 @@ class TestApprovalRequired:
                     "type": "mcp_approval_request",
                     "id": "mcpr_1",
                     "name": "roll",
-                    "arguments": "{}",
+                    "arguments": '{"n":2}',
                     "server_label": "dice",
                 },
                 {"type": "mcp_approval_response", "approval_request_id": "mcpr_1", "approve": True},
@@ -343,6 +343,23 @@ class TestApprovalRequired:
         assert [o["type"] for o in output] == ["mcp_call", "mcp_list_tools", "message"]
         assert output[0]["output"] == "9"
         assert output[0]["approval_request_id"] == "mcpr_1"
+        assert output[0]["arguments"] == '{"n":2}'
+
+        # Regression: the resumed call's event shape must still match a normal
+        # mcp_call — added -> arguments.delta -> arguments.done -> in_progress ->
+        # completed -> done — even though the arguments are already fully known
+        # (they came from the mcp_approval_request item, not a live stream).
+        mcp_related = [e["type"] for e in result if "mcp_call" in e["type"]]
+        assert mcp_related == [
+            "response.mcp_call_arguments.delta",
+            "response.mcp_call_arguments.done",
+            "response.mcp_call.in_progress",
+            "response.mcp_call.completed",
+        ]
+        delta_event = next(e for e in result if e["type"] == "response.mcp_call_arguments.delta")
+        done_event = next(e for e in result if e["type"] == "response.mcp_call_arguments.done")
+        assert delta_event["delta"] == '{"n":2}'
+        assert done_event["arguments"] == '{"n":2}'
 
     @pytest.mark.asyncio
     async def test_approval_resume_rejected_records_failed_call_without_executing(self):

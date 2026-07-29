@@ -489,6 +489,12 @@ async def _events(
                 status="in_progress",
             )
             yield stitcher.stamped("response.output_item.added", oi, item=placeholder.model_dump(mode="json"))
+            # Arguments are already fully known (they came from the original
+            # mcp_approval_request item, not a live stream) — emit the delta/done
+            # pair as a single chunk so the event shape still matches a normal
+            # (non-resumed) mcp_call: added -> arguments.delta -> arguments.done -> ...
+            yield stitcher.stamped("response.mcp_call_arguments.delta", oi, item_id=outer_id, delta=arguments)
+            yield stitcher.stamped("response.mcp_call_arguments.done", oi, item_id=outer_id, arguments=arguments)
             events, call_item = await _execute_mcp_call(
                 stitcher,
                 outer_id=outer_id,
