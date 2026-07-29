@@ -243,6 +243,40 @@ class TestMcpCallExecutesAndContinues:
         ]
 
     @pytest.mark.asyncio
+    async def test_tool_call_sandwiched_between_messages_keeps_output_order(self):
+        # Regression: the turn loop used to append all non-tool-call items first and
+        # executed mcp_call items after, regardless of where the tool call actually
+        # sat in the turn's own output — reordering any turn that interleaves them.
+        msg1_events, msg1_item, seq = _message_events(oi=0, text="Rolling...", start_seq=2)
+        tc_events, tc_item, seq = _tool_call_events(
+            call_id="call_1", fc_id="fc_1", name="roll", arguments='{"n":2}', oi=1, start_seq=seq
+        )
+        msg2_events, msg2_item, seq = _message_events(oi=2, text="Got it.", start_seq=seq)
+        turn1 = [
+            _created("i1"),
+            _in_progress("i1"),
+            *msg1_events,
+            *tc_events,
+            *msg2_events,
+            _terminal("i1", [msg1_item, tc_item, msg2_item], seq=seq),
+        ]
+
+        msg3_events, msg3_item, seq2 = _message_events(oi=0, text="You rolled a 9.", start_seq=2)
+        turn2 = [_created("i2"), _in_progress("i2"), *msg3_events, _terminal("i2", [msg3_item], seq=seq2)]
+
+        handle = FakeHandle([turn1, turn2])
+
+        with patch("modelship.openai.mcp.loop.call_mcp_tool", return_value="9"):
+            result = await _run(handle, _req())
+
+        terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
+        output = terminals[0]["response"]["output"]
+        assert [o["type"] for o in output] == ["mcp_list_tools", "message", "mcp_call", "message", "message"]
+        assert output[1]["content"][0]["text"] == "Rolling..."
+        assert output[2]["output"] == "9"
+        assert output[3]["content"][0]["text"] == "Got it."
+
+    @pytest.mark.asyncio
     async def test_forced_tool_choice_only_applies_to_first_turn(self):
         # Regression: a forced tool_choice ("required") re-applied to every inner
         # turn would force the model to keep calling tools forever, since each turn

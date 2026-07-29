@@ -127,7 +127,7 @@ class Stitcher:
         # Set fresh by run_turn(); read by the caller once that generator is exhausted.
         self.pending_mcp_calls: list[_BufferedCall] = []
         self.had_client_function_call = False
-        self.turn_output: list[dict[str, Any]] = []
+        self.turn_output: list[tuple[int, dict[str, Any]]] = []
         self.inner_error: ErrorResponse | None = None
         self.inner_failed_response: dict[str, Any] | None = None
 
@@ -213,9 +213,11 @@ class Stitcher:
         """Consume one inner turn's event stream, yielding renumbered/rewritten
         events for immediate emission. Resets and populates, as attributes read by
         the caller once this generator is exhausted: ``pending_mcp_calls``,
-        ``had_client_function_call``, ``turn_output`` (this turn's final items,
-        ready for the outer accumulator, minus mcp/approval slots which the caller
-        fills in after execution), ``inner_error``, ``inner_failed_response``."""
+        ``had_client_function_call``, ``turn_output`` (this turn's final items as
+        ``(abs_output_index, item)`` pairs, ready for the caller to place directly
+        into the outer accumulator by index — mcp/approval slots are excluded here
+        since the caller fills those in by ``buf.abs_oi`` after execution),
+        ``inner_error``, ``inner_failed_response``."""
         buffers: dict[str, _BufferedCall] = {}
         self.pending_mcp_calls = []
         self.had_client_function_call = False
@@ -242,13 +244,14 @@ class Stitcher:
                 response = event.get("response") or {}
                 self.usage_total = _sum_usage(self.usage_total, _usage_from_dict(response.get("usage")))
                 output = response.get("output") or []
-                for item in output:
+                base = self._offset
+                for i, item in enumerate(output):
                     if item.get("type") != "function_call":
-                        self.turn_output.append(item)
+                        self.turn_output.append((base + i, item))
                         continue
                     buf = buffers.get(item.get("id") or "")
                     if buf is None or buf.classification == "client":
-                        self.turn_output.append(item)
+                        self.turn_output.append((base + i, item))
                         self.had_client_function_call = True
                 self._offset += len(output)
                 continue
@@ -604,7 +607,14 @@ async def _events(
                 )
                 return
 
-            accumulator.extend(stitcher.turn_output)
+            # Items land in the outer accumulator at their absolute output_index
+            # rather than being appended in whatever order the two groups (plain
+            # turn_output items vs. executed mcp calls) happen to be processed in
+            # here — a turn that interleaves them (e.g. message, mcp_call, message)
+            # would otherwise land in the wrong order in the final response.output[].
+            accumulator.extend({} for _ in range(len(stitcher.turn_output) + len(stitcher.pending_mcp_calls)))
+            for abs_index, item in stitcher.turn_output:
+                accumulator[abs_index] = item
 
             any_approval_this_turn = False
             for buf in stitcher.pending_mcp_calls:
@@ -615,7 +625,7 @@ async def _events(
                     )
                     yield stitcher.stamped("response.output_item.added", buf.abs_oi, item=item.model_dump(mode="json"))
                     yield stitcher.stamped("response.output_item.done", buf.abs_oi, item=item.model_dump(mode="json"))
-                    accumulator.append(item.model_dump(mode="json"))
+                    accumulator[buf.abs_oi] = item.model_dump(mode="json")
                     any_approval_this_turn = True
                 else:
                     assert buf.spec is not None and buf.outer_id is not None and buf.abs_oi is not None
@@ -629,7 +639,7 @@ async def _events(
                     )
                     for e in events:
                         yield e
-                    accumulator.append(item.model_dump(mode="json"))
+                    accumulator[buf.abs_oi] = item.model_dump(mode="json")
                     executed_call_count += 1
 
             if any_approval_this_turn or stitcher.had_client_function_call:
