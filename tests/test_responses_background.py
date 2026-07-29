@@ -614,15 +614,29 @@ class TestBackgroundStream:
 
     @pytest.mark.asyncio
     async def test_get_stream_on_terminal_response_synthesizes_terminal_event(self, api):
+        # A fresh stream (no starting_after, i.e. never having seen anything) always
+        # gets a response.created first, even when nothing was ever buffered for it —
+        # matching what a live connection would have seen.
         await _stored_background(api, "resp_done", status="completed")
 
         result = await api.get_response("resp_done", _raw_request(), stream=True)
         body = await _consume_body(result)
         events = _parse_sse(body)
 
-        assert len(events) == 1
-        assert events[0]["type"] == "response.completed"
-        assert events[0]["response"]["status"] == "completed"
+        assert [e["type"] for e in events] == ["response.created", "response.completed"]
+        assert events[-1]["response"]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_get_stream_resume_from_a_real_cursor_skips_the_synthesized_created(self, api):
+        # A genuine resume (a real starting_after, meaning the client already saw
+        # response.created on its original connection) must not get a second one.
+        await _stored_background(api, "resp_done", status="completed")
+
+        result = await api.get_response("resp_done", _raw_request(), stream=True, starting_after=0)
+        body = await _consume_body(result)
+        events = _parse_sse(body)
+
+        assert [e["type"] for e in events] == ["response.completed"]
 
     @pytest.mark.asyncio
     async def test_get_stream_ends_cleanly_on_buffer_read_outage(self, api):

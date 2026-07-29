@@ -435,6 +435,16 @@ async def tail_background_events(store: StateStore, identity: str, response_id: 
         snapshot = await reconcile_staleness(store, identity, response_id, snapshot)
         response = snapshot["response"]
         if response.get("status") in responses_state.TERMINAL_STATUSES:
+            if after_sequence < 0:
+                # Nothing has been seen yet (a fresh tail, not a resume from a real
+                # cursor). The buffer can be fully written-and-discarded before this
+                # tailer's first poll — buffer_stream_events discards it the instant
+                # the terminal event passes through, and a tiny/fast generation can
+                # finish quicker than _TAIL_POLL_INTERVAL_S — so without this, a
+                # fresh connection would see only the terminal event and never
+                # response.created.
+                yield {"type": "response.created", "sequence_number": 0, "response": response}
+                after_sequence = 0
             terminal = _terminal_event_from_response(response, after_sequence)
             if terminal is not None:
                 yield terminal
