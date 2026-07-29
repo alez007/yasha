@@ -377,6 +377,13 @@ class TestApprovalRequired:
         assert rejected["status"] == "failed"
         assert "rejected" in rejected["error"]
         assert "no thanks" in rejected["error"]
+        # Regression: a rejected approval-resume call used to only end up as a
+        # failed item in the terminal output[], with no matching streaming event —
+        # diverging from _execute_mcp_call's in_progress/failed pair.
+        assert [e["type"] for e in result if e["type"].startswith("response.mcp_call.")] == [
+            "response.mcp_call.in_progress",
+            "response.mcp_call.failed",
+        ]
 
     @pytest.mark.asyncio
     async def test_approval_resume_unknown_request_id_yields_error(self):

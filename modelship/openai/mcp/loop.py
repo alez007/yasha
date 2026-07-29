@@ -519,6 +519,8 @@ async def _events(
                 status="failed",
             )
             yield stitcher.stamped("response.output_item.added", oi, item=call_item.model_dump(mode="json"))
+            yield stitcher.stamped("response.mcp_call.in_progress", oi, item_id=outer_id)
+            yield stitcher.stamped("response.mcp_call.failed", oi, item_id=outer_id)
             yield stitcher.stamped("response.output_item.done", oi, item=call_item.model_dump(mode="json"))
             accumulator.append(call_item.model_dump(mode="json"))
 
