@@ -108,6 +108,8 @@ def requires_approval(spec: McpToolSpec, tool: McpListToolsTool) -> bool:
     if isinstance(setting, dict):
         never = setting.get("never") or {}
         always = setting.get("always") or {}
+        if not isinstance(never, dict) or not isinstance(always, dict):
+            raise _mcp_error(f"unsupported 'require_approval' shape for server {spec.server_label!r}.")
         if tool.name in (never.get("tool_names") or []):
             return False
         if tool.name in (always.get("tool_names") or []):

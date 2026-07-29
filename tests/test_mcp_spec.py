@@ -120,6 +120,11 @@ class TestRequiresApproval:
         with pytest.raises(ResponsesApiError):
             requires_approval(spec, _tool("a"))
 
+    def test_non_dict_bucket_rejected(self):
+        spec = McpToolSpec(server_label="s", server_url="http://x", require_approval={"never": "bogus"})
+        with pytest.raises(ResponsesApiError):
+            requires_approval(spec, _tool("a"))
+
 
 class TestCheckCollisions:
     def test_no_collision_is_fine(self):
