@@ -429,6 +429,51 @@ class TestOrphanDetection:
 
         assert json.loads(bytes(result.body))["status"] == "in_progress"
 
+    @pytest.mark.asyncio
+    async def test_store_outage_writing_failed_snapshot_is_503(self, api):
+        # Regression: reconcile_staleness's write of the orphaned-failure snapshot
+        # wasn't wrapped, so a store outage there bubbled as a raw
+        # StateStoreUnavailableError (500) instead of the documented 503.
+        _stored_background(api, "resp_stale", status="in_progress")
+        snapshot = api._state_store.get("responses/unscoped/resp_stale")
+        snapshot["_mship"]["updated_at"] = time.time() - 3600
+        api._state_store.set("responses/unscoped/resp_stale", snapshot)
+
+        with (
+            patch.object(api._state_store, "set_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await api.get_response("resp_stale", _raw_request())
+        assert exc.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_store_outage_on_post_write_readback_is_503(self, api):
+        # Regression: reconcile_staleness's final read-back (after the write succeeds)
+        # also wasn't wrapped, for the same reason as the write above.
+        _stored_background(api, "resp_stale", status="in_progress")
+        snapshot = api._state_store.get("responses/unscoped/resp_stale")
+        snapshot["_mship"]["updated_at"] = time.time() - 3600
+        api._state_store.set("responses/unscoped/resp_stale", snapshot)
+
+        real_get_async = api._state_store.get_async
+        calls = 0
+
+        async def flaky_get_async(key):
+            # 1st call: get_response's own load_snapshot. 2nd: write_terminal_if_not_terminal's
+            # internal pre-write read. 3rd: reconcile_staleness's final read-back — fail there.
+            nonlocal calls
+            calls += 1
+            if calls > 2:
+                raise StateStoreUnavailableError("down")
+            return await real_get_async(key)
+
+        with (
+            patch.object(api._state_store, "get_async", flaky_get_async),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await api.get_response("resp_stale", _raw_request())
+        assert exc.value.status_code == 503
+
 
 def _parse_sse(body: str) -> list[dict]:
     events = []

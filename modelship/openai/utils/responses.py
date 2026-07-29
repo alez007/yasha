@@ -633,8 +633,16 @@ async def reconcile_staleness(store: StateStore, identity: str, response_id: str
     if not responses_state.is_stale(snapshot, responses_state.stale_seconds()):
         return snapshot
     failed = _mark_failed(response, "Background response orphaned: its worker stopped reporting progress.")
-    await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
+    try:
+        await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
+    except StateStoreUnavailableError:
+        logger.exception("State store unavailable reconciling staleness for response %s", response_id)
+        raise _store_unavailable_error() from None
     with contextlib.suppress(StateStoreUnavailableError):
         await responses_state.discard_stream_buffer(store, identity, response_id)
-    updated = await responses_state.read_async(store, identity, response_id)
+    try:
+        updated = await responses_state.read_async(store, identity, response_id)
+    except StateStoreUnavailableError:
+        logger.exception("State store unavailable reconciling staleness for response %s", response_id)
+        raise _store_unavailable_error() from None
     return updated if updated is not None else snapshot
