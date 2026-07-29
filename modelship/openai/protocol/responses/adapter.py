@@ -153,7 +153,7 @@ def messages_from_input(input_: str | list[dict[str, Any]], instructions: str | 
                     ],
                 }
             )
-            content = output if error is None else error
+            content = _text_of(error) if error is not None else _text_of(output)
             messages.append({"role": "tool", "tool_call_id": call_id, "content": content})
         elif itype in ("mcp_list_tools", "mcp_approval_request", "mcp_approval_response"):
             # Not prompt material: mcp_list_tools is discovery bookkeeping, and approval

@@ -405,6 +405,43 @@ class TestMcpInputItems:
                 _req(input=[{"type": "mcp_call", "id": "mcp_1", "name": "roll", "arguments": "{}"}])
             )
 
+    def test_mcp_call_non_text_output_rejected(self):
+        # Regression: output/error used to be forwarded to the tool message verbatim,
+        # so a non-text shape (e.g. a raw dict) would reach the chat layer untouched
+        # and surface as a downstream type error (500) instead of a clean 400 here.
+        with pytest.raises(UnsupportedResponsesFeatureError, match="content shape"):
+            responses_request_to_chat(
+                _req(
+                    input=[
+                        {
+                            "type": "mcp_call",
+                            "id": "mcp_1",
+                            "name": "roll",
+                            "arguments": "{}",
+                            "server_label": "dice",
+                            "output": {"total": 9},
+                        }
+                    ]
+                )
+            )
+
+    def test_mcp_call_non_text_error_rejected(self):
+        with pytest.raises(UnsupportedResponsesFeatureError, match="content shape"):
+            responses_request_to_chat(
+                _req(
+                    input=[
+                        {
+                            "type": "mcp_call",
+                            "id": "mcp_1",
+                            "name": "roll",
+                            "arguments": "{}",
+                            "server_label": "dice",
+                            "error": {"code": 1},
+                        }
+                    ]
+                )
+            )
+
     def test_mcp_list_tools_and_approval_items_are_skipped(self):
         chat = responses_request_to_chat(
             _req(
