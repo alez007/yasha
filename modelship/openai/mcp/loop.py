@@ -181,6 +181,10 @@ class Stitcher:
             return
 
         if classification == "mcp_approval":
+            for raw in buf.raw_events:
+                if raw["type"] == "response.output_item.added":
+                    buf.abs_oi = raw["output_index"] + self._offset
+                    break
             buf.raw_events = []
             return
 
@@ -597,7 +601,7 @@ async def _events(
             any_approval_this_turn = False
             for buf in stitcher.pending_mcp_calls:
                 if buf.classification == "mcp_approval":
-                    assert buf.spec is not None
+                    assert buf.spec is not None and buf.abs_oi is not None
                     item = McpApprovalRequestItem(
                         name=buf.name, arguments=buf.arguments, server_label=buf.spec.server_label
                     )

@@ -308,6 +308,12 @@ class TestApprovalRequired:
         assert output[1]["name"] == "roll"
         # No mcp_call streaming events at all for a suppressed approval-bound call.
         assert not any("mcp_call" in e["type"] for e in result if "type" in e)
+        # Regression: the approval item's output_item.added/done must carry the
+        # correct (offset) output_index — it used to be dropped (buf.abs_oi stayed
+        # None), landing the item in the wrong output slot.
+        approval_events = [e for e in result if e.get("item", {}).get("type") == "mcp_approval_request"]
+        assert len(approval_events) == 2
+        assert all(e["output_index"] == 1 for e in approval_events)
 
     @pytest.mark.asyncio
     async def test_approval_resume_approved_executes_call(self):
