@@ -419,6 +419,24 @@ async def _events(
             validate_server_url(spec.server_url)
         if isinstance(request.tool_choice, dict) and request.tool_choice.get("type") == "mcp":
             raise _mcp_error("tool_choice forcing a specific mcp tool is not supported.")
+        original_input_items = as_input_items(request.input)
+        if request.previous_response_id is None and any(
+            isinstance(item, dict) and item.get("type") == "mcp_approval_response" for item in original_input_items
+        ):
+            # An mcp_approval_request only ever exists as output from a prior, stored
+            # response — without previous_response_id there is no genuine one to
+            # resume, so a same-request approval_request/approval_response pair can
+            # only be self-supplied, bypassing the require_approval pause entirely.
+            raise ResponsesApiError(
+                create_error_response(
+                    "mcp_approval_response requires previous_response_id: an approval can only be "
+                    "resumed from a prior response's own mcp_approval_request, not supplied directly "
+                    "on a fresh request.",
+                    err_type="invalid_request_error",
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    param="input",
+                )
+            )
     except ResponsesApiError as exc:
         yield exc.err
         return
@@ -454,7 +472,6 @@ async def _events(
     yield stitcher.stamped("response.created", response=created_response.model_dump(mode="json"))
     yield stitcher.stamped("response.in_progress", response=created_response.model_dump(mode="json"))
 
-    original_input_items = as_input_items(request.input)
     specs_by_label = {s.server_label: s for s in specs}
 
     # --- Discovery -------------------------------------------------------------
