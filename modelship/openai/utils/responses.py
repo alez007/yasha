@@ -442,8 +442,20 @@ async def tail_background_events(store: StateStore, identity: str, response_id: 
                 # the terminal event passes through, and a tiny/fast generation can
                 # finish quicker than _TAIL_POLL_INTERVAL_S — so without this, a
                 # fresh connection would see only the terminal event and never
-                # response.created.
-                yield {"type": "response.created", "sequence_number": 0, "response": response}
+                # response.created. Its envelope must look like the opening one a live
+                # connection would have seen — status in_progress, no output/usage yet —
+                # not the terminal response dict, which would otherwise leak a completed
+                # status and full output into what's supposed to be the opening event.
+                created_response = {
+                    **response,
+                    "status": "in_progress",
+                    "output": [],
+                    "usage": None,
+                    "incomplete_details": None,
+                    "error": None,
+                    "completed_at": None,
+                }
+                yield {"type": "response.created", "sequence_number": 0, "response": created_response}
                 after_sequence = 0
             terminal = _terminal_event_from_response(response, after_sequence)
             if terminal is not None:

@@ -627,6 +627,36 @@ class TestBackgroundStream:
         assert events[-1]["response"]["status"] == "completed"
 
     @pytest.mark.asyncio
+    async def test_synthesized_created_for_fresh_tail_has_in_progress_envelope(self, api):
+        # Regression: the synthesized response.created for a fresh tail (buffer
+        # already drained-and-discarded before the first poll) used to reuse the
+        # terminal response dict verbatim, so the "opening" event carried a
+        # completed status and the full output — contradicting a real
+        # response.created, which is always status=in_progress, output=[].
+        response = {
+            "id": "resp_done",
+            "object": "response",
+            "status": "completed",
+            "background": True,
+            "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hi"}]}],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+        api._state_store.set("responses/unscoped/resp_done", {"response": response, "input_items": []})
+
+        result = await api.get_response("resp_done", _raw_request(), stream=True)
+        body = await _consume_body(result)
+        events = _parse_sse(body)
+
+        assert [e["type"] for e in events] == ["response.created", "response.completed"]
+        created = events[0]["response"]
+        assert created["status"] == "in_progress"
+        assert created["output"] == []
+        assert created["usage"] is None
+        # The terminal event, in contrast, must still carry the real final state.
+        assert events[1]["response"]["status"] == "completed"
+        assert events[1]["response"]["output"] == response["output"]
+
+    @pytest.mark.asyncio
     async def test_get_stream_resume_from_a_real_cursor_skips_the_synthesized_created(self, api):
         # A genuine resume (a real starting_after, meaning the client already saw
         # response.created on its original connection) must not get a second one.
