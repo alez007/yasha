@@ -89,7 +89,7 @@ def filter_tools(spec: McpToolSpec, tools: list[McpListToolsTool]) -> list[McpLi
         return tools
 
     if isinstance(allowed, list):
-        names = set(allowed)
+        names = set(_tool_names(allowed, spec=spec, field="allowed_tools"))
         return [t for t in tools if t.name in names]
 
     if isinstance(allowed, dict):

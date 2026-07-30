@@ -85,6 +85,13 @@ class TestFilterTools:
         with pytest.raises(ResponsesApiError):
             filter_tools(spec, [_tool("a")])
 
+    def test_list_form_with_non_string_elements_rejected(self):
+        # A list of non-strings would otherwise silently produce a set no tool.name
+        # (always a str) can ever match, filtering everything out without a clear 400.
+        spec = McpToolSpec(server_label="s", server_url="http://x", allowed_tools=[1, 2])
+        with pytest.raises(ResponsesApiError, match="allowed_tools"):
+            filter_tools(spec, [_tool("a")])
+
     def test_string_tool_names_rejected_not_treated_as_char_iterable(self):
         # A bare string is itself iterable, so set("roll") would silently become
         # {"r", "o", "l"} and change matching semantics instead of erroring.
