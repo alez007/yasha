@@ -58,6 +58,16 @@ class TestSplitMcpTools:
         with pytest.raises(ResponsesApiError, match="connector_id"):
             split_mcp_tools([{"type": "mcp", "server_label": "s", "connector_id": "c1"}])
 
+    def test_non_string_server_url_rejected_as_responses_api_error(self):
+        with pytest.raises(ResponsesApiError, match="invalid mcp tool"):
+            split_mcp_tools([{"type": "mcp", "server_label": "s", "server_url": 123}])
+
+    def test_non_dict_headers_rejected_as_responses_api_error(self):
+        with pytest.raises(ResponsesApiError, match="invalid mcp tool"):
+            split_mcp_tools(
+                [{"type": "mcp", "server_label": "s", "server_url": "http://x", "headers": ["not", "a", "dict"]}]
+            )
+
 
 class TestFilterTools:
     def test_no_allowed_tools_returns_all(self):

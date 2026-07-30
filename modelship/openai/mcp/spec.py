@@ -8,6 +8,8 @@ from __future__ import annotations
 from http import HTTPStatus
 from typing import Any
 
+from pydantic import ValidationError
+
 from modelship.openai.protocol import create_error_response
 from modelship.openai.protocol.base import OpenAIBaseModel
 from modelship.openai.protocol.responses.schemas import McpListToolsTool
@@ -54,8 +56,8 @@ def split_mcp_tools(tools: list[dict[str, Any]] | None) -> tuple[list[McpToolSpe
         if server_label in seen_labels:
             raise _mcp_error(f"duplicate mcp server_label {server_label!r}.")
         seen_labels.add(server_label)
-        specs.append(
-            McpToolSpec(
+        try:
+            spec = McpToolSpec(
                 server_label=server_label,
                 server_url=server_url,
                 headers=tool.get("headers"),
@@ -63,7 +65,9 @@ def split_mcp_tools(tools: list[dict[str, Any]] | None) -> tuple[list[McpToolSpe
                 allowed_tools=tool.get("allowed_tools"),
                 require_approval=tool.get("require_approval"),
             )
-        )
+        except ValidationError as exc:
+            raise _mcp_error(f"invalid mcp tool {server_label!r}: {exc}") from exc
+        specs.append(spec)
     return specs, other
 
 
