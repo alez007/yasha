@@ -6,7 +6,7 @@ Only the latest release receives security fixes.
 
 | Version | Supported |
 |---|---|
-| 0.1.x (latest) | Yes |
+| 0.7.x (latest) | Yes |
 | Older releases | No |
 
 ## Reporting a Vulnerability
