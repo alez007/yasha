@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.5] - 2026-07-30
+
+### Added
+- server-side MCP tool execution on /v1/responses
+- add background+stream live tailing and resume (Phase E2) to /v1/responses
+- add background mode (Phase E1) to /v1/responses
+
+### Fixed
+- turn McpToolSpec validation errors into a clean 400
+- declare httpx2 as a direct dependency
+- drop unsupported hosted Responses tools and merge system-level messages
+- require previous_response_id to resume an mcp approval
+- validate allowed_tools plain-list form as list[str] too
+- synthesized response.created for a fresh tail must be an opening envelope
+- validate approval-resume tool name against real discovery, not client input
+- normalize mcp_call output/error through _text_of like function_call_output
+- reject non-list tool_names in mcp spec instead of matching as a string
+- synthesize response.created for a fresh background stream tail
+- move background-run liveness into a dedicated HeartbeatRegistry actor
+- close touch()'s race against a concurrent terminal write
+- return 503 instead of an unhandled 500 when the store fails during staleness reconciliation
+- return 503 instead of an unhandled 500 when the store fails during cancel
+- preserve original output-item order for executed mcp_call in the turn loop
+- emit mcp_call_arguments.delta/.done for approved approval-resume calls
+- emit response.mcp_call.in_progress/.failed for rejected approval resumes
+- validate mcp_call input items before translating to chat messages
+- reject mcp server_url with no hostname
+- set output_index for approval-bound mcp_call buffers in _flush()
+- reject malformed require_approval bucket shapes instead of crashing
+- serialize background+stream buffer appends and flush before discard
+- don't let unhandled errors escape background-stream buffering/tailing
+- background terminal persistence must let cancel/delete win races
+- touch() must not regress a terminal snapshot's status
+
+### Changed
+- cover background mode + cancel for server-side MCP tool execution
+- consolidate long comments back to 1-2 lines in E2 background-streaming work
+- consolidate comments in background-mode PR to 1-2 lines
+
 ## [0.7.4] - 2026-07-27
 
 ### Fixed
