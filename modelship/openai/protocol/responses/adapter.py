@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from cryptography.fernet import InvalidToken
 
+from modelship.logging import get_logger
 from modelship.openai import compaction_crypto
 from modelship.openai.protocol.chat import ChatCompletionRequest, StreamOptions
 from modelship.openai.protocol.responses.schemas import (
@@ -29,6 +30,8 @@ from modelship.openai.protocol.responses.schemas import (
     ResponseUsage,
 )
 from modelship.openai.protocol.usage import UsageInfo
+
+logger = get_logger("openai.protocol.responses.adapter")
 
 
 class UnsupportedResponsesFeatureError(ValueError):
@@ -89,14 +92,25 @@ def responses_request_to_chat(request: ResponsesRequest) -> ChatCompletionReques
 
 
 def messages_from_input(input_: str | list[dict[str, Any]], instructions: str | None) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = []
-    if instructions:
-        messages.append({"role": "system", "content": instructions})
+    """Build chat messages from Responses ``input``, merging every system-level item
+    (``instructions`` plus any ``system``- or ``developer``-role item found anywhere in
+    ``input``, at any nesting depth) into a single leading system message. Some chat
+    templates (e.g. Qwen3.5) hard-reject a second system-level message or one not in
+    slot 0; clients like Codex CLI send ``instructions``, a separate ``system``-role
+    item, *and* a ``developer``-role item (OpenAI's system-equivalent role for newer
+    models), so a naive per-item translation trips that template restriction."""
+    system_parts: list[str] = [instructions] if instructions else []
+    messages = _messages_from_items(input_, system_parts)
+    if system_parts:
+        messages.insert(0, {"role": "system", "content": "\n\n".join(system_parts)})
+    return messages
 
+
+def _messages_from_items(input_: str | list[dict[str, Any]], system_parts: list[str]) -> list[dict[str, Any]]:
     if isinstance(input_, str):
-        messages.append({"role": "user", "content": input_})
-        return messages
+        return [{"role": "user", "content": input_}]
 
+    messages: list[dict[str, Any]] = []
     # call_ids seen from a function_call earlier in this list; an unmatched
     # function_call_output is orphaned. Reset per call, not shared across recursion.
     seen_call_ids: set[str] = set()
@@ -186,14 +200,15 @@ def messages_from_input(input_: str | list[dict[str, Any]], instructions: str | 
                 raise UnsupportedResponsesFeatureError("compaction item could not be decoded.") from None
             if any(isinstance(d, dict) and d.get("type") == "compaction" for d in decoded_items):
                 raise UnsupportedResponsesFeatureError("compaction items cannot nest another compaction item.")
-            messages.extend(messages_from_input(decoded_items, None))
+            messages.extend(_messages_from_items(decoded_items, system_parts))
         elif itype == "message" or "role" in item:
-            messages.append(
-                {
-                    "role": item.get("role", "user"),
-                    "content": _content_to_chat(item.get("content")),
-                }
-            )
+            role = item.get("role", "user")
+            if role in ("system", "developer"):
+                text = _text_of(item.get("content"))
+                if text:
+                    system_parts.append(text)
+                continue
+            messages.append({"role": role, "content": _content_to_chat(item.get("content"))})
         else:
             raise UnsupportedResponsesFeatureError(f"unsupported input item type {itype!r}.")
 
@@ -257,13 +272,18 @@ def _tools_to_chat(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] |
                 "mcp tools are handled at the gateway and must not reach the loader directly."
             )
         if ttype != "function":
-            raise UnsupportedResponsesFeatureError(
-                f"hosted tool type {ttype!r} is not supported; only client-defined 'function' tools are."
-            )
+            # Hosted tool types (e.g. OpenAI's own web_search, or Codex CLI's
+            # 'namespace') have no client-defined equivalent a self-hosted backend can
+            # fulfill. Drop them rather than failing the whole request over a
+            # capability the client didn't ask the model to actually use — llama.cpp's
+            # server took the same approach for the same Codex CLI incompatibility
+            # (ggml-org/llama.cpp#23041).
+            logger.warning("dropping unsupported Responses tool type %r", ttype)
+            continue
         # Responses flattens the function fields onto the tool; chat nests them.
         fn = {k: tool[k] for k in ("name", "description", "parameters", "strict") if k in tool}
         out.append({"type": "function", "function": fn})
-    return out
+    return out or None
 
 
 def _tool_choice_to_chat(tool_choice: str | dict[str, Any] | None) -> str | dict[str, Any] | None:

@@ -474,6 +474,14 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             return responses_validation_error(e)
 
         request_id = f"resp-{base_request_id(raw_request)}"
+        logger.log(
+            TRACE,
+            "responses request %s: messages=%s tools=%s tool_choice=%s",
+            request_id,
+            chat_request.messages,
+            chat_request.tools,
+            chat_request.tool_choice,
+        )
         supports_image = bool(self.config.mmproj)
         try:
             messages = normalize_chat_messages(

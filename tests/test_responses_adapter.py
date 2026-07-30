@@ -47,6 +47,56 @@ class TestRequestInputTranslation:
         assert chat.messages[0] == {"role": "system", "content": "be terse"}
         assert chat.messages[1] == {"role": "user", "content": "hi"}
 
+    def test_instructions_and_later_system_item_merge_into_one_leading_message(self):
+        # Codex CLI sends `instructions` plus a separate system-role input item; some
+        # chat templates (Qwen3.5) hard-reject a second/misplaced system message.
+        chat = responses_request_to_chat(
+            _req(
+                instructions="be terse",
+                input=[
+                    {"type": "message", "role": "system", "content": "extra context"},
+                    {"type": "message", "role": "user", "content": "hi"},
+                ],
+            )
+        )
+        assert chat.messages == [
+            {"role": "system", "content": "be terse\n\nextra context"},
+            {"role": "user", "content": "hi"},
+        ]
+
+    def test_developer_role_merges_with_system_like_instructions(self):
+        # Codex CLI sends `instructions`, a separate `system`-role item, AND a
+        # `developer`-role item (OpenAI's system-equivalent role for newer models) —
+        # Qwen3.5's template treats `developer` the same as `system` for its
+        # leading-message check, so it must merge in too.
+        chat = responses_request_to_chat(
+            _req(
+                instructions="be terse",
+                input=[
+                    {"type": "message", "role": "developer", "content": "sandbox: read-only"},
+                    {"type": "message", "role": "user", "content": "hi"},
+                ],
+            )
+        )
+        assert chat.messages == [
+            {"role": "system", "content": "be terse\n\nsandbox: read-only"},
+            {"role": "user", "content": "hi"},
+        ]
+
+    def test_system_item_without_instructions_still_leads(self):
+        chat = responses_request_to_chat(
+            _req(
+                input=[
+                    {"type": "message", "role": "user", "content": "hi"},
+                    {"type": "message", "role": "system", "content": "late system note"},
+                ]
+            )
+        )
+        assert chat.messages == [
+            {"role": "system", "content": "late system note"},
+            {"role": "user", "content": "hi"},
+        ]
+
     def test_message_items_with_content_parts_flatten_to_text(self):
         chat = responses_request_to_chat(
             _req(
@@ -181,6 +231,25 @@ class TestCompactionInputDecode:
             {"role": "user", "content": "what's my name?"},
         ]
 
+    def test_system_item_inside_compaction_merges_into_top_level_leading_message(self):
+        # A system item decoded from a compaction blob still needs to end up in the
+        # single leading system message, not wherever the compaction item itself sits.
+        summary_items = [{"role": "system", "content": "compacted system note"}]
+        blob = compaction_crypto.encrypt_items(summary_items)
+        chat = responses_request_to_chat(
+            _req(
+                instructions="be terse",
+                input=[
+                    {"type": "compaction", "id": "cmp_1", "encrypted_content": blob},
+                    {"role": "user", "content": "hi"},
+                ],
+            )
+        )
+        assert chat.messages == [
+            {"role": "system", "content": "be terse\n\ncompacted system note"},
+            {"role": "user", "content": "hi"},
+        ]
+
     def test_nested_compaction_item_is_rejected(self):
         # A blob we mint ourselves never nests another compaction item — but the
         # decode path must not simply trust that. Simulates a forged blob (or a
@@ -230,6 +299,22 @@ class TestRequestFieldTranslation:
     def test_tools_flattened_to_nested(self):
         chat = responses_request_to_chat(
             _req(tools=[{"type": "function", "name": "f", "description": "d", "parameters": {"type": "object"}}])
+        )
+        assert chat.tools == [
+            {"type": "function", "function": {"name": "f", "description": "d", "parameters": {"type": "object"}}}
+        ]
+
+    def test_hosted_tool_type_dropped_not_rejected(self):
+        # Codex CLI sends its own 'namespace' hosted tool unconditionally, even with
+        # no MCP servers configured (see ggml-org/llama.cpp#23041 for the same fix
+        # against the same client). Only the client-defined function tool survives.
+        chat = responses_request_to_chat(
+            _req(
+                tools=[
+                    {"type": "namespace", "name": "collaboration"},
+                    {"type": "function", "name": "f", "description": "d", "parameters": {"type": "object"}},
+                ]
+            )
         )
         assert chat.tools == [
             {"type": "function", "function": {"name": "f", "description": "d", "parameters": {"type": "object"}}}
@@ -523,9 +608,9 @@ class TestRequestRejections:
         chat = responses_request_to_chat(_req(background=True))
         assert chat.messages == [{"role": "user", "content": "hello"}]
 
-    def test_hosted_tool_rejected(self):
-        with pytest.raises(UnsupportedResponsesFeatureError, match="hosted tool"):
-            responses_request_to_chat(_req(tools=[{"type": "web_search"}]))
+    def test_hosted_tool_dropped(self):
+        chat = responses_request_to_chat(_req(tools=[{"type": "web_search"}]))
+        assert chat.tools is None
 
     def test_text_format_as_string_rejected(self):
         # A malformed text.format (string instead of object) must be a clean
