@@ -457,83 +457,12 @@ async def _events(
     original_input_items = as_input_items(request.input)
     specs_by_label = {s.server_label: s for s in specs}
 
-    # --- Approval resume ---------------------------------------------------
-    approval_requests_by_id = {
-        item.get("id"): item
-        for item in original_input_items
-        if isinstance(item, dict) and item.get("type") == "mcp_approval_request"
-    }
-    for item in original_input_items:
-        if not isinstance(item, dict) or item.get("type") != "mcp_approval_response":
-            continue
-        approval_request_id = item.get("approval_request_id")
-        req_item = approval_requests_by_id.get(approval_request_id)
-        if req_item is None:
-            yield create_error_response(
-                f"mcp_approval_response references unknown approval_request_id {approval_request_id!r}.",
-                err_type="invalid_request_error",
-            )
-            return
-
-        name = req_item.get("name", "")
-        server_label = req_item.get("server_label", "")
-        arguments = req_item.get("arguments", "")
-        spec = specs_by_label.get(server_label)
-        outer_id = f"mcp_{random_uuid()}"
-        oi = stitcher.claim_slot()
-
-        if item.get("approve") and spec is not None:
-            placeholder = McpCallItem(
-                id=outer_id,
-                name=name,
-                arguments=arguments,
-                server_label=server_label,
-                approval_request_id=approval_request_id,
-                status="in_progress",
-            )
-            yield stitcher.stamped("response.output_item.added", oi, item=placeholder.model_dump(mode="json"))
-            # Arguments are already fully known (they came from the original
-            # mcp_approval_request item, not a live stream) — emit the delta/done
-            # pair as a single chunk so the event shape still matches a normal
-            # (non-resumed) mcp_call: added -> arguments.delta -> arguments.done -> ...
-            yield stitcher.stamped("response.mcp_call_arguments.delta", oi, item_id=outer_id, delta=arguments)
-            yield stitcher.stamped("response.mcp_call_arguments.done", oi, item_id=outer_id, arguments=arguments)
-            events, call_item = await _execute_mcp_call(
-                stitcher,
-                outer_id=outer_id,
-                abs_oi=oi,
-                name=name,
-                arguments=arguments,
-                spec=spec,
-                approval_request_id=approval_request_id,
-            )
-            for e in events:
-                yield e
-            accumulator.append(call_item.model_dump(mode="json"))
-        else:
-            if item.get("approve"):
-                message = f"mcp server {server_label!r} is not configured on this request."
-            else:
-                message = "Tool call was rejected."
-                reason = item.get("reason")
-                if reason:
-                    message = f"{message} {reason}"
-            call_item = McpCallItem(
-                id=outer_id,
-                name=name,
-                arguments=arguments,
-                server_label=server_label,
-                approval_request_id=approval_request_id,
-                error=message,
-                status="failed",
-            )
-            yield stitcher.stamped("response.output_item.added", oi, item=call_item.model_dump(mode="json"))
-            yield stitcher.stamped("response.mcp_call.in_progress", oi, item_id=outer_id)
-            yield stitcher.stamped("response.mcp_call.failed", oi, item_id=outer_id)
-            yield stitcher.stamped("response.output_item.done", oi, item=call_item.model_dump(mode="json"))
-            accumulator.append(call_item.model_dump(mode="json"))
-
-    # --- Discovery -----------------------------------------------------------
+    # --- Discovery -------------------------------------------------------------
+    # Runs before approval resume below: the resumed approval's tool name must be
+    # checked against this turn's actual discovered+filtered tool list, not trusted
+    # from the client-echoed mcp_approval_request item — otherwise a client could
+    # forge/edit that item's name to execute a tool that allowed_tools would have
+    # filtered out, or that doesn't exist on the server at all.
     discovered: dict[str, list[McpListToolsTool]] = {}
     for spec in specs:
         oi = stitcher.claim_slot()
@@ -565,6 +494,89 @@ async def _events(
     except ResponsesApiError as exc:
         yield _failed_event(exc.err.error.message)
         return
+
+    # --- Approval resume ---------------------------------------------------
+    approval_requests_by_id = {
+        item.get("id"): item
+        for item in original_input_items
+        if isinstance(item, dict) and item.get("type") == "mcp_approval_request"
+    }
+    for item in original_input_items:
+        if not isinstance(item, dict) or item.get("type") != "mcp_approval_response":
+            continue
+        approval_request_id = item.get("approval_request_id")
+        req_item = approval_requests_by_id.get(approval_request_id)
+        if req_item is None:
+            yield create_error_response(
+                f"mcp_approval_response references unknown approval_request_id {approval_request_id!r}.",
+                err_type="invalid_request_error",
+            )
+            return
+
+        name = req_item.get("name", "")
+        server_label = req_item.get("server_label", "")
+        arguments = req_item.get("arguments", "")
+        spec = specs_by_label.get(server_label)
+        # The approval-request item is client-echoed input, not server-verified
+        # state — re-check the name against this turn's real discovery/filter
+        # result rather than trusting it, or a forged/edited name would execute.
+        tool_known = spec is not None and any(t.name == name for t in discovered.get(server_label, []))
+        outer_id = f"mcp_{random_uuid()}"
+        oi = stitcher.claim_slot()
+
+        if item.get("approve") and tool_known:
+            assert spec is not None
+            placeholder = McpCallItem(
+                id=outer_id,
+                name=name,
+                arguments=arguments,
+                server_label=server_label,
+                approval_request_id=approval_request_id,
+                status="in_progress",
+            )
+            yield stitcher.stamped("response.output_item.added", oi, item=placeholder.model_dump(mode="json"))
+            # Arguments are already fully known (they came from the original
+            # mcp_approval_request item, not a live stream) — emit the delta/done
+            # pair as a single chunk so the event shape still matches a normal
+            # (non-resumed) mcp_call: added -> arguments.delta -> arguments.done -> ...
+            yield stitcher.stamped("response.mcp_call_arguments.delta", oi, item_id=outer_id, delta=arguments)
+            yield stitcher.stamped("response.mcp_call_arguments.done", oi, item_id=outer_id, arguments=arguments)
+            events, call_item = await _execute_mcp_call(
+                stitcher,
+                outer_id=outer_id,
+                abs_oi=oi,
+                name=name,
+                arguments=arguments,
+                spec=spec,
+                approval_request_id=approval_request_id,
+            )
+            for e in events:
+                yield e
+            accumulator.append(call_item.model_dump(mode="json"))
+        else:
+            if spec is None:
+                message = f"mcp server {server_label!r} is not configured on this request."
+            elif not tool_known:
+                message = f"tool {name!r} is not available on mcp server {server_label!r}."
+            else:
+                message = "Tool call was rejected."
+                reason = item.get("reason")
+                if reason:
+                    message = f"{message} {reason}"
+            call_item = McpCallItem(
+                id=outer_id,
+                name=name,
+                arguments=arguments,
+                server_label=server_label,
+                approval_request_id=approval_request_id,
+                error=message,
+                status="failed",
+            )
+            yield stitcher.stamped("response.output_item.added", oi, item=call_item.model_dump(mode="json"))
+            yield stitcher.stamped("response.mcp_call.in_progress", oi, item_id=outer_id)
+            yield stitcher.stamped("response.mcp_call.failed", oi, item_id=outer_id)
+            yield stitcher.stamped("response.output_item.done", oi, item=call_item.model_dump(mode="json"))
+            accumulator.append(call_item.model_dump(mode="json"))
 
     # --- Turn loop -------------------------------------------------------------
     max_tool_calls = request.max_tool_calls
