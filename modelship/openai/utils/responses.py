@@ -435,6 +435,28 @@ async def tail_background_events(store: StateStore, identity: str, response_id: 
         snapshot = await reconcile_staleness(store, identity, response_id, snapshot)
         response = snapshot["response"]
         if response.get("status") in responses_state.TERMINAL_STATUSES:
+            if after_sequence < 0:
+                # Nothing has been seen yet (a fresh tail, not a resume from a real
+                # cursor). The buffer can be fully written-and-discarded before this
+                # tailer's first poll — buffer_stream_events discards it the instant
+                # the terminal event passes through, and a tiny/fast generation can
+                # finish quicker than _TAIL_POLL_INTERVAL_S — so without this, a
+                # fresh connection would see only the terminal event and never
+                # response.created. Its envelope must look like the opening one a live
+                # connection would have seen — status in_progress, no output/usage yet —
+                # not the terminal response dict, which would otherwise leak a completed
+                # status and full output into what's supposed to be the opening event.
+                created_response = {
+                    **response,
+                    "status": "in_progress",
+                    "output": [],
+                    "usage": None,
+                    "incomplete_details": None,
+                    "error": None,
+                    "completed_at": None,
+                }
+                yield {"type": "response.created", "sequence_number": 0, "response": created_response}
+                after_sequence = 0
             terminal = _terminal_event_from_response(response, after_sequence)
             if terminal is not None:
                 yield terminal
@@ -462,11 +484,16 @@ async def start_background(
     response_dict = response.model_dump(mode="json")
     try:
         await responses_state.write_background(
-            store, identity, response_id, response=response_dict, input_items=input_items, req_id=req_id
+            store, identity, response_id, response=response_dict, input_items=input_items
         )
     except StateStoreUnavailableError:
         logger.exception("State store unavailable creating background response %s", response_id)
         raise _store_unavailable_error() from None
+    # Best-effort: a failure here just means the first heartbeat tick (up to
+    # _HEARTBEAT_INTERVAL_S later) re-seeds it — the placeholder snapshot above is
+    # already the durable source of truth, so this shouldn't fail the whole request.
+    with contextlib.suppress(Exception):
+        await responses_state.heartbeat(identity, response_id, req_id)
     return response_dict
 
 
@@ -487,10 +514,19 @@ async def run_background(
     also tees every event into the durable replay log a poller reads from."""
     request.stream = True
     registry = get_disconnect_registry()
-    response_gen = cast(
-        "DeploymentResponseGenerator[Any]",
-        handle.respond.options(stream=True).remote(request, headers, registry, req_id, identity, response_id),
-    )
+    # Local import: modelship.openai.mcp.{spec,egress} import ResponsesApiError from this
+    # module, so importing mcp.loop at module scope here would be a cycle.
+    from modelship.openai.mcp import loop as mcp_loop
+
+    if mcp_loop.wants_mcp(request):
+        response_gen = mcp_loop.run_mcp_response(
+            handle, request, headers, registry, req_id, identity, response_id=response_id
+        )
+    else:
+        response_gen = cast(
+            "DeploymentResponseGenerator[Any]",
+            handle.respond.options(stream=True).remote(request, headers, registry, req_id, identity, response_id),
+        )
     piped = persist_response(response_gen, store, identity=identity, input_items=input_items, conditional=True)
     buffer = _StreamBuffer(store, identity, response_id) if stream_buffer else None
     if buffer is not None:
@@ -498,15 +534,22 @@ async def run_background(
 
     try:
         drain_task = asyncio.ensure_future(_drain_background_stream(piped, response_id))
-        heartbeat_task = asyncio.ensure_future(_heartbeat_loop(store, identity, response_id))
+        heartbeat_task = asyncio.ensure_future(_heartbeat_loop(identity, response_id, req_id))
         try:
             done, _pending = await asyncio.wait({drain_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED)
             if drain_task not in done:
-                # Heartbeat found the snapshot cancelled/deleted: stop draining, no further write.
+                # Heartbeat found this run cancelled: stop draining, no further write.
                 drain_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await drain_task
-                response_gen.cancel()  # best-effort abort; registry signal above is the primary path
+                if isinstance(response_gen, DeploymentResponseGenerator):
+                    response_gen.cancel()  # best-effort abort; registry signal above is the primary path
+                else:
+                    # mcp_loop.run_mcp_response: a plain async generator, not a Ray one;
+                    # aclose() throws GeneratorExit into it, which cancels its own
+                    # in-flight inner Ray generator (see loop.py's _events finally block).
+                    with contextlib.suppress(Exception):
+                        await response_gen.aclose()
                 return
             saw_ok_terminal, failed_response = drain_task.result()
         except Exception:
@@ -555,14 +598,19 @@ async def _drain_background_stream(piped, response_id: str) -> tuple[bool, dict 
     return saw_ok_terminal, failed_response
 
 
-async def _heartbeat_loop(store: StateStore, identity: str, response_id: str) -> None:
-    """Refresh the drain task's heartbeat every `_HEARTBEAT_INTERVAL_S` until `touch`
-    reports the run is no longer heartbeat-owned (cancelled or deleted)."""
+async def _heartbeat_loop(identity: str, response_id: str, req_id: str) -> None:
+    """Refresh this run's HeartbeatRegistry entry every `_HEARTBEAT_INTERVAL_S`, and
+    stop as soon as `DisconnectRegistry` shows `req_id` cancelled — the same signal
+    `cancel_background`/`signal_background_cancel_if_in_progress` already set, so
+    cancellation is detected without ever touching the response snapshot."""
+    registry = get_disconnect_registry()
     while True:
         await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
-        still_running = await responses_state.touch(store, identity, response_id)
-        if not still_running:
-            return
+        with contextlib.suppress(Exception):
+            await responses_state.heartbeat(identity, response_id, req_id)
+        with contextlib.suppress(Exception):
+            if await registry.is_set.remote(req_id):
+                return
 
 
 async def cancel_background(store: StateStore, identity: str, response_id: str) -> dict:
@@ -576,32 +624,40 @@ async def cancel_background(store: StateStore, identity: str, response_id: str) 
     if response.get("status") in responses_state.TERMINAL_STATUSES:
         return response
 
-    mship = snapshot.get("_mship")
-    if isinstance(mship, dict) and mship.get("req_id"):
+    req_id = None
+    with contextlib.suppress(Exception):
+        req_id = await responses_state.req_id_for(identity, response_id)
+    if req_id:
         registry = get_disconnect_registry()
         with contextlib.suppress(Exception):
-            await registry.set.remote(mship["req_id"])
+            await registry.set.remote(req_id)
 
     cancelled = {**response, "status": "cancelled", "completed_at": int(time.time())}
-    await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=cancelled)
+    try:
+        await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=cancelled)
+    except StateStoreUnavailableError:
+        logger.exception("State store unavailable cancelling response %s", response_id)
+        raise _store_unavailable_error() from None
     with contextlib.suppress(StateStoreUnavailableError):
         await responses_state.discard_stream_buffer(store, identity, response_id)
     updated = await load_snapshot(store, identity, response_id)
     return updated["response"]
 
 
-async def signal_background_cancel_if_in_progress(snapshot: dict) -> None:
+async def signal_background_cancel_if_in_progress(identity: str, response_id: str, snapshot: dict) -> None:
     """`DELETE /{id}` on an in-flight background run implies cancel: signal the
     registry (same mechanism `cancel_background` uses) before the caller deletes the
-    snapshot, so the drain task's next heartbeat tick tears the run down."""
+    snapshot, so the drain task's heartbeat loop tears the run down."""
     response = snapshot.get("response") or {}
     if not response.get("background") or response.get("status") in responses_state.TERMINAL_STATUSES:
         return
-    mship = snapshot.get("_mship")
-    if isinstance(mship, dict) and mship.get("req_id"):
+    req_id = None
+    with contextlib.suppress(Exception):
+        req_id = await responses_state.req_id_for(identity, response_id)
+    if req_id:
         registry = get_disconnect_registry()
         with contextlib.suppress(Exception):
-            await registry.set.remote(mship["req_id"])
+            await registry.set.remote(req_id)
 
 
 async def reconcile_staleness(store: StateStore, identity: str, response_id: str, snapshot: dict) -> dict:
@@ -610,11 +666,26 @@ async def reconcile_staleness(store: StateStore, identity: str, response_id: str
     response = snapshot.get("response") or {}
     if response.get("status") not in ("queued", "in_progress"):
         return snapshot
-    if not responses_state.is_stale(snapshot, responses_state.stale_seconds()):
+    try:
+        alive = await responses_state.is_alive(identity, response_id)
+    except Exception:
+        # Registry unreachable: ambiguous, not evidence of staleness — don't risk
+        # marking a genuinely healthy run failed over a transient hiccup.
+        logger.warning("HeartbeatRegistry unavailable reconciling staleness for response %s", response_id)
+        return snapshot
+    if alive:
         return snapshot
     failed = _mark_failed(response, "Background response orphaned: its worker stopped reporting progress.")
-    await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
+    try:
+        await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
+    except StateStoreUnavailableError:
+        logger.exception("State store unavailable reconciling staleness for response %s", response_id)
+        raise _store_unavailable_error() from None
     with contextlib.suppress(StateStoreUnavailableError):
         await responses_state.discard_stream_buffer(store, identity, response_id)
-    updated = await responses_state.read_async(store, identity, response_id)
+    try:
+        updated = await responses_state.read_async(store, identity, response_id)
+    except StateStoreUnavailableError:
+        logger.exception("State store unavailable reconciling staleness for response %s", response_id)
+        raise _store_unavailable_error() from None
     return updated if updated is not None else snapshot

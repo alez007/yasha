@@ -18,12 +18,17 @@ into the top-level ``protocol`` package — so no import cycle exists here.
 
 from modelship.openai.protocol.responses.adapter import (
     UnsupportedResponsesFeatureError,
+    parse_output_item,
     responses_request_to_chat,
 )
 from modelship.openai.protocol.responses.schemas import (
     CompactionItem,
     CompactRequest,
     CompactResource,
+    McpApprovalRequestItem,
+    McpCallItem,
+    McpListToolsItem,
+    McpListToolsTool,
     ResponseFunctionToolCall,
     ResponseInputItem,
     ResponseInputTokensDetails,
@@ -51,6 +56,10 @@ __all__ = [
     "CompactRequest",
     "CompactResource",
     "CompactionItem",
+    "McpApprovalRequestItem",
+    "McpCallItem",
+    "McpListToolsItem",
+    "McpListToolsTool",
     "ResponseFunctionToolCall",
     "ResponseInputItem",
     "ResponseInputTokensDetails",
@@ -68,6 +77,7 @@ __all__ = [
     "UnsupportedResponsesFeatureError",
     "error_ws_frame",
     "frame_sse",
+    "parse_output_item",
     "responses_request_to_chat",
     "store_failure_event",
 ]

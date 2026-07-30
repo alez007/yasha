@@ -47,6 +47,56 @@ class TestRequestInputTranslation:
         assert chat.messages[0] == {"role": "system", "content": "be terse"}
         assert chat.messages[1] == {"role": "user", "content": "hi"}
 
+    def test_instructions_and_later_system_item_merge_into_one_leading_message(self):
+        # Codex CLI sends `instructions` plus a separate system-role input item; some
+        # chat templates (Qwen3.5) hard-reject a second/misplaced system message.
+        chat = responses_request_to_chat(
+            _req(
+                instructions="be terse",
+                input=[
+                    {"type": "message", "role": "system", "content": "extra context"},
+                    {"type": "message", "role": "user", "content": "hi"},
+                ],
+            )
+        )
+        assert chat.messages == [
+            {"role": "system", "content": "be terse\n\nextra context"},
+            {"role": "user", "content": "hi"},
+        ]
+
+    def test_developer_role_merges_with_system_like_instructions(self):
+        # Codex CLI sends `instructions`, a separate `system`-role item, AND a
+        # `developer`-role item (OpenAI's system-equivalent role for newer models) —
+        # Qwen3.5's template treats `developer` the same as `system` for its
+        # leading-message check, so it must merge in too.
+        chat = responses_request_to_chat(
+            _req(
+                instructions="be terse",
+                input=[
+                    {"type": "message", "role": "developer", "content": "sandbox: read-only"},
+                    {"type": "message", "role": "user", "content": "hi"},
+                ],
+            )
+        )
+        assert chat.messages == [
+            {"role": "system", "content": "be terse\n\nsandbox: read-only"},
+            {"role": "user", "content": "hi"},
+        ]
+
+    def test_system_item_without_instructions_still_leads(self):
+        chat = responses_request_to_chat(
+            _req(
+                input=[
+                    {"type": "message", "role": "user", "content": "hi"},
+                    {"type": "message", "role": "system", "content": "late system note"},
+                ]
+            )
+        )
+        assert chat.messages == [
+            {"role": "system", "content": "late system note"},
+            {"role": "user", "content": "hi"},
+        ]
+
     def test_message_items_with_content_parts_flatten_to_text(self):
         chat = responses_request_to_chat(
             _req(
@@ -181,6 +231,25 @@ class TestCompactionInputDecode:
             {"role": "user", "content": "what's my name?"},
         ]
 
+    def test_system_item_inside_compaction_merges_into_top_level_leading_message(self):
+        # A system item decoded from a compaction blob still needs to end up in the
+        # single leading system message, not wherever the compaction item itself sits.
+        summary_items = [{"role": "system", "content": "compacted system note"}]
+        blob = compaction_crypto.encrypt_items(summary_items)
+        chat = responses_request_to_chat(
+            _req(
+                instructions="be terse",
+                input=[
+                    {"type": "compaction", "id": "cmp_1", "encrypted_content": blob},
+                    {"role": "user", "content": "hi"},
+                ],
+            )
+        )
+        assert chat.messages == [
+            {"role": "system", "content": "be terse\n\ncompacted system note"},
+            {"role": "user", "content": "hi"},
+        ]
+
     def test_nested_compaction_item_is_rejected(self):
         # A blob we mint ourselves never nests another compaction item — but the
         # decode path must not simply trust that. Simulates a forged blob (or a
@@ -230,6 +299,22 @@ class TestRequestFieldTranslation:
     def test_tools_flattened_to_nested(self):
         chat = responses_request_to_chat(
             _req(tools=[{"type": "function", "name": "f", "description": "d", "parameters": {"type": "object"}}])
+        )
+        assert chat.tools == [
+            {"type": "function", "function": {"name": "f", "description": "d", "parameters": {"type": "object"}}}
+        ]
+
+    def test_hosted_tool_type_dropped_not_rejected(self):
+        # Codex CLI sends its own 'namespace' hosted tool unconditionally, even with
+        # no MCP servers configured (see ggml-org/llama.cpp#23041 for the same fix
+        # against the same client). Only the client-defined function tool survives.
+        chat = responses_request_to_chat(
+            _req(
+                tools=[
+                    {"type": "namespace", "name": "collaboration"},
+                    {"type": "function", "name": "f", "description": "d", "parameters": {"type": "object"}},
+                ]
+            )
         )
         assert chat.tools == [
             {"type": "function", "function": {"name": "f", "description": "d", "parameters": {"type": "object"}}}
@@ -339,6 +424,131 @@ class TestEchoedTools:
     def test_no_tools_echoes_empty_list(self):
         assert self._tools_on(_req()) == []
 
+    def test_mcp_tool_credentials_scrubbed(self):
+        tool = {
+            "type": "mcp",
+            "server_label": "s",
+            "server_url": "https://example.com/mcp",
+            "headers": {"X-Api-Key": "secret"},
+            "authorization": "topsecret",
+        }
+        echoed = self._tools_on(_req(tools=[tool]))
+        assert len(echoed) == 1
+        assert echoed[0]["headers"] is None
+        assert "authorization" not in echoed[0]
+        assert echoed[0]["server_url"] == "https://example.com/mcp"
+
+
+class TestMcpInputItems:
+    def test_mcp_call_becomes_tool_call_and_result_pair(self):
+        chat = responses_request_to_chat(
+            _req(
+                input=[
+                    {
+                        "type": "mcp_call",
+                        "id": "mcp_1",
+                        "name": "roll",
+                        "arguments": '{"n":2}',
+                        "server_label": "dice",
+                        "output": "9",
+                    }
+                ]
+            )
+        )
+        messages = chat.messages
+        assert messages[-2]["role"] == "assistant"
+        assert messages[-2]["tool_calls"][0]["id"] == "mcp_1"
+        assert messages[-2]["tool_calls"][0]["function"]["name"] == "roll"
+        assert messages[-1] == {"role": "tool", "tool_call_id": "mcp_1", "content": "9"}
+
+    def test_mcp_call_with_error_uses_error_as_tool_content(self):
+        chat = responses_request_to_chat(
+            _req(
+                input=[
+                    {
+                        "type": "mcp_call",
+                        "id": "mcp_1",
+                        "name": "roll",
+                        "arguments": "{}",
+                        "server_label": "dice",
+                        "error": "boom",
+                    }
+                ]
+            )
+        )
+        assert chat.messages[-1] == {"role": "tool", "tool_call_id": "mcp_1", "content": "boom"}
+
+    def test_mcp_call_missing_id_and_name_rejected(self):
+        with pytest.raises(UnsupportedResponsesFeatureError, match="mcp_call"):
+            responses_request_to_chat(_req(input=[{"type": "mcp_call", "output": "9"}]))
+
+    def test_mcp_call_missing_output_and_error_rejected(self):
+        # Regression: a client-sent mcp_call with neither 'output' nor 'error' used to
+        # silently produce a tool message with content=None instead of a clear 400.
+        with pytest.raises(UnsupportedResponsesFeatureError, match=r"output.*error"):
+            responses_request_to_chat(
+                _req(input=[{"type": "mcp_call", "id": "mcp_1", "name": "roll", "arguments": "{}"}])
+            )
+
+    def test_mcp_call_non_text_output_rejected(self):
+        # Regression: output/error used to be forwarded to the tool message verbatim,
+        # so a non-text shape (e.g. a raw dict) would reach the chat layer untouched
+        # and surface as a downstream type error (500) instead of a clean 400 here.
+        with pytest.raises(UnsupportedResponsesFeatureError, match="content shape"):
+            responses_request_to_chat(
+                _req(
+                    input=[
+                        {
+                            "type": "mcp_call",
+                            "id": "mcp_1",
+                            "name": "roll",
+                            "arguments": "{}",
+                            "server_label": "dice",
+                            "output": {"total": 9},
+                        }
+                    ]
+                )
+            )
+
+    def test_mcp_call_non_text_error_rejected(self):
+        with pytest.raises(UnsupportedResponsesFeatureError, match="content shape"):
+            responses_request_to_chat(
+                _req(
+                    input=[
+                        {
+                            "type": "mcp_call",
+                            "id": "mcp_1",
+                            "name": "roll",
+                            "arguments": "{}",
+                            "server_label": "dice",
+                            "error": {"code": 1},
+                        }
+                    ]
+                )
+            )
+
+    def test_mcp_list_tools_and_approval_items_are_skipped(self):
+        chat = responses_request_to_chat(
+            _req(
+                input=[
+                    {"type": "mcp_list_tools", "id": "mcpl_1", "server_label": "dice", "tools": []},
+                    {
+                        "type": "mcp_approval_request",
+                        "id": "mcpr_1",
+                        "name": "roll",
+                        "arguments": "{}",
+                        "server_label": "dice",
+                    },
+                    {"type": "mcp_approval_response", "approval_request_id": "mcpr_1", "approve": True},
+                ]
+            )
+        )
+        assert chat.messages == []
+
+    def test_mcp_tool_type_rejected_by_tools_to_chat(self):
+        with pytest.raises(UnsupportedResponsesFeatureError, match="gateway"):
+            responses_request_to_chat(_req(tools=[{"type": "mcp", "server_label": "s", "server_url": "http://x"}]))
+
 
 class TestReasoningItemSerialization:
     def test_encrypted_content_omitted_when_unset(self):
@@ -398,9 +608,9 @@ class TestRequestRejections:
         chat = responses_request_to_chat(_req(background=True))
         assert chat.messages == [{"role": "user", "content": "hello"}]
 
-    def test_hosted_tool_rejected(self):
-        with pytest.raises(UnsupportedResponsesFeatureError, match="hosted tool"):
-            responses_request_to_chat(_req(tools=[{"type": "web_search"}]))
+    def test_hosted_tool_dropped(self):
+        chat = responses_request_to_chat(_req(tools=[{"type": "web_search"}]))
+        assert chat.tools is None
 
     def test_text_format_as_string_rejected(self):
         # A malformed text.format (string instead of object) must be a clean

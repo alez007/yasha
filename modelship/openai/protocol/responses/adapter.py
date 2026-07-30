@@ -12,16 +12,26 @@ from typing import Any, Literal
 
 from cryptography.fernet import InvalidToken
 
+from modelship.logging import get_logger
 from modelship.openai import compaction_crypto
 from modelship.openai.protocol.chat import ChatCompletionRequest, StreamOptions
 from modelship.openai.protocol.responses.schemas import (
+    McpApprovalRequestItem,
+    McpCallItem,
+    McpListToolsItem,
+    ResponseFunctionToolCall,
     ResponseInputTokensDetails,
     ResponseObject,
+    ResponseOutputItem,
+    ResponseOutputMessage,
     ResponseOutputTokensDetails,
+    ResponseReasoningItem,
     ResponsesRequest,
     ResponseUsage,
 )
 from modelship.openai.protocol.usage import UsageInfo
+
+logger = get_logger("openai.protocol.responses.adapter")
 
 
 class UnsupportedResponsesFeatureError(ValueError):
@@ -82,14 +92,25 @@ def responses_request_to_chat(request: ResponsesRequest) -> ChatCompletionReques
 
 
 def messages_from_input(input_: str | list[dict[str, Any]], instructions: str | None) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = []
-    if instructions:
-        messages.append({"role": "system", "content": instructions})
+    """Build chat messages from Responses ``input``, merging every system-level item
+    (``instructions`` plus any ``system``- or ``developer``-role item found anywhere in
+    ``input``, at any nesting depth) into a single leading system message. Some chat
+    templates (e.g. Qwen3.5) hard-reject a second system-level message or one not in
+    slot 0; clients like Codex CLI send ``instructions``, a separate ``system``-role
+    item, *and* a ``developer``-role item (OpenAI's system-equivalent role for newer
+    models), so a naive per-item translation trips that template restriction."""
+    system_parts: list[str] = [instructions] if instructions else []
+    messages = _messages_from_items(input_, system_parts)
+    if system_parts:
+        messages.insert(0, {"role": "system", "content": "\n\n".join(system_parts)})
+    return messages
 
+
+def _messages_from_items(input_: str | list[dict[str, Any]], system_parts: list[str]) -> list[dict[str, Any]]:
     if isinstance(input_, str):
-        messages.append({"role": "user", "content": input_})
-        return messages
+        return [{"role": "user", "content": input_}]
 
+    messages: list[dict[str, Any]] = []
     # call_ids seen from a function_call earlier in this list; an unmatched
     # function_call_output is orphaned. Reset per call, not shared across recursion.
     seen_call_ids: set[str] = set()
@@ -120,6 +141,38 @@ def messages_from_input(input_: str | list[dict[str, Any]], instructions: str | 
                     ],
                 }
             )
+        elif itype == "mcp_call":
+            # Mirrors the function_call branch: an assistant tool_calls message plus its
+            # tool-result message, synthesized as a pair since mcp_call has no call_id.
+            call_id = item.get("id") or ""
+            name = item.get("name")
+            if not call_id or not name:
+                raise UnsupportedResponsesFeatureError("mcp_call input items require both 'id' and 'name'.")
+            output, error = item.get("output"), item.get("error")
+            if output is None and error is None:
+                raise UnsupportedResponsesFeatureError("mcp_call input items require one of 'output' or 'error'.")
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": item.get("arguments", ""),
+                            },
+                        }
+                    ],
+                }
+            )
+            content = _text_of(error) if error is not None else _text_of(output)
+            messages.append({"role": "tool", "tool_call_id": call_id, "content": content})
+        elif itype in ("mcp_list_tools", "mcp_approval_request", "mcp_approval_response"):
+            # Not prompt material: mcp_list_tools is discovery bookkeeping, and approval
+            # request/response are consumed by the MCP loop before the loader ever sees them.
+            continue
         elif itype == "function_call_output":
             # call_id must reference a function_call seen earlier — an orphaned tool result should 400, not silently pass through.
             call_id = item.get("call_id")
@@ -147,14 +200,15 @@ def messages_from_input(input_: str | list[dict[str, Any]], instructions: str | 
                 raise UnsupportedResponsesFeatureError("compaction item could not be decoded.") from None
             if any(isinstance(d, dict) and d.get("type") == "compaction" for d in decoded_items):
                 raise UnsupportedResponsesFeatureError("compaction items cannot nest another compaction item.")
-            messages.extend(messages_from_input(decoded_items, None))
+            messages.extend(_messages_from_items(decoded_items, system_parts))
         elif itype == "message" or "role" in item:
-            messages.append(
-                {
-                    "role": item.get("role", "user"),
-                    "content": _content_to_chat(item.get("content")),
-                }
-            )
+            role = item.get("role", "user")
+            if role in ("system", "developer"):
+                text = _text_of(item.get("content"))
+                if text:
+                    system_parts.append(text)
+                continue
+            messages.append({"role": role, "content": _content_to_chat(item.get("content"))})
         else:
             raise UnsupportedResponsesFeatureError(f"unsupported input item type {itype!r}.")
 
@@ -211,14 +265,25 @@ def _tools_to_chat(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] |
     out: list[dict[str, Any]] = []
     for tool in tools:
         ttype = tool.get("type")
-        if ttype != "function":
+        if ttype == "mcp":
+            # The gateway expands mcp tools into plain function tools before the Ray hop;
+            # reaching here means a loader was called directly, bypassing that expansion.
             raise UnsupportedResponsesFeatureError(
-                f"hosted tool type {ttype!r} is not supported; only client-defined 'function' tools are."
+                "mcp tools are handled at the gateway and must not reach the loader directly."
             )
+        if ttype != "function":
+            # Hosted tool types (e.g. OpenAI's own web_search, or Codex CLI's
+            # 'namespace') have no client-defined equivalent a self-hosted backend can
+            # fulfill. Drop them rather than failing the whole request over a
+            # capability the client didn't ask the model to actually use — llama.cpp's
+            # server took the same approach for the same Codex CLI incompatibility
+            # (ggml-org/llama.cpp#23041).
+            logger.warning("dropping unsupported Responses tool type %r", ttype)
+            continue
         # Responses flattens the function fields onto the tool; chat nests them.
         fn = {k: tool[k] for k in ("name", "description", "parameters", "strict") if k in tool}
         out.append({"type": "function", "function": fn})
-    return out
+    return out or None
 
 
 def _tool_choice_to_chat(tool_choice: str | dict[str, Any] | None) -> str | dict[str, Any] | None:
@@ -308,12 +373,20 @@ def build_response_object(
 
 def _echo_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Backfill echoed ``tools[]`` so every ``FunctionTool`` carries all five spec keys
-    (the request may omit optional ones, but the echo requires them present, nullable)."""
+    (the request may omit optional ones, but the echo requires them present, nullable).
+    ``mcp`` tools have their credentials scrubbed (OpenAI redacts the same way) since
+    this echo is both returned to the client and written into the state-store snapshot."""
     if not tools:
         return []
     out: list[dict[str, Any]] = []
     for tool in tools:
-        if tool.get("type") != "function":
+        ttype = tool.get("type")
+        if ttype == "mcp":
+            scrubbed = {**tool, "headers": None}
+            scrubbed.pop("authorization", None)
+            out.append(scrubbed)
+            continue
+        if ttype != "function":
             out.append(tool)
             continue
         out.append(
@@ -345,6 +418,27 @@ def _usage_from_chat(usage: UsageInfo) -> ResponseUsage:
             reasoning_tokens=(completion_details.reasoning_tokens or 0) if completion_details else 0
         ),
     )
+
+
+_OUTPUT_ITEM_CLASSES: dict[str, type[ResponseOutputItem]] = {
+    "reasoning": ResponseReasoningItem,
+    "message": ResponseOutputMessage,
+    "function_call": ResponseFunctionToolCall,
+    "mcp_list_tools": McpListToolsItem,
+    "mcp_call": McpCallItem,
+    "mcp_approval_request": McpApprovalRequestItem,
+}
+
+
+def parse_output_item(d: dict[str, Any]) -> ResponseOutputItem:
+    """Rebuild a typed output item from a dict, dispatching explicitly on ``type``.
+    ``ResponseOutputItem`` is a plain (non-discriminated) union, so letting pydantic
+    smart-match a dict against it risks mis-coercion between the similarly-shaped
+    item classes."""
+    cls = _OUTPUT_ITEM_CLASSES.get(d.get("type", ""))
+    if cls is None:
+        raise UnsupportedResponsesFeatureError(f"unsupported output item type {d.get('type')!r}.")
+    return cls.model_validate(d)
 
 
 def _status_for(

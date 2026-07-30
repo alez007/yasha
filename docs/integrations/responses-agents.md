@@ -21,10 +21,13 @@ Supported on both loaders:
   `GET`/`DELETE /v1/responses/{id}`, and `/input_items`
 - Streaming and non-streaming
 
-Not supported: `background` mode, hosted built-in tools (e.g. `web_search`),
-and encrypted reasoning (`reasoning.encrypted_content`) — server-side state
-is how Modelship carries reasoning across turns instead. All of these are
-rejected with a clear `400` rather than silently dropped.
+Hosted built-in tools (e.g. `web_search`, or a client's own proprietary hosted
+tool type — OpenAI's Codex CLI sends one called `namespace`) have no
+self-hosted equivalent and are dropped rather than failing the whole request;
+a warning is logged per dropped tool. Encrypted reasoning
+(`reasoning.encrypted_content`) is not supported and is rejected with a clear
+`400` — server-side state is how Modelship carries reasoning across turns
+instead.
 
 ## Continuing a conversation
 

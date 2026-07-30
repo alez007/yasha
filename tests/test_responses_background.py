@@ -4,7 +4,6 @@ triggering the route before asserting on the stored snapshot."""
 
 import asyncio
 import json
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +11,8 @@ from fastapi import HTTPException
 
 from modelship.openai.api import ModelshipAPI
 from modelship.openai.protocol import ResponsesRequest
+from modelship.openai.state import responses as responses_state
+from modelship.openai.state.responses import _HeartbeatStore
 from modelship.openai.utils.responses import _StreamBuffer
 from modelship.state import MemoryStoreActor, StateStoreUnavailableError
 
@@ -25,8 +26,52 @@ def _fake_disconnect_registry():
     conftest-level patch on `infer_config`'s copy doesn't reach it — fake it here."""
     registry = MagicMock()
     registry.set.remote = AsyncMock()
+    registry.is_set.remote = AsyncMock(return_value=False)
     with patch("modelship.openai.utils.responses.get_disconnect_registry", return_value=registry):
         yield registry
+
+
+class _FakeHeartbeatRegistry:
+    """Stand-in for the HeartbeatRegistry actor handle, backed by a real
+    _HeartbeatStore. `.remote()` mimics Ray actor-method dispatch, same pattern as
+    `_FakeRegistry` in test_disconnect_registry.py."""
+
+    def __init__(self):
+        self._store = _HeartbeatStore(ttl_seconds=3600.0)
+        self.heartbeat = self._Method(self._heartbeat)
+        self.is_alive = self._Method(self._is_alive)
+        self.req_id = self._Method(self._req_id)
+
+    async def _heartbeat(self, key, req_id):
+        self._store.heartbeat(key, req_id)
+
+    async def _is_alive(self, key):
+        return self._store.is_alive(key)
+
+    async def _req_id(self, key):
+        return self._store.req_id(key)
+
+    def expire(self, identity: str, response_id: str) -> None:
+        """Force this key's entry stale, simulating a dead worker's heartbeat aging
+        out, without waiting out a real TTL."""
+        key = f"responses/{identity}/{response_id}"
+        req_id = self._store.req_id(key)
+        if req_id is not None:
+            self._store._entries[key] = (req_id, -1.0)
+
+    class _Method:
+        def __init__(self, fn):
+            self._fn = fn
+
+        def remote(self, *args):
+            return self._fn(*args)
+
+
+@pytest.fixture(autouse=True)
+def heartbeat_registry():
+    reg = _FakeHeartbeatRegistry()
+    with patch("modelship.openai.state.responses.get_heartbeat_registry", return_value=reg):
+        yield reg
 
 
 @pytest.fixture
@@ -58,14 +103,14 @@ def _stored(api, response_id="resp_1", identity="unscoped", status="completed", 
     )
 
 
-def _stored_background(
+async def _stored_background(
     api, response_id="resp_1", identity="unscoped", status="in_progress", req_id="req-1", output=None
 ):
     response = {"id": response_id, "object": "response", "status": status, "background": True, "output": output or []}
     value = {"response": response, "input_items": []}
-    if status in ("queued", "in_progress"):
-        value["_mship"] = {"req_id": req_id, "updated_at": time.time()}
     api._state_store.set(f"responses/{identity}/{response_id}", value)
+    if status in ("queued", "in_progress"):
+        await responses_state.heartbeat(identity, response_id, req_id)
 
 
 def _wire(api, side_effect):
@@ -197,6 +242,64 @@ class TestBackgroundCreate:
         assert "_mship" not in body
 
 
+class TestMcpBackgroundWiring:
+    """Wiring only — mcp_loop's own behavior is covered by test_mcp_loop.py.
+    Confirms run_background routes through mcp_loop.run_mcp_response (with the
+    already-minted response_id) instead of handle.respond when the request
+    declares an mcp tool, and that an mcp_approval_request in its output persists
+    (background mode completes the response even with a pending approval)."""
+
+    @pytest.mark.asyncio
+    async def test_background_mcp_routes_through_loop_and_persists_approval_request(self, api):
+        handle = MagicMock()
+        api.models = {"m": {"m-a1b2c": handle}}
+        api._round_robin = {"m": 0}
+
+        async def fake_mcp_gen(*args, **kwargs):
+            response_id = kwargs.get("response_id")
+            yield {"type": "response.created", "sequence_number": 0, "response": {"id": response_id}}
+            yield {
+                "type": "response.completed",
+                "sequence_number": 1,
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "status": "completed",
+                    "background": True,
+                    "output": [
+                        {
+                            "type": "mcp_approval_request",
+                            "id": "mcpr_1",
+                            "name": "roll",
+                            "arguments": "{}",
+                            "server_label": "dice",
+                        }
+                    ],
+                },
+            }
+
+        request = ResponsesRequest(
+            model="m",
+            input="roll some dice",
+            background=True,
+            tools=[{"type": "mcp", "server_label": "dice", "server_url": "http://x"}],
+        )
+        with patch("modelship.openai.mcp.loop.run_mcp_response", side_effect=fake_mcp_gen) as run_mcp:
+            result = await api.create_response(request, _raw_request())
+            response_id = json.loads(bytes(result.body))["id"]
+            await _drain_background_tasks(api)
+
+        run_mcp.assert_called_once()
+        assert run_mcp.call_args.kwargs["response_id"] == response_id
+        handle.respond.options.return_value.remote.assert_not_called()
+
+        get_result = await api.get_response(response_id, _raw_request())
+        body = json.loads(bytes(get_result.body))
+        assert body["status"] == "completed"
+        assert body["output"][0]["type"] == "mcp_approval_request"
+        assert body["output"][0]["name"] == "roll"
+
+
 class TestGuards:
     @pytest.mark.asyncio
     async def test_background_and_store_false_is_400(self, api):
@@ -210,7 +313,7 @@ class TestGuards:
 
     @pytest.mark.asyncio
     async def test_previous_response_id_in_progress_is_400(self, api):
-        _stored_background(api, "resp_running", status="in_progress")
+        await _stored_background(api, "resp_running", status="in_progress")
         _wire(api, _background_gen_factory())
         request = ResponsesRequest(model="m", input="hi", previous_response_id="resp_running")
 
@@ -221,7 +324,7 @@ class TestGuards:
 
     @pytest.mark.asyncio
     async def test_previous_response_id_queued_is_400(self, api):
-        _stored_background(api, "resp_queued", status="queued")
+        await _stored_background(api, "resp_queued", status="queued")
         _wire(api, _background_gen_factory())
         request = ResponsesRequest(model="m", input="hi", previous_response_id="resp_queued")
 
@@ -274,7 +377,7 @@ class TestCancel:
 
     @pytest.mark.asyncio
     async def test_cancel_on_terminal_background_is_idempotent(self, api):
-        _stored_background(api, "resp_done", status="completed")
+        await _stored_background(api, "resp_done", status="completed")
 
         result = await api.cancel_response("resp_done", _raw_request())
 
@@ -293,6 +396,20 @@ class TestCancel:
         with pytest.raises(HTTPException) as exc:
             await api.cancel_response("resp_nope", _raw_request())
         assert exc.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_cancel_store_outage_writing_cancelled_snapshot_is_503(self, api):
+        # Regression: the write of the cancelled snapshot wasn't wrapped, so a store
+        # outage there bubbled as a raw StateStoreUnavailableError (500) instead of
+        # the intended 503 ResponsesApiError every other store write in this module produces.
+        await _stored_background(api, "resp_1", status="in_progress")
+
+        with (
+            patch.object(api._state_store, "set_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await api.cancel_response("resp_1", _raw_request())
+        assert exc.value.status_code == 503
 
 
 class TestDeleteImpliesCancel:
@@ -337,11 +454,9 @@ class TestDeleteImpliesCancel:
 
 class TestOrphanDetection:
     @pytest.mark.asyncio
-    async def test_stale_heartbeat_reports_failed_on_get(self, api):
-        _stored_background(api, "resp_stale", status="in_progress")
-        snapshot = api._state_store.get("responses/unscoped/resp_stale")
-        snapshot["_mship"]["updated_at"] = time.time() - 3600
-        api._state_store.set("responses/unscoped/resp_stale", snapshot)
+    async def test_stale_heartbeat_reports_failed_on_get(self, api, heartbeat_registry):
+        await _stored_background(api, "resp_stale", status="in_progress")
+        heartbeat_registry.expire("unscoped", "resp_stale")
 
         result = await api.get_response("resp_stale", _raw_request())
 
@@ -351,11 +466,52 @@ class TestOrphanDetection:
 
     @pytest.mark.asyncio
     async def test_fresh_heartbeat_stays_in_progress(self, api):
-        _stored_background(api, "resp_fresh", status="in_progress")
+        await _stored_background(api, "resp_fresh", status="in_progress")
 
         result = await api.get_response("resp_fresh", _raw_request())
 
         assert json.loads(bytes(result.body))["status"] == "in_progress"
+
+    @pytest.mark.asyncio
+    async def test_store_outage_writing_failed_snapshot_is_503(self, api, heartbeat_registry):
+        # Regression: reconcile_staleness's write of the orphaned-failure snapshot
+        # wasn't wrapped, so a store outage there bubbled as a raw
+        # StateStoreUnavailableError (500) instead of the documented 503.
+        await _stored_background(api, "resp_stale", status="in_progress")
+        heartbeat_registry.expire("unscoped", "resp_stale")
+
+        with (
+            patch.object(api._state_store, "set_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await api.get_response("resp_stale", _raw_request())
+        assert exc.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_store_outage_on_post_write_readback_is_503(self, api, heartbeat_registry):
+        # Regression: reconcile_staleness's final read-back (after the write succeeds)
+        # also wasn't wrapped, for the same reason as the write above.
+        await _stored_background(api, "resp_stale", status="in_progress")
+        heartbeat_registry.expire("unscoped", "resp_stale")
+
+        real_get_async = api._state_store.get_async
+        calls = 0
+
+        async def flaky_get_async(key):
+            # 1st call: get_response's own load_snapshot. 2nd: write_terminal_if_not_terminal's
+            # internal pre-write read. 3rd: reconcile_staleness's final read-back — fail there.
+            nonlocal calls
+            calls += 1
+            if calls > 2:
+                raise StateStoreUnavailableError("down")
+            return await real_get_async(key)
+
+        with (
+            patch.object(api._state_store, "get_async", flaky_get_async),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await api.get_response("resp_stale", _raw_request())
+        assert exc.value.status_code == 503
 
 
 def _parse_sse(body: str) -> list[dict]:
@@ -433,7 +589,7 @@ class TestBackgroundStream:
     @pytest.mark.asyncio
     async def test_get_stream_resumes_from_buffered_events(self, api):
         response_id = "resp_1"
-        _stored_background(api, response_id, status="completed")
+        await _stored_background(api, response_id, status="completed")
         key = f"responses-stream/unscoped/{response_id}"
         await api._state_store.append_async(key, {"type": "response.created", "sequence_number": 0, "response": {}})
         await api._state_store.append_async(
@@ -458,19 +614,63 @@ class TestBackgroundStream:
 
     @pytest.mark.asyncio
     async def test_get_stream_on_terminal_response_synthesizes_terminal_event(self, api):
-        _stored_background(api, "resp_done", status="completed")
+        # A fresh stream (no starting_after, i.e. never having seen anything) always
+        # gets a response.created first, even when nothing was ever buffered for it —
+        # matching what a live connection would have seen.
+        await _stored_background(api, "resp_done", status="completed")
 
         result = await api.get_response("resp_done", _raw_request(), stream=True)
         body = await _consume_body(result)
         events = _parse_sse(body)
 
-        assert len(events) == 1
-        assert events[0]["type"] == "response.completed"
-        assert events[0]["response"]["status"] == "completed"
+        assert [e["type"] for e in events] == ["response.created", "response.completed"]
+        assert events[-1]["response"]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_synthesized_created_for_fresh_tail_has_in_progress_envelope(self, api):
+        # Regression: the synthesized response.created for a fresh tail (buffer
+        # already drained-and-discarded before the first poll) used to reuse the
+        # terminal response dict verbatim, so the "opening" event carried a
+        # completed status and the full output — contradicting a real
+        # response.created, which is always status=in_progress, output=[].
+        response = {
+            "id": "resp_done",
+            "object": "response",
+            "status": "completed",
+            "background": True,
+            "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hi"}]}],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+        api._state_store.set("responses/unscoped/resp_done", {"response": response, "input_items": []})
+
+        result = await api.get_response("resp_done", _raw_request(), stream=True)
+        body = await _consume_body(result)
+        events = _parse_sse(body)
+
+        assert [e["type"] for e in events] == ["response.created", "response.completed"]
+        created = events[0]["response"]
+        assert created["status"] == "in_progress"
+        assert created["output"] == []
+        assert created["usage"] is None
+        # The terminal event, in contrast, must still carry the real final state.
+        assert events[1]["response"]["status"] == "completed"
+        assert events[1]["response"]["output"] == response["output"]
+
+    @pytest.mark.asyncio
+    async def test_get_stream_resume_from_a_real_cursor_skips_the_synthesized_created(self, api):
+        # A genuine resume (a real starting_after, meaning the client already saw
+        # response.created on its original connection) must not get a second one.
+        await _stored_background(api, "resp_done", status="completed")
+
+        result = await api.get_response("resp_done", _raw_request(), stream=True, starting_after=0)
+        body = await _consume_body(result)
+        events = _parse_sse(body)
+
+        assert [e["type"] for e in events] == ["response.completed"]
 
     @pytest.mark.asyncio
     async def test_get_stream_ends_cleanly_on_buffer_read_outage(self, api):
-        _stored_background(api, "resp_1", status="in_progress")
+        await _stored_background(api, "resp_1", status="in_progress")
         with patch.object(
             api._state_store, "read_from_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))
         ):

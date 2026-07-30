@@ -25,7 +25,10 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 from typing import cast
+
+import ray
 
 from modelship.logging import get_logger
 from modelship.state import StateStore
@@ -43,8 +46,9 @@ _DEFAULT_TTL_S = 30 * 24 * 60 * 60.0  # 30 days, matching OpenAI's retention
 # A background response's status once it can no longer change.
 TERMINAL_STATUSES = frozenset({"completed", "incomplete", "failed", "cancelled"})
 
-# How stale a background run's heartbeat (`_mship.updated_at`) may get before a
-# poller gives up on it and reports `failed`.
+# How long a background run's HeartbeatRegistry entry survives without a refresh
+# before a poller gives up on it and reports `failed`. Also the registry's own TTL
+# (see get_heartbeat_registry) — one threshold, not two to keep in sync.
 _STALE_ENV = "MSHIP_RESPONSES_STALE_S"
 _DEFAULT_STALE_S = 30.0
 
@@ -79,6 +83,106 @@ def stale_seconds() -> float:
         logger.warning("%s=%r is not a number; falling back to %ss.", _STALE_ENV, raw, _DEFAULT_STALE_S)
         return _DEFAULT_STALE_S
     return threshold if threshold > 0 else _DEFAULT_STALE_S
+
+
+class _HeartbeatStore:
+    """Plain (non-actor) TTL map of key -> (req_id, deadline), factored out of
+    HeartbeatRegistry so the eviction logic is unit-testable without a Ray cluster.
+    ``now`` is injectable for deterministic tests. Mirrors ``_DisconnectStore``
+    (``infer_config.py``) in shape."""
+
+    def __init__(self, ttl_seconds: float, now: Callable[[], float] = time.monotonic):
+        self._ttl = ttl_seconds
+        self._now = now
+        self._entries: dict[str, tuple[str, float]] = {}
+
+    def heartbeat(self, key: str, req_id: str) -> None:
+        now = self._now()
+        self._evict_expired(now)
+        self._entries[key] = (req_id, now + self._ttl)
+
+    def is_alive(self, key: str) -> bool:
+        return self._live_entry(key) is not None
+
+    def req_id(self, key: str) -> str | None:
+        entry = self._live_entry(key)
+        return entry[0] if entry is not None else None
+
+    def _live_entry(self, key: str) -> tuple[str, float] | None:
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        if entry[1] <= self._now():
+            del self._entries[key]
+            return None
+        return entry
+
+    def _evict_expired(self, now: float) -> None:
+        for key in [k for k, (_req_id, deadline) in self._entries.items() if deadline <= now]:
+            del self._entries[key]
+
+
+@ray.remote(num_cpus=0)
+class HeartbeatRegistry:
+    """One cluster-wide actor tracking liveness per background ``/v1/responses`` run,
+    keyed the same way the response snapshot is (``identity/response_id``). Separate
+    from the response snapshot itself: a heartbeat refresh is then a single atomic
+    actor call rather than a read-modify-write of the snapshot, which is what let a
+    heartbeat tick race a terminal write (cancel/completion/staleness) and silently
+    regress the response back out of its terminal status.
+
+    Also separate from ``DisconnectRegistry``: that actor's ``is_set`` is a sticky
+    one-way flag ("cancel requested"), while this one's entries decay and need
+    periodic renewal ("still alive") — different enough semantics to not share one
+    actor. Entries are TTL-evicted (matching ``stale_seconds()``) rather than
+    explicitly cleared on terminal transition, for the same reason
+    ``DisconnectRegistry`` doesn't clear on ``stop()``: an explicit clear can race a
+    still-in-flight heartbeat tick and resurrect the entry right after."""
+
+    def __init__(self, ttl_seconds: float):
+        self._store = _HeartbeatStore(ttl_seconds)
+
+    async def heartbeat(self, key: str, req_id: str) -> None:
+        self._store.heartbeat(key, req_id)
+
+    async def is_alive(self, key: str) -> bool:
+        return self._store.is_alive(key)
+
+    async def req_id(self, key: str) -> str | None:
+        return self._store.req_id(key)
+
+
+_heartbeat_registry = None
+
+
+def get_heartbeat_registry():
+    """Get-or-create the single detached, named HeartbeatRegistry shared by every
+    gateway replica. Cached to keep the lookup off the hot path."""
+    global _heartbeat_registry
+    if _heartbeat_registry is None:
+        _heartbeat_registry = HeartbeatRegistry.options(
+            name="modelship_heartbeat_registry",
+            get_if_exists=True,
+            lifetime="detached",
+            namespace="modelship",
+        ).remote(stale_seconds())
+    return _heartbeat_registry
+
+
+async def heartbeat(identity: str, response_id: str, req_id: str) -> None:
+    """Refresh (or create) the liveness entry for this background run."""
+    await get_heartbeat_registry().heartbeat.remote(_key(identity, response_id), req_id)
+
+
+async def is_alive(identity: str, response_id: str) -> bool:
+    """Whether this background run has refreshed its heartbeat within ``stale_seconds()``."""
+    return await get_heartbeat_registry().is_alive.remote(_key(identity, response_id))
+
+
+async def req_id_for(identity: str, response_id: str) -> str | None:
+    """The request id to signal in ``DisconnectRegistry`` to cancel this run's
+    in-flight inference, or ``None`` if it has no live heartbeat entry."""
+    return await get_heartbeat_registry().req_id.remote(_key(identity, response_id))
 
 
 def _key(identity: str, response_id: str) -> str:
@@ -144,55 +248,21 @@ async def write_background(
     *,
     response: dict,
     input_items: list[dict],
-    req_id: str,
 ) -> None:
-    """Persist the initial ``queued`` placeholder with the ``_mship`` sidecar: ``req_id``
-    (what cancel signals in ``DisconnectRegistry``) and ``updated_at`` (heartbeat).
-    Dropped at terminal status — see :func:`write_terminal_if_not_terminal`."""
+    """Persist the initial ``queued`` placeholder. Liveness (``req_id``, heartbeat)
+    lives entirely in :class:`HeartbeatRegistry`, not in this snapshot — see
+    :func:`heartbeat`."""
     await store.set_async(
         _key(identity, response_id),
-        {
-            "response": response,
-            "input_items": input_items,
-            "_mship": {"req_id": req_id, "updated_at": time.time()},
-        },
+        {"response": response, "input_items": input_items},
         ttl_seconds=ttl_seconds(),
     )
 
 
-async def touch(store: StateStore, identity: str, response_id: str) -> bool:
-    """Heartbeat tick: refresh ``_mship.updated_at``. Returns ``False`` (stop
-    heartbeating) if the snapshot is gone, no longer carries ``_mship``, or has
-    already reached a terminal status — never overwrites a terminal write."""
-    snapshot = await read_async(store, identity, response_id)
-    if snapshot is None:
-        return False
-    mship = snapshot.get("_mship")
-    if not isinstance(mship, dict):
-        return False
-    if (snapshot.get("response") or {}).get("status") in TERMINAL_STATUSES:
-        return False
-    mship["updated_at"] = time.time()
-    await store.set_async(_key(identity, response_id), snapshot, ttl_seconds=ttl_seconds())
-    return True
-
-
-def is_stale(snapshot: dict, threshold_s: float) -> bool:
-    """Whether *snapshot*'s heartbeat is older than *threshold_s*. ``False`` for a
-    snapshot with no ``_mship`` sidecar (not a live background run)."""
-    mship = snapshot.get("_mship")
-    if not isinstance(mship, dict):
-        return False
-    updated_at = mship.get("updated_at")
-    if not isinstance(updated_at, int | float):
-        return False
-    return (time.time() - updated_at) > threshold_s
-
-
 async def write_terminal_if_not_terminal(store: StateStore, identity: str, response_id: str, *, response: dict) -> None:
     """Write *response* as the snapshot's new state, unless it's already gone or
-    already terminal. Drops the ``_mship`` sidecar. Shared by every writer that could
-    otherwise regress a terminal status (cancel, drain failure, staleness check)."""
+    already terminal. Shared by every writer that could otherwise regress a terminal
+    status (cancel, drain failure, staleness check)."""
     snapshot = await read_async(store, identity, response_id)
     if snapshot is None:
         return
