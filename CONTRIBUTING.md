@@ -2,6 +2,12 @@
 
 Thanks for your interest in contributing to Modelship! This document covers the basics for getting started.
 
+## License
+
+Modelship is licensed under [Apache 2.0](LICENSE), and **will always remain available under Apache 2.0** — that promise isn't contingent on the CLA below.
+
+Per Apache 2.0 §5, any contribution you intentionally submit for inclusion is licensed to the project under Apache 2.0 by default. Before your first PR can be merged, you'll also need to sign the [Contributor License Agreement](CLA.md) (individual or corporate) via the CLA Assistant bot, which will comment on your PR with a link. You keep copyright in your own contributions — the CLA grants the project the right to distribute and, if ever needed, relicense them, it does not assign them away.
+
 ## Development Setup
 
 The recommended way to develop is via the VS Code Dev Container. See [docs/development.md](docs/development.md) for full instructions.

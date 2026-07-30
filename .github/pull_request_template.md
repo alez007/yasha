@@ -15,3 +15,4 @@ Steps to verify the change works as expected.
 - [ ] `ruff check .` passes
 - [ ] `ruff format --check .` passes
 - [ ] `pyright` passes
+- [ ] I have signed the [CLA](https://github.com/alez007/modelship/blob/main/CLA.md) (the CLA Assistant bot will prompt you if not)
