@@ -891,9 +891,32 @@ class TestConnectRay:
         assert kwargs["_memory"] == 10 * 1024**3 - kwargs["object_store_memory"]
 
     def test_own_cluster_node_memory_absent_when_unset(self):
-        kwargs = self._init_call({"MSHIP_USE_EXISTING_RAY_CLUSTER": "false"}, pop=("MSHIP_NODE_MEMORY",))
+        from modelship.deploy import serve_utils
+
+        with patch.object(serve_utils, "detect_available_ram_bytes", return_value=0):
+            kwargs = self._init_call({"MSHIP_USE_EXISTING_RAY_CLUSTER": "false"}, pop=("MSHIP_NODE_MEMORY",))
         assert "_memory" not in kwargs
         assert "object_store_memory" not in kwargs
+
+    def test_own_cluster_node_memory_auto_detected_when_unset(self):
+        from modelship.deploy import serve_utils
+
+        available = 10 * 1024**3
+        with patch.object(serve_utils, "detect_available_ram_bytes", return_value=available):
+            kwargs = self._init_call({"MSHIP_USE_EXISTING_RAY_CLUSTER": "false"}, pop=("MSHIP_NODE_MEMORY",))
+        total_bytes = int(available * serve_utils._AUTO_NODE_MEMORY_HEADROOM)
+        assert kwargs["object_store_memory"] == int(total_bytes * 0.3)
+        assert kwargs["_memory"] == total_bytes - kwargs["object_store_memory"]
+
+    def test_own_cluster_explicit_node_memory_wins_over_auto_detect(self):
+        from modelship.deploy import serve_utils
+
+        with patch.object(serve_utils, "detect_available_ram_bytes", return_value=999 * 1024**3):
+            kwargs = self._init_call(
+                {"MSHIP_USE_EXISTING_RAY_CLUSTER": "false", "MSHIP_NODE_MEMORY": str(10 * 1024**3)}
+            )
+        assert kwargs["object_store_memory"] == int(10 * 1024**3 * 0.3)
+        assert kwargs["_memory"] == 10 * 1024**3 - kwargs["object_store_memory"]
 
     def test_own_cluster_dashboard_always_on_bound_localhost(self):
         kwargs = self._init_call({"MSHIP_USE_EXISTING_RAY_CLUSTER": "false"}, pop=("MSHIP_RAY_DASHBOARD",))
@@ -1103,9 +1126,30 @@ class TestJoinRayCluster:
         assert kw["memory"] == 10 * 1024**3 - kw["object_store_memory"]
 
     def test_node_memory_absent_when_unset(self):
-        kw = self._join({}, pop=("MSHIP_NODE_MEMORY",))["params_kwargs"]
+        from modelship.deploy import serve_utils
+
+        with patch.object(serve_utils, "detect_available_ram_bytes", return_value=0):
+            kw = self._join({}, pop=("MSHIP_NODE_MEMORY",))["params_kwargs"]
         assert kw["memory"] is None
         assert kw["object_store_memory"] is None
+
+    def test_node_memory_auto_detected_when_unset(self):
+        from modelship.deploy import serve_utils
+
+        available = 10 * 1024**3
+        with patch.object(serve_utils, "detect_available_ram_bytes", return_value=available):
+            kw = self._join({}, pop=("MSHIP_NODE_MEMORY",))["params_kwargs"]
+        total_bytes = int(available * serve_utils._AUTO_NODE_MEMORY_HEADROOM)
+        assert kw["object_store_memory"] == int(total_bytes * 0.3)
+        assert kw["memory"] == total_bytes - kw["object_store_memory"]
+
+    def test_explicit_node_memory_wins_over_auto_detect(self):
+        from modelship.deploy import serve_utils
+
+        with patch.object(serve_utils, "detect_available_ram_bytes", return_value=999 * 1024**3):
+            kw = self._join({"MSHIP_NODE_MEMORY": str(10 * 1024**3)})["params_kwargs"]
+        assert kw["object_store_memory"] == int(10 * 1024**3 * 0.3)
+        assert kw["memory"] == 10 * 1024**3 - kw["object_store_memory"]
 
     def test_metrics_export_port_always_none(self):
         # A joining node never pins its metrics port, even if RAY_METRICS_EXPORT_PORT is set
