@@ -22,7 +22,7 @@ from modelship.infer.infer_config import ModelshipConfig
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_available_ram_bytes, detect_gpus
-from modelship.utils import rand_suffix
+from modelship.utils import parse_memory_bytes, rand_suffix
 
 if TYPE_CHECKING:
     from ray._private.node import Node
@@ -111,7 +111,7 @@ def _resolve_node_memory_kwargs() -> dict[str, int]:
     own estimate instead. Empty if MSHIP_NODE_MEMORY is unset and the probe returns 0."""
     total = os.environ.get("MSHIP_NODE_MEMORY")
     if total:
-        total_bytes = int(total)
+        total_bytes = parse_memory_bytes(total)
     else:
         available = detect_available_ram_bytes()
         if not available:

@@ -890,6 +890,11 @@ class TestConnectRay:
         assert kwargs["object_store_memory"] == int(10 * 1024**3 * 0.3)
         assert kwargs["_memory"] == 10 * 1024**3 - kwargs["object_store_memory"]
 
+    def test_own_cluster_node_memory_accepts_unit_suffix(self):
+        kwargs = self._init_call({"MSHIP_USE_EXISTING_RAY_CLUSTER": "false", "MSHIP_NODE_MEMORY": "10Gi"})
+        assert kwargs["object_store_memory"] == int(10 * 1024**3 * 0.3)
+        assert kwargs["_memory"] == 10 * 1024**3 - kwargs["object_store_memory"]
+
     def test_own_cluster_node_memory_absent_when_unset(self):
         from modelship.deploy import serve_utils
 
