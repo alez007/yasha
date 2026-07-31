@@ -8,8 +8,8 @@ ARG GID=1000
 # the sha256 of the content). Upstream publishes no Linux CUDA binary in its
 # GitHub releases, so the CUDA variant sources their CUDA 13 Docker build
 # instead. Bump the tag and digest together.
-ARG LLAMA_CPP_IMAGE_CUDA=ghcr.io/ggml-org/llama.cpp:server-cuda13-b9859@sha256:e8e003c66cb77615dfef2f6ae1b7f5ad0de7bd048e19c40357220cb4141d1cdc
-ARG LLAMA_CPP_IMAGE_CPU=ghcr.io/ggml-org/llama.cpp:server-b9859@sha256:f415de2e2c3e61b3dfab40d7fd26136c13d342c1ae4b3ffa8657fcc6a2f43d60
+ARG LLAMA_CPP_IMAGE_CUDA=ghcr.io/ggml-org/llama.cpp:server-cuda13-b10200@sha256:2cbeb792ac84c518f29f6003d00ec2c6769a58f43514ccb1a3b84122b8ff5a1d
+ARG LLAMA_CPP_IMAGE_CPU=ghcr.io/ggml-org/llama.cpp:server-b10200@sha256:8b7f05d7d14d040463ef9191b24da93724574abd6bfea9bf12899100f62e98db
 
 # =============================================================================
 # llama-server — assembles /opt/llama.cpp for the llama_server loader.
