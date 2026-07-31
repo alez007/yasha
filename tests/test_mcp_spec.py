@@ -69,6 +69,70 @@ class TestSplitMcpTools:
             )
 
 
+class TestPolicyShapesRejectedAtParseTime:
+    """Rejected by split_mcp_tools, not by filter_tools/requires_approval — those first
+    run mid-stream, where a raise can't become a 400."""
+
+    @staticmethod
+    def _split(**extra):
+        return split_mcp_tools([{"type": "mcp", "server_label": "s", "server_url": "http://x", **extra}])
+
+    @pytest.mark.parametrize("allowed", ["roll", 5, True])
+    def test_unsupported_allowed_tools_shape(self, allowed):
+        with pytest.raises(ResponsesApiError, match="allowed_tools"):
+            self._split(allowed_tools=allowed)
+
+    def test_allowed_tools_list_with_non_string_elements(self):
+        with pytest.raises(ResponsesApiError, match="allowed_tools"):
+            self._split(allowed_tools=["ok", 7])
+
+    def test_allowed_tools_dict_with_string_tool_names(self):
+        with pytest.raises(ResponsesApiError, match=r"allowed_tools\.tool_names"):
+            self._split(allowed_tools={"tool_names": "roll"})
+
+    @pytest.mark.parametrize("setting", ["sometimes", 5, ["always"]])
+    def test_unsupported_require_approval_shape(self, setting):
+        with pytest.raises(ResponsesApiError, match="require_approval"):
+            self._split(require_approval=setting)
+
+    def test_require_approval_non_dict_bucket(self):
+        with pytest.raises(ResponsesApiError, match="require_approval"):
+            self._split(require_approval={"never": "roll"})
+
+    def test_require_approval_dict_with_string_tool_names(self):
+        with pytest.raises(ResponsesApiError, match=r"require_approval\.never\.tool_names"):
+            self._split(require_approval={"never": {"tool_names": "roll"}})
+
+    @pytest.mark.parametrize("read_only", ["false", "x", 1, 0, None])
+    def test_non_bool_allowed_tools_read_only(self, read_only):
+        with pytest.raises(ResponsesApiError, match=r"allowed_tools\.read_only"):
+            self._split(allowed_tools={"read_only": read_only})
+
+    @pytest.mark.parametrize("bucket", [[], 0, "", "roll", 5])
+    def test_non_dict_require_approval_bucket(self, bucket):
+        """Falsy non-dicts too: requires_approval coerces them with `or {}`, which would
+        read a malformed bucket as absent rather than raising."""
+        with pytest.raises(ResponsesApiError, match=r"require_approval\.never"):
+            self._split(require_approval={"never": bucket})
+
+    @pytest.mark.parametrize("key", ["never", "always"])
+    def test_non_bool_require_approval_read_only(self, key):
+        with pytest.raises(ResponsesApiError, match=rf"require_approval\.{key}\.read_only"):
+            self._split(require_approval={key: {"read_only": "false"}})
+
+    def test_valid_shapes_still_accepted(self):
+        specs, _ = self._split(
+            allowed_tools={"tool_names": ["roll"], "read_only": True},
+            require_approval={"never": {"tool_names": ["roll"]}, "always": {"read_only": False}},
+        )
+        assert len(specs) == 1
+        specs, _ = self._split(allowed_tools=["roll"], require_approval="never")
+        assert len(specs) == 1
+        # An empty bucket is legitimately falsy — only non-dicts are rejected.
+        specs, _ = self._split(allowed_tools={"read_only": False}, require_approval={"never": {}})
+        assert len(specs) == 1
+
+
 class TestFilterTools:
     def test_no_allowed_tools_returns_all(self):
         spec = McpToolSpec(server_label="s", server_url="http://x")

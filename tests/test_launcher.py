@@ -89,7 +89,8 @@ class TestProvisionMacosLlamaServer:
             patch.object(launcher, "_resolve_llama_server_bin", side_effect=RuntimeError("boom")),
         ):
             assert launcher._provision_macos_llama_server() is None
-        assert "MSHIP_LLAMA_SERVER_BIN" not in os.environ
+            # Must stay inside the patch; outside it the ambient env is already restored.
+            assert "MSHIP_LLAMA_SERVER_BIN" not in os.environ
 
 
 class TestResolveLlamaServerBin:

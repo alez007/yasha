@@ -67,6 +67,7 @@ def split_mcp_tools(tools: list[dict[str, Any]] | None) -> tuple[list[McpToolSpe
             )
         except ValidationError as exc:
             raise _mcp_error(f"invalid mcp tool {server_label!r}: {exc}") from exc
+        _validate_policy_shapes(spec)
         specs.append(spec)
     return specs, other
 
@@ -83,6 +84,12 @@ def _tool_names(value: Any, *, spec: McpToolSpec, field: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise _mcp_error(f"'{field}' must be a list of strings for server {spec.server_label!r}.")
     return value
+
+
+def _require_bool(value: Any, *, spec: McpToolSpec, field: str) -> None:
+    """``isinstance(1, bool)`` is False, so ints are rejected here too."""
+    if not isinstance(value, bool):
+        raise _mcp_error(f"'{field}' must be a boolean for server {spec.server_label!r}.")
 
 
 def filter_tools(spec: McpToolSpec, tools: list[McpListToolsTool]) -> list[McpListToolsTool]:
@@ -139,6 +146,29 @@ def requires_approval(spec: McpToolSpec, tool: McpListToolsTool) -> bool:
             return True
         return True
     raise _mcp_error(f"unsupported 'require_approval' shape for server {spec.server_label!r}.")
+
+
+def _validate_policy_shapes(spec: McpToolSpec) -> None:
+    """Force the shape checks inside filter_tools/requires_approval to run here, at parse
+    time — they otherwise first run mid-stream, where a raise can't become a 400."""
+    # Both resolvers read these through truthiness, so a malformed value silently reads
+    # as absent (`{"never": []}`) or inverted (`read_only: "false"`) instead of raising.
+    allowed = spec.allowed_tools
+    if isinstance(allowed, dict) and "read_only" in allowed:
+        _require_bool(allowed["read_only"], spec=spec, field="allowed_tools.read_only")
+    approval = spec.require_approval
+    if isinstance(approval, dict):
+        for key in ("never", "always"):
+            if key not in approval:
+                continue
+            bucket = approval[key]
+            if not isinstance(bucket, dict):
+                raise _mcp_error(f"'require_approval.{key}' must be an object for server {spec.server_label!r}.")
+            if "read_only" in bucket:
+                _require_bool(bucket["read_only"], spec=spec, field=f"require_approval.{key}.read_only")
+
+    filter_tools(spec, [])
+    requires_approval(spec, McpListToolsTool(name="", input_schema={}))
 
 
 def check_collisions(
