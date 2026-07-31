@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.6] - 2026-07-31
+
+### Fixed
+- parse MSHIP_NODE_MEMORY with unit suffixes, not bare int()
+- auto-detect free host RAM for Ray node memory sizing
+- adapt vllm loader to 0.26's OnlineRenderer replacing OpenAIServingRender
+- reject malformed mcp policy shapes hidden behind truthiness
+- reject malformed mcp policy shapes before the stream opens
+
+### Changed
+- re-verify llama.cpp sharp edges against b10200
+- bump llama.cpp to b10200
+- bump vllm to 0.26.0
+- trim comments on the mcp policy-shape validation
+- assert launcher env guard inside its patch.dict scope
+- add CLA, CODEOWNERS, and governance docs for contributors
+
 ## [0.7.5] - 2026-07-30
 
 ### Added
