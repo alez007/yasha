@@ -663,6 +663,27 @@ class TestValidationErrors:
         assert len(result) == 1
         assert isinstance(result[0], ErrorResponse)
 
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"allowed_tools": "roll"},
+            {"allowed_tools": {"tool_names": "roll"}},
+            {"require_approval": "sometimes"},
+            {"require_approval": {"never": "roll"}},
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_malformed_policy_shape_errors_before_any_event(self, bad):
+        """These resolve in filter_tools / the stitcher's _classify, both of which run
+        after response.created — so they have to be rejected up front or the client gets
+        a broken stream instead of a 400."""
+        handle = FakeHandle([[]])
+        tool = {"type": "mcp", "server_label": "dice", "server_url": "http://fake/mcp", **bad}
+        result = await _run(handle, _req(tools=[tool]))
+        assert len(result) == 1
+        assert isinstance(result[0], ErrorResponse)
+        assert handle._calls == 0
+
 
 class TestDiscoveryFailure:
     @pytest.mark.asyncio

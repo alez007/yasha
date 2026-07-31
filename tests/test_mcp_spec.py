@@ -69,6 +69,51 @@ class TestSplitMcpTools:
             )
 
 
+class TestPolicyShapesRejectedAtParseTime:
+    """``allowed_tools`` / ``require_approval`` shapes must be rejected here, not by
+    filter_tools/requires_approval — those run after ``response.created`` is emitted,
+    where a raise breaks the stream instead of producing a 400."""
+
+    @staticmethod
+    def _split(**extra):
+        return split_mcp_tools([{"type": "mcp", "server_label": "s", "server_url": "http://x", **extra}])
+
+    @pytest.mark.parametrize("allowed", ["roll", 5, True])
+    def test_unsupported_allowed_tools_shape(self, allowed):
+        with pytest.raises(ResponsesApiError, match="allowed_tools"):
+            self._split(allowed_tools=allowed)
+
+    def test_allowed_tools_list_with_non_string_elements(self):
+        with pytest.raises(ResponsesApiError, match="allowed_tools"):
+            self._split(allowed_tools=["ok", 7])
+
+    def test_allowed_tools_dict_with_string_tool_names(self):
+        with pytest.raises(ResponsesApiError, match=r"allowed_tools\.tool_names"):
+            self._split(allowed_tools={"tool_names": "roll"})
+
+    @pytest.mark.parametrize("setting", ["sometimes", 5, ["always"]])
+    def test_unsupported_require_approval_shape(self, setting):
+        with pytest.raises(ResponsesApiError, match="require_approval"):
+            self._split(require_approval=setting)
+
+    def test_require_approval_non_dict_bucket(self):
+        with pytest.raises(ResponsesApiError, match="require_approval"):
+            self._split(require_approval={"never": "roll"})
+
+    def test_require_approval_dict_with_string_tool_names(self):
+        with pytest.raises(ResponsesApiError, match=r"require_approval\.never\.tool_names"):
+            self._split(require_approval={"never": {"tool_names": "roll"}})
+
+    def test_valid_shapes_still_accepted(self):
+        specs, _ = self._split(
+            allowed_tools={"tool_names": ["roll"], "read_only": True},
+            require_approval={"never": {"tool_names": ["roll"]}, "always": {"read_only": False}},
+        )
+        assert len(specs) == 1
+        specs, _ = self._split(allowed_tools=["roll"], require_approval="never")
+        assert len(specs) == 1
+
+
 class TestFilterTools:
     def test_no_allowed_tools_returns_all(self):
         spec = McpToolSpec(server_label="s", server_url="http://x")

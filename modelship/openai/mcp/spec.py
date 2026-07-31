@@ -67,6 +67,7 @@ def split_mcp_tools(tools: list[dict[str, Any]] | None) -> tuple[list[McpToolSpe
             )
         except ValidationError as exc:
             raise _mcp_error(f"invalid mcp tool {server_label!r}: {exc}") from exc
+        _validate_policy_shapes(spec)
         specs.append(spec)
     return specs, other
 
@@ -139,6 +140,19 @@ def requires_approval(spec: McpToolSpec, tool: McpListToolsTool) -> bool:
             return True
         return True
     raise _mcp_error(f"unsupported 'require_approval' shape for server {spec.server_label!r}.")
+
+
+def _validate_policy_shapes(spec: McpToolSpec) -> None:
+    """Run the ``allowed_tools`` / ``require_approval`` shape checks at parse time.
+
+    Both resolvers already raise on a bad shape, but are otherwise reached only after
+    ``response.created`` has been emitted — ``filter_tools`` during discovery and
+    ``requires_approval`` from inside the stitcher — where a raise breaks the stream
+    instead of becoming a 400. Delegating keeps one copy of the shape rules; the
+    neutral inputs make these calls pure shape checks whose results are discarded.
+    """
+    filter_tools(spec, [])
+    requires_approval(spec, McpListToolsTool(name="", input_schema={}))
 
 
 def check_collisions(
