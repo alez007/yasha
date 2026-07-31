@@ -103,6 +103,23 @@ class TestPolicyShapesRejectedAtParseTime:
         with pytest.raises(ResponsesApiError, match=r"require_approval\.never\.tool_names"):
             self._split(require_approval={"never": {"tool_names": "roll"}})
 
+    @pytest.mark.parametrize("read_only", ["false", "x", 1, 0, None])
+    def test_non_bool_allowed_tools_read_only(self, read_only):
+        with pytest.raises(ResponsesApiError, match=r"allowed_tools\.read_only"):
+            self._split(allowed_tools={"read_only": read_only})
+
+    @pytest.mark.parametrize("bucket", [[], 0, "", "roll", 5])
+    def test_non_dict_require_approval_bucket(self, bucket):
+        """Falsy non-dicts too: requires_approval coerces them with `or {}`, which would
+        read a malformed bucket as absent rather than raising."""
+        with pytest.raises(ResponsesApiError, match=r"require_approval\.never"):
+            self._split(require_approval={"never": bucket})
+
+    @pytest.mark.parametrize("key", ["never", "always"])
+    def test_non_bool_require_approval_read_only(self, key):
+        with pytest.raises(ResponsesApiError, match=rf"require_approval\.{key}\.read_only"):
+            self._split(require_approval={key: {"read_only": "false"}})
+
     def test_valid_shapes_still_accepted(self):
         specs, _ = self._split(
             allowed_tools={"tool_names": ["roll"], "read_only": True},
@@ -110,6 +127,9 @@ class TestPolicyShapesRejectedAtParseTime:
         )
         assert len(specs) == 1
         specs, _ = self._split(allowed_tools=["roll"], require_approval="never")
+        assert len(specs) == 1
+        # An empty bucket is legitimately falsy — only non-dicts are rejected.
+        specs, _ = self._split(allowed_tools={"read_only": False}, require_approval={"never": {}})
         assert len(specs) == 1
 
 

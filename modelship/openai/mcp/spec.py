@@ -86,6 +86,12 @@ def _tool_names(value: Any, *, spec: McpToolSpec, field: str) -> list[str]:
     return value
 
 
+def _require_bool(value: Any, *, spec: McpToolSpec, field: str) -> None:
+    """``isinstance(1, bool)`` is False, so ints are rejected here too."""
+    if not isinstance(value, bool):
+        raise _mcp_error(f"'{field}' must be a boolean for server {spec.server_label!r}.")
+
+
 def filter_tools(spec: McpToolSpec, tools: list[McpListToolsTool]) -> list[McpListToolsTool]:
     """Apply ``allowed_tools``: a plain name list, ``{"tool_names": [...]}``, or
     ``{"read_only": true}`` (keep only tools whose annotations mark them read-only)."""
@@ -145,6 +151,22 @@ def requires_approval(spec: McpToolSpec, tool: McpListToolsTool) -> bool:
 def _validate_policy_shapes(spec: McpToolSpec) -> None:
     """Force the shape checks inside filter_tools/requires_approval to run here, at parse
     time — they otherwise first run mid-stream, where a raise can't become a 400."""
+    # Both resolvers read these through truthiness, so a malformed value silently reads
+    # as absent (`{"never": []}`) or inverted (`read_only: "false"`) instead of raising.
+    allowed = spec.allowed_tools
+    if isinstance(allowed, dict) and "read_only" in allowed:
+        _require_bool(allowed["read_only"], spec=spec, field="allowed_tools.read_only")
+    approval = spec.require_approval
+    if isinstance(approval, dict):
+        for key in ("never", "always"):
+            if key not in approval:
+                continue
+            bucket = approval[key]
+            if not isinstance(bucket, dict):
+                raise _mcp_error(f"'require_approval.{key}' must be an object for server {spec.server_label!r}.")
+            if "read_only" in bucket:
+                _require_bool(bucket["read_only"], spec=spec, field=f"require_approval.{key}.read_only")
+
     filter_tools(spec, [])
     requires_approval(spec, McpListToolsTool(name="", input_schema={}))
 
