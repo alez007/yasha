@@ -21,8 +21,8 @@ from modelship.deploy.actor_options import build_passthrough_env_vars
 from modelship.infer.infer_config import ModelshipConfig
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
-from modelship.preflight import detect_gpus
-from modelship.utils import rand_suffix
+from modelship.preflight import detect_available_ram_bytes, detect_gpus
+from modelship.utils import parse_memory_bytes, rand_suffix
 
 if TYPE_CHECKING:
     from ray._private.node import Node
@@ -96,24 +96,31 @@ def remove_apps(app_names: list[str], replica_coordinator, gateway_name: str) ->
     delete_apps_quietly(app_names)
 
 
-def _resolve_node_memory_kwargs() -> dict[str, int]:
-    """Split MSHIP_NODE_MEMORY (this node's total memory budget) into Ray's
-    object_store_memory and schedulable 'memory' resource, using Ray's own
-    object-store proportion (resolve_object_store_memory) so the split stays in
-    sync with however Ray itself derives these from an auto-detected total,
-    rather than hardcoding the 30% split separately.
+# Buffer below the free-RAM snapshot, since usage can drift before Ray allocates against it.
+_AUTO_NODE_MEMORY_HEADROOM = 0.9
 
-    Both keys are always set together: leaving 'memory' to auto-derive would
-    still compute it from the full host's estimate_available_memory(), undoing
-    the fix for exactly the co-located-container double-counting this exists to
-    solve (see --node-memory's help text). Empty when MSHIP_NODE_MEMORY is unset
-    (both keep auto-detecting, as before)."""
+
+def _resolve_node_memory_kwargs() -> dict[str, int]:
+    """Split this node's memory budget into Ray's object_store_memory and schedulable
+    'memory' resource via Ray's own resolve_object_store_memory, so the split matches
+    however Ray derives these from a total.
+
+    Total is MSHIP_NODE_MEMORY if set, else a host-wide free-RAM probe
+    (detect_available_ram_bytes) scaled by _AUTO_NODE_MEMORY_HEADROOM. Both keys are
+    always set together — leaving 'memory' to auto-derive would fall back to Ray's
+    own estimate instead. Empty if MSHIP_NODE_MEMORY is unset and the probe returns 0."""
     total = os.environ.get("MSHIP_NODE_MEMORY")
-    if not total:
-        return {}
+    if total:
+        total_bytes = parse_memory_bytes(total)
+    else:
+        available = detect_available_ram_bytes()
+        if not available:
+            return {}
+        total_bytes = int(available * _AUTO_NODE_MEMORY_HEADROOM)
+        logger.info("Auto-detected node memory budget: %.1f GiB free host RAM", total_bytes / 1024**3)
+
     from ray._private.utils import resolve_object_store_memory
 
-    total_bytes = int(total)
     object_store_memory = resolve_object_store_memory(total_bytes)
     return {"memory": total_bytes - object_store_memory, "object_store_memory": object_store_memory}
 
