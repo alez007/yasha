@@ -163,7 +163,7 @@ def detect_template_toggle_defaults(template_src: str, tokenizer: Any) -> dict[s
 
 
 def resolve_tool_parser(cfg: ModelshipModelConfig, template: str | None) -> str | None:
-    """Resolve the tool-call parser name to hand to ``OpenAIServingRender``.
+    """Resolve the tool-call parser name to hand to ``OnlineRenderer``.
 
     Precedence: opt-out -> None; explicit ``tool_call_parser`` (validated against
     vLLM's registry, raises if unknown) -> that name; else classify the chat
@@ -212,7 +212,7 @@ def resolve_tool_parser(cfg: ModelshipModelConfig, template: str | None) -> str 
 
 
 def resolve_reasoning_parser(cfg: ModelshipModelConfig, template: str | None) -> str | None:
-    """Resolve the reasoning parser name to hand to ``OpenAIServingRender``.
+    """Resolve the reasoning parser name to hand to ``OnlineRenderer``.
 
     Same precedence/validation shape as ``resolve_tool_parser``.
     """

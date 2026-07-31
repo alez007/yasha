@@ -23,7 +23,6 @@ from vllm.entrypoints.pooling.embed.protocol import (
     EmbeddingCompletionRequest as VllmEmbeddingCompletionRequest,
 )
 from vllm.entrypoints.pooling.embed.serving import ServingEmbedding as VllmServingEmbedding
-from vllm.entrypoints.serve.render.serving import OpenAIServingRender as VllmOpenAIServingRender
 from vllm.entrypoints.serve.utils.request_logger import RequestLogger as VllmRequestLogger
 from vllm.entrypoints.speech_to_text.transcription.protocol import (
     TranscriptionRequest as VllmTranscriptionRequest,
@@ -52,6 +51,7 @@ from vllm.entrypoints.speech_to_text.translation.serving import (
 from vllm.exceptions import VLLMValidationError as VllmValidationError
 from vllm.inputs import EngineInput as VllmEngineInput
 from vllm.parser import Parser as VllmParser
+from vllm.renderers.online_renderer import OnlineRenderer as VllmOnlineRenderer
 from vllm.sampling_params import SamplingParams as VllmSamplingParams
 from vllm.tokenizers import TokenizerLike as VllmTokenizerLike
 from vllm.usage.usage_lib import UsageContext as VllmUsageContext
@@ -411,11 +411,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         if not (self.model_config.usecase is ModelUsecase.generate and "generate" in self.supported_tasks):
             return
 
-        models = VllmOpenAIServingModels(
-            engine_client=self.engine,
-            base_model_paths=[VllmBaseModelPath(name=self.model_config.name, model_path=self.vllm_engine_kwargs.model)],
-        )
-
         # get_chat_template isn't in vLLM's TokenizerLike protocol (it's a plain
         # HF PreTrainedTokenizer method the real tokenizer always has).
         template = cast(Any, self.engine.get_tokenizer()).get_chat_template()
@@ -446,10 +441,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         reasoning_parser_name = resolve_reasoning_parser(self.model_config, template) or ""
 
         self._enable_auto_tools = enable_tools
-        self.openai_serving_render = VllmOpenAIServingRender(
+        self.openai_serving_render = VllmOnlineRenderer(
             model_config=self.engine.model_config,
             renderer=self.engine.renderer,
-            model_registry=models.registry,
             request_logger=VllmRequestLogger(max_log_len=None),
             chat_template=None,
             chat_template_content_format=self.vllm_engine_kwargs.chat_template_content_format,

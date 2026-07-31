@@ -25,8 +25,8 @@ from vllm.entrypoints.openai.chat_completion.protocol import (
 from vllm.entrypoints.openai.engine.protocol import DeltaFunctionCall as VllmDeltaFunctionCall
 from vllm.entrypoints.openai.engine.protocol import DeltaMessage as VllmDeltaMessage
 from vllm.entrypoints.openai.engine.protocol import DeltaToolCall as VllmDeltaToolCall
-from vllm.entrypoints.serve.render.serving import OpenAIServingRender as VllmOpenAIServingRender
 from vllm.parser import Parser as VllmParser
+from vllm.renderers.online_renderer import OnlineRenderer as VllmOnlineRenderer
 from vllm.tokenizers import TokenizerLike as VllmTokenizerLike
 
 from modelship.infer.vllm import engine_ops
@@ -130,13 +130,13 @@ class TestTotalReasoningTokens:
 
 class TestMakeParsers:
     def test_no_parser_class_returns_n_nones(self):
-        render = Mock(spec=VllmOpenAIServingRender)
+        render = Mock(spec=VllmOnlineRenderer)
         render.parser = None
         result = engine_ops.make_parsers(render, tokenizer=Mock(), vllm_req=_vllm_req(), chat_template_kwargs=None, n=3)
         assert result == [None, None, None]
 
     def test_instantiates_one_independent_parser_per_choice(self):
-        render = Mock(spec=VllmOpenAIServingRender)
+        render = Mock(spec=VllmOnlineRenderer)
         parser_cls = Mock()
         instances = [Mock(), Mock(), Mock()]
         parser_cls.side_effect = instances
@@ -196,7 +196,7 @@ async def _drive_stream(monkeypatch, parser_cls, *, results=None) -> list[Any]:
 
     engine = Mock()
     engine.generate = fake_generate
-    render = Mock(spec=VllmOpenAIServingRender)
+    render = Mock(spec=VllmOnlineRenderer)
     render.parser = parser_cls
 
     chunks = []
@@ -320,7 +320,7 @@ class TestSignaturesGuardVllmBump:
         assert list(params)[1:] == ["max_tokens", "default_sampling_params"]
 
     def test_render_chat_signature_unchanged(self):
-        params = inspect.signature(VllmOpenAIServingRender.render_chat).parameters
+        params = inspect.signature(VllmOnlineRenderer.render_chat).parameters
         assert "request" in params
 
 
@@ -336,10 +336,8 @@ class TestVllmParserAcceptsOurRequest:
 
     def _build_render(
         self, model: str, *, tokenizer_mode: str = "auto", **tool_reasoning_kwargs: Any
-    ) -> tuple[VllmOpenAIServingRender, VllmTokenizerLike]:
+    ) -> tuple[VllmOnlineRenderer, VllmTokenizerLike]:
         from vllm.engine.arg_utils import AsyncEngineArgs as VllmAsyncEngineArgs
-        from vllm.entrypoints.openai.models.protocol import BaseModelPath as VllmBaseModelPath
-        from vllm.entrypoints.openai.models.serving import OpenAIModelRegistry as VllmOpenAIModelRegistry
         from vllm.entrypoints.serve.utils.request_logger import RequestLogger as VllmRequestLogger
         from vllm.renderers import renderer_from_config as vllm_renderer_from_config
         from vllm.usage.usage_lib import UsageContext as VllmUsageContext
@@ -353,14 +351,9 @@ class TestVllmParserAcceptsOurRequest:
         except Exception as e:
             pytest.skip(f"could not build a GPU-free render pipeline for {model!r}: {e}")
 
-        registry = VllmOpenAIModelRegistry(
-            model_config=vllm_config.model_config,
-            base_model_paths=[VllmBaseModelPath(name="test-model", model_path=model)],
-        )
-        render = VllmOpenAIServingRender(
+        render = VllmOnlineRenderer(
             model_config=vllm_config.model_config,
             renderer=renderer,
-            model_registry=registry,
             request_logger=VllmRequestLogger(max_log_len=None),
             chat_template=None,
             chat_template_content_format="auto",

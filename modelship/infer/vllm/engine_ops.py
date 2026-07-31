@@ -19,7 +19,6 @@ from vllm.entrypoints.openai.engine.protocol import DeltaMessage as VllmDeltaMes
 from vllm.entrypoints.openai.engine.protocol import DeltaToolCall as VllmDeltaToolCall
 from vllm.entrypoints.openai.engine.protocol import ErrorResponse as VllmErrorResponse
 from vllm.entrypoints.openai.engine.protocol import FunctionCall as VllmFunctionCall
-from vllm.entrypoints.serve.render.serving import OpenAIServingRender as VllmOpenAIServingRender
 from vllm.entrypoints.serve.utils.api_utils import get_max_tokens as vllm_get_max_tokens
 from vllm.inputs import EngineInput as VllmEngineInput
 from vllm.logprobs import Logprob as VllmLogprob
@@ -28,6 +27,7 @@ from vllm.outputs import RequestOutput as VllmRequestOutput
 from vllm.parser import Parser as VllmParser
 from vllm.renderers.inputs.preprocess import extract_prompt_components as vllm_extract_prompt_components
 from vllm.renderers.inputs.preprocess import extract_prompt_len as vllm_extract_prompt_len
+from vllm.renderers.online_renderer import OnlineRenderer as VllmOnlineRenderer
 from vllm.sampling_params import SamplingParams as VllmSamplingParams
 from vllm.tokenizers import TokenizerLike as VllmTokenizerLike
 from vllm.v1.engine.async_llm import AsyncLLM as VllmAsyncLLM
@@ -74,7 +74,7 @@ def build_vllm_request(
 
 
 async def render_and_params(
-    render: VllmOpenAIServingRender,
+    render: VllmOnlineRenderer,
     vllm_req: VllmChatCompletionRequest,
 ) -> tuple[VllmEngineInput, VllmSamplingParams] | VllmErrorResponse:
     """Render the chat template and derive `VllmSamplingParams`, in that order.
@@ -94,25 +94,34 @@ async def render_and_params(
         raise RuntimeError(f"expected exactly 1 rendered engine prompt for a chat request, got {len(engine_inputs)}")
     engine_input = engine_inputs[0]
 
+    # Mirrors OpenAIServingChat.__init__'s own computation off model_config.
+    model_config = render.model_config
+    default_sampling_params = model_config.get_diff_sampling_param()
+    override_max_tokens = (
+        default_sampling_params.get("max_tokens")
+        if model_config.generation_config not in ("auto", "vllm")
+        else getattr(model_config, "override_generation_config", {}).get("max_new_tokens")
+    )
+
     max_tokens = vllm_get_max_tokens(
-        render.model_config.max_model_len,
+        model_config.max_model_len,
         vllm_req.max_completion_tokens if vllm_req.max_completion_tokens is not None else vllm_req.max_tokens,
-        vllm_extract_prompt_len(render.model_config, engine_input),
-        render.default_sampling_params,
-        render.override_max_tokens,
+        vllm_extract_prompt_len(model_config, engine_input),
+        default_sampling_params,
+        override_max_tokens,
         truncate_prompt_tokens=vllm_req.truncate_prompt_tokens,
     )
-    sampling_params = vllm_req.to_sampling_params(max_tokens, render.default_sampling_params)
+    sampling_params = vllm_req.to_sampling_params(max_tokens, default_sampling_params)
     return engine_input, sampling_params
 
 
-def extract_prompt_token_ids(render: VllmOpenAIServingRender, engine_input: VllmEngineInput) -> list[int]:
+def extract_prompt_token_ids(render: VllmOnlineRenderer, engine_input: VllmEngineInput) -> list[int]:
     """Extract the rendered prompt's token IDs, needed for `derive_reasoning_ended`."""
     return list(vllm_extract_prompt_components(render.model_config, engine_input).token_ids or [])
 
 
 def make_parsers(
-    render: VllmOpenAIServingRender,
+    render: VllmOnlineRenderer,
     tokenizer: VllmTokenizerLike,
     vllm_req: VllmChatCompletionRequest,
     chat_template_kwargs: dict[str, Any] | None,
@@ -386,7 +395,7 @@ def build_choices(
 
 
 def _reconcile_trapped_content(
-    render: VllmOpenAIServingRender,
+    render: VllmOnlineRenderer,
     tokenizer: VllmTokenizerLike,
     vllm_req: VllmChatCompletionRequest,
     full_text: str,
@@ -434,7 +443,7 @@ def _reconcile_trapped_content(
 
 async def stream_chat_completion(
     engine: VllmAsyncLLM,
-    render: VllmOpenAIServingRender,
+    render: VllmOnlineRenderer,
     vllm_req: VllmChatCompletionRequest,
     engine_input: VllmEngineInput,
     sampling_params: VllmSamplingParams,
