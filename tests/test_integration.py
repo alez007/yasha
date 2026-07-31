@@ -724,9 +724,10 @@ class TestChatLlamaServer:
 
     def test_named_function_tool_choice_falls_back_to_auto(self, client):
         """Documents a real gap (A1 spike finding): object-form `tool_choice`
-        (named-function forcing) is globally unsupported in llama.cpp b9859 —
-        it silently falls back to `auto` rather than forcing the named
-        function or erroring. Same content-reachability technique and
+        (named-function forcing) is globally unsupported in llama.cpp b9859
+        (confirmed unchanged on the current b10200 pin) — it silently falls
+        back to `auto` rather than forcing the named function or erroring.
+        Same content-reachability technique and
         irrelevant-tool prompt as the `required` gap test above — real
         forcing would make the free-text branch structurally unreachable."""
         completion = client.chat.completions.create(
@@ -791,7 +792,8 @@ class TestChatLlamaServerResponseFormat:
         """llama-server's own docs claim bare `{"type": "json_object"}` (no `schema` key) produces
         "plain JSON output" like other OpenAI-inspired providers, but verified
         directly against the b9859 binary (`curl` straight to `/v1/chat/completions`,
-        bypassing modelship) this isn't enforced — the model answers in free
+        bypassing modelship; confirmed unchanged on the current b10200 pin)
+        this isn't enforced — the model answers in free
         text with no error. Constraining does work once a `schema` key is
         attached to the `response_format` object (an llama-server extension,
         not in the OpenAI spec — `type: json_schema`, which modelship's

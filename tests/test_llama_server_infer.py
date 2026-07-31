@@ -134,7 +134,7 @@ class TestSubprocessLifecycle:
             (1, {}, "-1"),  # llama-server auto-fit default
             (1, {"n_gpu_layers": 24}, "24"),
             # Any negative value hits llama-server's own auto-fit code path
-            # (verified against the b9859 binary: `params.n_gpu_layers < 0`
+            # (verified against b9859, unconfirmed on b10200: `params.n_gpu_layers < 0`
             # gates the call regardless of exactly how negative) — this
             # loader just passes the configured int through verbatim.
             (2, {"n_gpu_layers": -2}, "-2"),

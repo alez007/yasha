@@ -106,7 +106,7 @@ class LlamaServerConfig(BaseModel):
     n_batch: int = 512
     # Layers to offload when the deployment reserves GPUs (num_gpus > 0). Any
     # negative value hits llama-server's own "auto-fit to free device memory"
-    # code path (verified against the pinned b9859 binary: `params.n_gpu_layers
+    # code path (verified against b9859, unconfirmed on b10200: `params.n_gpu_layers
     # < 0` gates that call regardless of exactly how negative; `--help`'s
     # documented 'all' token isn't reachable through this int-typed field).
     # `LlamaServerPreflight` recommends a concrete count whenever the GGUF
