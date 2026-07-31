@@ -1,7 +1,7 @@
 """vLLM tool-call / reasoning parser-name detection, run inside the vllm actor.
 
 Covers `resolve_tool_parser` / `resolve_reasoning_parser` resolving the parser
-name `init_serving_chat` hands to `OpenAIServingRender`.
+name `init_serving_chat` hands to `OnlineRenderer`.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ class TestClassifyToolTemplate:
         # underscore); modelship's own class used to be named "function_gemma"
         # and this detector returned that mismatched name, which would fail
         # validation against vLLM's real registry (or, worse, be handed
-        # straight to vLLM's OpenAIServingRender and fail there instead).
+        # straight to vLLM's OnlineRenderer and fail there instead).
         assert classify_tool_template("{% if tools %}<start_function_call>{% endif %}") == "functiongemma"
 
     def test_qwen3_coder_function_marker_routes_ahead_of_hermes(self):
