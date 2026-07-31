@@ -143,14 +143,8 @@ def requires_approval(spec: McpToolSpec, tool: McpListToolsTool) -> bool:
 
 
 def _validate_policy_shapes(spec: McpToolSpec) -> None:
-    """Run the ``allowed_tools`` / ``require_approval`` shape checks at parse time.
-
-    Both resolvers already raise on a bad shape, but are otherwise reached only after
-    ``response.created`` has been emitted — ``filter_tools`` during discovery and
-    ``requires_approval`` from inside the stitcher — where a raise breaks the stream
-    instead of becoming a 400. Delegating keeps one copy of the shape rules; the
-    neutral inputs make these calls pure shape checks whose results are discarded.
-    """
+    """Force the shape checks inside filter_tools/requires_approval to run here, at parse
+    time — they otherwise first run mid-stream, where a raise can't become a 400."""
     filter_tools(spec, [])
     requires_approval(spec, McpListToolsTool(name="", input_schema={}))
 

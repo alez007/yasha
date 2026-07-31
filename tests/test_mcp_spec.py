@@ -70,9 +70,8 @@ class TestSplitMcpTools:
 
 
 class TestPolicyShapesRejectedAtParseTime:
-    """``allowed_tools`` / ``require_approval`` shapes must be rejected here, not by
-    filter_tools/requires_approval — those run after ``response.created`` is emitted,
-    where a raise breaks the stream instead of producing a 400."""
+    """Rejected by split_mcp_tools, not by filter_tools/requires_approval — those first
+    run mid-stream, where a raise can't become a 400."""
 
     @staticmethod
     def _split(**extra):

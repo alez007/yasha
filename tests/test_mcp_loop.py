@@ -674,9 +674,6 @@ class TestValidationErrors:
     )
     @pytest.mark.asyncio
     async def test_malformed_policy_shape_errors_before_any_event(self, bad):
-        """These resolve in filter_tools / the stitcher's _classify, both of which run
-        after response.created — so they have to be rejected up front or the client gets
-        a broken stream instead of a 400."""
         handle = FakeHandle([[]])
         tool = {"type": "mcp", "server_label": "dice", "server_url": "http://fake/mcp", **bad}
         result = await _run(handle, _req(tools=[tool]))
