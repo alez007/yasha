@@ -44,4 +44,4 @@ If you are contributing on behalf of your employer or another entity, an authori
 
 Signing happens electronically through the [CLA Assistant](https://cla-assistant.io) bot, which comments on your first pull request with a link to sign. Signatures are recorded per-GitHub-account and checked automatically on every subsequent PR — you won't be asked again.
 
-Questions about this Agreement can be raised via [GitHub Issues](https://github.com/alez007/modelship/issues) or, for anything you'd rather not discuss publicly, through [SECURITY.md](SECURITY.md)'s private reporting channel.
+Questions about this Agreement can be raised via [GitHub Issues](https://github.com/modelship-ai/modelship/issues) or, for anything you'd rather not discuss publicly, through [SECURITY.md](SECURITY.md)'s private reporting channel.

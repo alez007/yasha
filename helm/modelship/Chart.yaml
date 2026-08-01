@@ -8,9 +8,9 @@ type: application
 version: 0.7.6
 # Tracks the modelship image this chart is validated against.
 appVersion: "0.7.6"
-home: https://github.com/alez007/modelship
+home: https://github.com/modelship-ai/modelship
 sources:
-  - https://github.com/alez007/modelship
+  - https://github.com/modelship-ai/modelship
 keywords:
   - llm
   - inference

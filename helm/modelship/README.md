@@ -1,6 +1,6 @@
 # modelship Helm chart
 
-Deploy [modelship](https://github.com/alez007/modelship) — an OpenAI-compatible,
+Deploy [modelship](https://github.com/modelship-ai/modelship) — an OpenAI-compatible,
 multi-model inference server — on Kubernetes via [KubeRay](https://github.com/ray-project/kuberay).
 
 The chart brings up a **RayCluster** (one CPU-only head + worker groups) and a
@@ -38,7 +38,7 @@ helm install mship ./helm/modelship -f my-values.yaml
 
 # From GHCR (OCI). The chart version is kept in lockstep with the app/image
 # version, so --version <X.Y.Z> always pairs with the matching image:
-helm install mship oci://ghcr.io/alez007/charts/modelship --version 0.4.0 -f my-values.yaml
+helm install mship oci://ghcr.io/modelship-ai/charts/modelship --version 0.4.0 -f my-values.yaml
 ```
 
 Because images and model weights take time to pull, raise Helm's timeout:
@@ -180,7 +180,7 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 
 | Key | Default | Purpose |
 |-----|---------|---------|
-| `image.repository` / `image.tag` | `ghcr.io/alez007/modelship` / `<app version>` | Stamped to the release version |
+| `image.repository` / `image.tag` | `ghcr.io/modelship-ai/modelship` / `<app version>` | Stamped to the release version |
 | `image.variant` | `cuda` | `cuda`\|`cpu`\|`thin`. Appends `-cuda`/`-cpu` to the tag (`thin` is bare). CUDA runs everywhere with a GPU; set `cpu` on CPU-only clusters, or per worker group for a mixed cluster |
 | `rayVersion` | `2.54.1` | Must match the Ray in the image |
 | `models.config` / `models.existingConfigMap` | `models: []` | Your model set |

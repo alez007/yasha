@@ -110,7 +110,7 @@ Commit messages matter: use Conventional Commits prefixes so the changelog gener
 - Metrics are on by default on port **8079** (not 8000). Disable with `--no-metrics` or `MSHIP_METRICS=false`.
 - Preflight hardware auto-sizing is on by default. Disable with `--no-preflight` or `MSHIP_PREFLIGHT=false` to run models on loader/library defaults plus explicit `models.yaml` config only — useful for benchmarking across hardware.
 - Log level `TRACE` (below `DEBUG`) is a custom level and logs full request/response payloads.
-- Three images are published from the unified `Dockerfile` (`--build-arg MSHIP_VARIANT=thin|cpu|cuda`), all under `ghcr.io/alez007/modelship`:
+- Three images are published from the unified `Dockerfile` (`--build-arg MSHIP_VARIANT=thin|cpu|cuda`), all under `ghcr.io/modelship-ai/modelship`:
 
   | Variant | Tag | Platforms | Contains |
   |---|---|---|---|

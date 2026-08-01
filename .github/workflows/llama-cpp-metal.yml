@@ -17,7 +17,7 @@ permissions:
 # PAT (classic or fine-grained) with contents:write on LLAMA_CPP_BUILDS_REPO,
 # stored as a repo secret here.
 env:
-  LLAMA_CPP_BUILDS_REPO: alez007/llama-cpp-builds
+  LLAMA_CPP_BUILDS_REPO: modelship-ai/llama-cpp-builds
 
 jobs:
   build:

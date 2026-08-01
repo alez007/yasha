@@ -8,7 +8,7 @@
 
 # Modelship
 
-[![CI](https://github.com/alez007/modelship/actions/workflows/ci.yml/badge.svg)](https://github.com/alez007/modelship/actions/workflows/ci.yml)
+[![CI](https://github.com/modelship-ai/modelship/actions/workflows/ci.yml/badge.svg)](https://github.com/modelship-ai/modelship/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Docs](https://img.shields.io/badge/docs-docs.model--ship.ai-0E7C86.svg)](https://docs.model-ship.ai/)
@@ -100,7 +100,7 @@ docker run --rm --shm-size=8g \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/alez007/modelship:latest-cpu
+  ghcr.io/modelship-ai/modelship:latest-cpu
 ```
 
 Images are multi-arch (amd64 + arm64), so this works on Apple Silicon and ARM Linux hosts too.
@@ -140,11 +140,11 @@ docker run --rm --shm-size=8g --gpus all \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/alez007/modelship:latest-cuda
+  ghcr.io/modelship-ai/modelship:latest-cuda
 ```
 
 > [!NOTE]
-> `ghcr.io/alez007/modelship:latest` (bare tag, no suffix) is the **thin** control/coordinator image — no torch/vllm, for a driver/head role only. It cannot serve models by itself; always use `-cuda` or `-cpu` to actually run inference. See [docs/development.md](docs/development.md) for the full three-image breakdown.
+> `ghcr.io/modelship-ai/modelship:latest` (bare tag, no suffix) is the **thin** control/coordinator image — no torch/vllm, for a driver/head role only. It cannot serve models by itself; always use `-cuda` or `-cpu` to actually run inference. See [docs/development.md](docs/development.md) for the full three-image breakdown.
 
 > [!TIP]
 > Always set `--shm-size=8g` (or higher) when running the docker container to prevent PyTorch from hitting shared memory limits during multi-process operations.

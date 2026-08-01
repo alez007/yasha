@@ -11,7 +11,7 @@ observable. Point the OpenAI SDK at it and your agent runs unchanged — private
 with no per-token bill.
 
 [Get started :material-arrow-right:](quickstart.md){ .md-button .md-button--primary }
-[View on GitHub :fontawesome-brands-github:](https://github.com/alez007/modelship){ .md-button }
+[View on GitHub :fontawesome-brands-github:](https://github.com/modelship-ai/modelship){ .md-button }
 
 ## Why Modelship?
 

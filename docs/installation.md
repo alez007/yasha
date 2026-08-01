@@ -14,7 +14,7 @@
 ## Image variants
 
 Three images are published from a single `Dockerfile`, all under
-`ghcr.io/alez007/modelship`:
+`ghcr.io/modelship-ai/modelship`:
 
 | Variant | Tag suffix | Platforms | Purpose |
 |---|---|---|---|
@@ -36,7 +36,7 @@ docker run --rm --shm-size=8g \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/alez007/modelship:latest-cpu
+  ghcr.io/modelship-ai/modelship:latest-cpu
 ```
 
 GPU, with the NVIDIA Container Toolkit installed:
@@ -47,7 +47,7 @@ docker run --rm --shm-size=8g --gpus all \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/alez007/modelship:latest-cuda
+  ghcr.io/modelship-ai/modelship:latest-cuda
 ```
 
 See [Quickstart](quickstart.md) for a full copy-pasteable `models.yaml` and
@@ -92,4 +92,4 @@ reference and port list), see [Development Setup](development.md).
 To join multiple hosts into one Ray cluster with plain `docker run` (no
 Kubernetes), see [Multi-node without Kubernetes](multi-node-docker.md). For a
 Kubernetes/KubeRay deployment, see the
-[Helm chart](https://github.com/alez007/modelship/tree/main/helm/modelship).
+[Helm chart](https://github.com/modelship-ai/modelship/tree/main/helm/modelship).
