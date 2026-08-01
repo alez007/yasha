@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.7] - 2026-08-01
+
+### Changed
+- point repository references at the modelship-ai org
+
 ## [0.7.6] - 2026-07-31
 
 ### Fixed
