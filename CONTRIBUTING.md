@@ -50,7 +50,7 @@ If you're contributing a TTS backend, see [docs/plugins.md](docs/plugins.md) for
 
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/alez007/modelship/issues). For bugs, include:
+Use [GitHub Issues](https://github.com/modelship-ai/modelship/issues). For bugs, include:
 
 - GPU model and VRAM
 - Your `models.yaml` configuration

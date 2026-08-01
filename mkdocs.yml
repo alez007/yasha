@@ -4,8 +4,8 @@ site_description: >-
   universal tool calling, and reasoning, alongside embeddings, speech, and
   image generation, behind one OpenAI-compatible endpoint. Built on Ray Serve.
 site_url: https://docs.model-ship.ai/
-repo_url: https://github.com/alez007/modelship
-repo_name: alez007/modelship
+repo_url: https://github.com/modelship-ai/modelship
+repo_name: modelship-ai/modelship
 edit_uri: edit/main/docs/
 docs_dir: docs
 site_dir: site

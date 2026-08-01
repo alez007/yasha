@@ -5,7 +5,7 @@
 # -- Container image. Used by every Ray pod AND the RayJob submitter (they must
 # share the exact image so the Ray/Python versions match across the cluster).
 image:
-  repository: ghcr.io/alez007/modelship
+  repository: ghcr.io/modelship-ai/modelship
   # Bare release tag (no variant suffix) is the thin control/coordinator image
   # (no torch/vllm) — the chart appends "-cuda" or "-cpu" per the `variant` below.
   # Stamped to the app version on release.

@@ -19,7 +19,7 @@ docker run --rm --shm-size=8g \
   -v ./config/examples/llama-server.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/alez007/modelship:latest-cpu
+  ghcr.io/modelship-ai/modelship:latest-cpu
 ```
 
 See [../../docs/model-configuration.md](../../docs/model-configuration.md) for the full field reference.

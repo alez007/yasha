@@ -7,7 +7,7 @@ Common issues hit during first-run and deployment.
 Some HuggingFace models (Llama 3, Gemma, Mistral variants) require accepting a license and authenticating. Get a token from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens), accept the model license on its HF page, then pass the token in:
 
 ```bash
-docker run ... -e HF_TOKEN=hf_xxx ghcr.io/alez007/modelship:latest-cpu
+docker run ... -e HF_TOKEN=hf_xxx ghcr.io/modelship-ai/modelship:latest-cpu
 ```
 
 Ungated models (e.g. `lmstudio-community/Qwen2.5-7B-Instruct-GGUF`) don't need a token.
@@ -28,7 +28,7 @@ Ray's object store needs shared memory. Always pass `--shm-size=8g` (or larger f
 
 ## arm64 vs amd64 image selection
 
-`ghcr.io/alez007/modelship:latest` (thin) and `:latest-cpu` are multi-arch (amd64 + arm64). Docker picks the right one automatically for your host. If you need to force an arch (e.g. cross-building), use `--platform linux/arm64` or `linux/amd64`.
+`ghcr.io/modelship-ai/modelship:latest` (thin) and `:latest-cpu` are multi-arch (amd64 + arm64). Docker picks the right one automatically for your host. If you need to force an arch (e.g. cross-building), use `--platform linux/arm64` or `linux/amd64`.
 
 `:latest-cuda` is **amd64-only** — the Dockerfile hard-wires the x86_64 CUDA apt repo and torch's CUDA wheels aren't guaranteed for arm64 at this pin. arm64+CUDA hosts (Jetson, GH200) aren't supported by this image; use `:latest-cpu` there, or build a custom image. Apple Silicon should always use `:latest-cpu` (no CUDA path applies).
 

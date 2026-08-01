@@ -101,10 +101,10 @@ dev = [
 mship = "modelship.launcher:main"
 
 [project.urls]
-Homepage = "https://github.com/alez007/modelship"
+Homepage = "https://github.com/modelship-ai/modelship"
 Documentation = "https://docs.model-ship.ai/"
-Issues = "https://github.com/alez007/modelship/issues"
-Changelog = "https://github.com/alez007/modelship/blob/main/CHANGELOG.md"
+Issues = "https://github.com/modelship-ai/modelship/issues"
+Changelog = "https://github.com/modelship-ai/modelship/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["uv_build"]
