@@ -38,6 +38,19 @@ models:
     llama_server_config:
       mmproj: "second-state/Llava-v1.5-7B-GGUF:llava-v1.5-7b-mmproj-model-f16.gguf"
 
+  # Sharded GGUF: models too large for HuggingFace's 50GB single-file limit
+  # ship as numbered shards (here Llama-3.3-70B-Instruct-Q8_0-00001-of-00002.gguf,
+  # -00002-of-00002.gguf). The `*-of-*.gguf` selector matches the whole shard
+  # set; modelship downloads every shard and hands llama-server the first
+  # one's path, which auto-loads the rest. See docs/model-configuration.md.
+  - name: "llama-70b-q8"
+    model: "bartowski/Llama-3.3-70B-Instruct-GGUF:*Q8_0*-of-*.gguf"
+    usecase: "generate"
+    loader: "llama_server"
+    num_gpus: 1
+    llama_server_config:
+      parallel: 2
+
   # Embeddings
   - name: "nomic-embed"
     model: "nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q4_K_M.gguf"
