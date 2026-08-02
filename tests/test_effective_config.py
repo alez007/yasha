@@ -43,16 +43,28 @@ class TestMerge:
         merged = merge([_model("a")], [_model("a")], "g", "additive")
         assert [m["name"] for m in merged] == ["a"]
 
-    def test_additive_keeps_same_name_different_config(self):
-        # same name, different config = distinct deployment (round-robin), kept
+    def test_additive_replaces_same_name_different_config(self):
+        # same name, different config -> the new one replaces the old (one deployment per name)
         a1 = _model("a", num_cpus=1)
         a2 = _model("a", num_cpus=2)
         merged = merge([a1], [a2], "g", "additive")
-        assert len(merged) == 2
+        assert merged == [a2]
+
+    def test_additive_rejects_duplicate_name_within_input(self):
+        a1 = _model("a", num_cpus=1)
+        a2 = _model("a", num_cpus=2)
+        with pytest.raises(ValueError, match="duplicate model name"):
+            merge([], [a1, a2], "g", "additive")
 
     def test_reconcile_replaces(self):
         merged = merge([_model("a"), _model("b")], [_model("c")], "g", "reconcile")
         assert [m["name"] for m in merged] == ["c"]
+
+    def test_reconcile_rejects_duplicate_name_within_input(self):
+        a1 = _model("a", num_cpus=1)
+        a2 = _model("a", num_cpus=2)
+        with pytest.raises(ValueError, match="duplicate model name"):
+            merge([], [a1, a2], "g", "reconcile")
 
 
 class TestReadWriteEffective:

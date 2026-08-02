@@ -253,6 +253,46 @@ class _Deployer:
             )
         self._current = wanted
 
+    def deploy_raw(self, models: list[dict], *, replace_strategy: str = "stop_start") -> None:
+        """Like deploy(), but takes raw model dicts directly (e.g. a MODEL_CONFIGS
+        entry with fields overridden to force a new fingerprint under the same
+        name) and lets the caller pick --replace-strategy. Resets self._current
+        to force the next deploy() call to always re-apply its own set, since
+        this bypasses the by-name cache."""
+        slug = "+".join(sorted(m["name"] for m in models)) or "empty"
+        config_path = self._tmp / f"models-raw-{slug}-{replace_strategy}.yaml"
+        log_path = self._tmp / f"reconcile-raw-{slug}-{replace_strategy}.log"
+        with open(config_path, "w") as f:
+            yaml.dump({"models": models}, f)
+
+        with open(log_path, "w") as log_file:
+            result = subprocess.run(
+                [
+                    "uv",
+                    "run",
+                    "mship_deploy.py",
+                    "--config",
+                    str(config_path),
+                    "--reconcile",
+                    "--replace-strategy",
+                    replace_strategy,
+                    "--prune-ray-sessions",
+                    "false",
+                    "--use-existing-ray-cluster",
+                ],
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                check=False,
+                timeout=900,
+            )
+        self._current = frozenset()
+        if result.returncode != 0:
+            tail = log_path.read_text()[-4000:]
+            pytest.fail(
+                f"mship_deploy --reconcile failed for {slug} ({replace_strategy}, exit {result.returncode}).\n"
+                f"Log file: {log_path}\nLast 4KB:\n{tail}"
+            )
+
 
 @pytest.fixture(scope="session")
 def mship_cluster(tmp_path_factory):

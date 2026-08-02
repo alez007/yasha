@@ -42,6 +42,24 @@ def _deployment_name(raw: dict, gateway_name: str) -> str:
     return ModelshipModelConfig.model_validate(raw).deployment_name(gateway_name)
 
 
+def _model_name(raw: dict) -> str:
+    """Human-facing model name for a raw model dict."""
+    return ModelshipModelConfig.model_validate(raw).name
+
+
+def _reject_duplicate_names(raw_models: list[dict], gateway_name: str) -> None:
+    """Raise if two dicts share a model name but normalize to different
+    deployment_names; identical normalizations are allowed through."""
+    by_name: dict[str, str] = {}
+    for raw in raw_models:
+        model_name = _model_name(raw)
+        dep_name = _deployment_name(raw, gateway_name)
+        prior = by_name.get(model_name)
+        if prior is not None and prior != dep_name:
+            raise ValueError(f"duplicate model name {model_name!r}: a model name maps to exactly one deployment.")
+        by_name[model_name] = dep_name
+
+
 def merge(
     effective_raw: list[dict],
     input_raw: list[dict],
@@ -50,21 +68,26 @@ def merge(
 ) -> list[dict]:
     """Fold the user's input into the effective raw model set under *mode*.
 
-    - additive: union — append input dicts whose deployment name isn't already
-      present (identical config = idempotent skip; same name + different config =
-      a distinct deployment the gateway round-robins, preserved as today).
+    - additive: replace-by-name — identical config (same deployment_name) is an
+      idempotent skip; a different config sharing a model name replaces the
+      existing entry for that name rather than joining it.
     - reconcile: input replaces the effective set entirely.
+
+    Raises ValueError if *input_raw* itself declares two entries with the same
+    model name and different configs.
     """
+    _reject_duplicate_names(input_raw, gateway_name)
     if mode == "reconcile":
         return list(input_raw)
 
-    present = {_deployment_name(d, gateway_name) for d in effective_raw}
     merged = list(effective_raw)
     for d in input_raw:
         name = _deployment_name(d, gateway_name)
-        if name not in present:
-            merged.append(d)
-            present.add(name)
+        if any(_deployment_name(m, gateway_name) == name for m in merged):
+            continue
+        model_name = _model_name(d)
+        merged = [m for m in merged if _model_name(m) != model_name]
+        merged.append(d)
     return merged
 
 

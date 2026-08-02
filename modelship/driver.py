@@ -308,8 +308,8 @@ def main(argv: list[str] | None = None) -> None:
             pass_count,
         )
 
-        # blue_green: drop old deployments after new ones are live — during the brief
-        # overlap the gateway round-robins both, so no requests are lost.
+        # blue_green: the coordinator already cut routing over to the new deployment
+        # when it registered; this just deletes the drained old app.
         if apps_to_remove:
             remove_apps(apps_to_remove, replica_coord, gateway_name)
 

@@ -443,15 +443,15 @@ See each plugin's README for configuration details:
 
 For writing your own plugin, see [Plugin Development](plugins.md).
 
-## Multi-Deployment Routing
+## Scaling a Deployment
 
-You can run the same model on different hardware (e.g. GPU and CPU) by repeating the same `name` with different settings. The API exposes the model once under `/v1/models`, and round-robins requests across all deployments sharing that name.
-
-Use `num_replicas` to scale identical copies of a single deployment (Ray Serve handles load balancing between replicas automatically).
+A model `name` maps to exactly one deployment — two config entries sharing a
+`name` with different settings is a validation error. Use `num_replicas` to run
+several identical copies of a deployment; Ray Serve load-balances requests across
+them automatically.
 
 ```yaml
 models:
-  # GPU instance with 2 replicas
   - name: "kokoro"
     model: "hexgrad/Kokoro-82M"
     usecase: "tts"
@@ -461,19 +461,7 @@ models:
     num_replicas: 2
     plugin_config:
       onnx_provider: "CUDAExecutionProvider"
-
-  # CPU fallback
-  - name: "kokoro"
-    model: "hexgrad/Kokoro-82M"
-    usecase: "tts"
-    loader: "custom"
-    plugin: "kokoroonnx"
-    num_gpus: 0
-    plugin_config:
-      onnx_provider: "CPUExecutionProvider"
 ```
-
-In this example, requests to model `kokoro` are distributed across three backends: two GPU replicas and one CPU instance.
 
 ## Autoscaling
 

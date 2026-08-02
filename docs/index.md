@@ -37,8 +37,8 @@ with no per-token bill.
 
 ## Architecture
 
-![Modelship architecture: an agent app calls the Modelship gateway's OpenAI-compatible API, which exposes chat, embeddings, audio, and image endpoints plus a Responses API backed by a shared conversation-state store, routing round-robin to Ray Serve deployments across GPU and CPU cluster nodes.](assets/architecture-light.svg#only-light)
-![Modelship architecture: an agent app calls the Modelship gateway's OpenAI-compatible API, which exposes chat, embeddings, audio, and image endpoints plus a Responses API backed by a shared conversation-state store, routing round-robin to Ray Serve deployments across GPU and CPU cluster nodes.](assets/architecture-dark.svg#only-dark)
+![Modelship architecture: an agent app calls the Modelship gateway's OpenAI-compatible API, which exposes chat, embeddings, audio, and image endpoints plus a Responses API backed by a shared conversation-state store, routing to Ray Serve deployments across GPU and CPU cluster nodes.](assets/architecture-light.svg#only-light)
+![Modelship architecture: an agent app calls the Modelship gateway's OpenAI-compatible API, which exposes chat, embeddings, audio, and image endpoints plus a Responses API backed by a shared conversation-state store, routing to Ray Serve deployments across GPU and CPU cluster nodes.](assets/architecture-dark.svg#only-dark)
 
 Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html)
 deployment with its own lifecycle, health checks, and resource budget.
@@ -50,12 +50,11 @@ deployment with its own lifecycle, health checks, and resource budget.
 | **Diffusers** | Image generation | Yes |
 | **Custom (plugins)** | TTS backends (Kokoro ONNX, Orpheus), STT backends (whisper.cpp) | No |
 
-Models can be deployed across multiple GPUs, run on CPU-only, or both —
-multiple deployments of the same model (e.g. one on GPU via vLLM, one on CPU
-via vLLM or llama.cpp) are load-balanced with round-robin routing. Each
-deployment can also scale horizontally with `num_replicas`, and the gateway
-itself scales with `--gateway-replicas`. See [Architecture](architecture.md)
-for the full request lifecycle and design.
+Models can be deployed across multiple GPUs or run on CPU-only. A model name
+maps to one deployment, which scales horizontally with `num_replicas`
+(Ray Serve load-balances across its own replicas); the gateway itself scales
+with `--gateway-replicas`. See [Architecture](architecture.md) for the full
+request lifecycle and design.
 
 ## Supported OpenAI Endpoints
 

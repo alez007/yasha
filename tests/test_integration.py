@@ -1210,17 +1210,26 @@ def _wait_for_replicas(model_name: str, predicate, deadline_s: float) -> int:
     return count
 
 
-def _hammer(client: OpenAI, model: str, stop: threading.Event, errors: list) -> None:
+_LOAD_PROMPT = [{"role": "user", "content": "Write a long, detailed story about a curious robot."}]
+_PING_PROMPT = [{"role": "user", "content": "hi"}]
+
+
+def _hammer(
+    client: OpenAI,
+    model: str,
+    stop: threading.Event,
+    errors: list,
+    *,
+    messages: list[dict] = _LOAD_PROMPT,
+    max_tokens: int = 256,
+) -> None:
     """Keep one request in flight at a time until `stop` is set. Several of these
     running concurrently sustain enough load to push past the autoscaler's
-    per-replica setpoint."""
+    per-replica setpoint (the defaults); pass a cheap messages/max_tokens pair
+    instead to just prove continuous liveness."""
     while not stop.is_set():
         try:
-            client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": "Write a long, detailed story about a curious robot."}],
-                max_tokens=256,
-            )
+            client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
         except Exception as exc:
             # Surfaced via the shared list, not raised in the worker thread.
             errors.append(exc)
@@ -1326,3 +1335,71 @@ class TestGatewayReplicaConsistency:
                 client.chat.completions.create(
                     model="chat-llama-server-plain", messages=[{"role": "user", "content": "hi"}], max_tokens=5
                 )
+
+
+_BLUE_GREEN_MODEL = "blue-green-cutover"
+_BLUE_GREEN_SOURCE = "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf"
+
+
+def _blue_green_config(n_ctx: int) -> dict:
+    # n_ctx forces a new fingerprint between "versions" without a new download.
+    # parallel must cover the 2 hammer workers below — at parallel=1 a queued
+    # (not yet dispatched) request can get orphaned by the teardown and hang
+    # until the client's own timeout instead of erroring (repro-confirmed).
+    return {
+        "name": _BLUE_GREEN_MODEL,
+        "model": _BLUE_GREEN_SOURCE,
+        "usecase": "generate",
+        "loader": "llama_server",
+        "num_cpus": 1,
+        "llama_server_config": {"n_ctx": n_ctx, "parallel": 2},
+    }
+
+
+def _app_names_for(model_name: str) -> set[str]:
+    """Live Serve app names currently routing `model_name` (app name is
+    `<model_name>-<fingerprint>`), read from the Serve REST status API."""
+    resp = httpx.get(SERVE_STATUS_URL, timeout=10)
+    resp.raise_for_status()
+    apps = resp.json().get("applications", {})
+    return {name for name in apps if name == model_name or name.startswith(f"{model_name}-")}
+
+
+@pytest.mark.integration
+@pytest.mark.llama_server
+@pytest.mark.blue_green
+class TestBlueGreenReplace:
+    """--replace-strategy blue_green (the default) must cut a model's config
+    change over atomically: no dropped requests during the swap, and the old
+    deployment is fully torn down rather than left running as a zombie."""
+
+    def test_cutover_has_no_request_loss_and_leaves_no_zombie(self, client, model_deployer):
+        model_deployer.deploy_raw([_blue_green_config(n_ctx=2048)], replace_strategy="blue_green")
+        assert _poll(lambda: _model_in_all_samples(client, _BLUE_GREEN_MODEL), deadline_s=60), (
+            "initial deployment did not become routable on all gateway replicas"
+        )
+        old_apps = _app_names_for(_BLUE_GREEN_MODEL)
+        assert len(old_apps) == 1, f"expected exactly one deployment before cutover, saw {old_apps}"
+
+        stop = threading.Event()
+        errors: list[Exception] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(_hammer, client, _BLUE_GREEN_MODEL, stop, errors, messages=_PING_PROMPT, max_tokens=5)
+                for _ in range(2)
+            ]
+            try:
+                # This call blocks until the new deployment is live and the old one
+                # is dropped — hammering concurrently is what proves the swap never
+                # leaves a gap where the model 404s or 5xxs.
+                model_deployer.deploy_raw([_blue_green_config(n_ctx=4096)], replace_strategy="blue_green")
+            finally:
+                stop.set()
+                concurrent.futures.wait(futures)
+
+        assert not errors, f"requests failed during blue_green cutover: {errors[:3]}"
+
+        new_apps = _app_names_for(_BLUE_GREEN_MODEL)
+        assert len(new_apps) == 1, f"expected exactly one deployment after cutover, saw {new_apps}"
+        assert new_apps != old_apps, "app name did not change even though the config did"
+        assert not (old_apps & new_apps), "old deployment still present after cutover"

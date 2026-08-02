@@ -98,7 +98,15 @@ class ReplicaCoordinator:
         await self._store.set_async(_STATE_KEY, {"registry": self._registry, "expected": self._expected})
 
     async def register_deployment(self, gateway_name: str, deployment_name: str, model_name: str) -> None:
-        self._registry.setdefault(gateway_name, {})[deployment_name] = model_name
+        """Register deployment_name for model_name, evicting any other deployment
+        already registered under model_name in the same write."""
+        gw = self._registry.setdefault(gateway_name, {})
+        superseded = [name for name, model in gw.items() if model == model_name and name != deployment_name]
+        for name in superseded:
+            del gw[name]
+        if superseded:
+            logger.info("routing for model %s: %s -> %s", model_name, superseded, deployment_name)
+        gw[deployment_name] = model_name
         await self._persist()
         self._bump(gateway_name)
 

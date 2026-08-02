@@ -186,7 +186,6 @@ class ModelshipAPI:
         # model_name -> (app_name -> handle). The inner dict is keyed by app_name
         # so a specific deployment can be dropped by name in remove_deployments.
         self.models: dict[str, dict[str, DeploymentHandle]] = {}
-        self._round_robin: dict[str, int] = {}
         self.model_list: list[OpenAiModelCard] = []
         self.expected_models: list[str] = []
         self._started_at = time.time()
@@ -224,7 +223,6 @@ class ModelshipAPI:
         newly_added = model_name not in self.models
         if newly_added:
             self.models[model_name] = {}
-            self._round_robin[model_name] = 0
             self.model_list.append(OpenAiModelCard(id=model_name))
         self.models[model_name][app_name] = handle
         logger.info("Registered deployment: %s (model: %s)", app_name, model_name)
@@ -233,8 +231,8 @@ class ModelshipAPI:
     def _drop_apps(self, app_names: list[str]) -> list[str]:
         """Drop the given deployment app names from the routing tables. The owning
         model is found by reverse lookup. When a model loses its last deployment its
-        model entry, card, round-robin counter, expected-models entry, and load-time
-        entry are also dropped. Returns the names of fully-removed models."""
+        model entry, card, expected-models entry, and load-time entry are also
+        dropped. Returns the names of fully-removed models."""
         removed_models: list[str] = []
         for app_name in app_names:
             model_name = next((m for m, handles in self.models.items() if app_name in handles), None)
@@ -245,7 +243,6 @@ class ModelshipAPI:
             logger.info("Unregistered deployment: %s (model: %s)", app_name, model_name)
             if not handles:
                 del self.models[model_name]
-                self._round_robin.pop(model_name, None)
                 self.model_list = [c for c in self.model_list if c.id != model_name]
                 self._model_load_times.pop(model_name, None)
                 self.expected_models = [m for m in self.expected_models if m != model_name]
@@ -398,10 +395,9 @@ class ModelshipAPI:
         self._ensure_watching()
         if model_name is None or model_name not in self.models:
             raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
-        handles = list(self.models[model_name].values())
-        idx = self._round_robin[model_name] % len(handles)
-        self._round_robin[model_name] += 1
-        return handles[idx]
+        # One model name maps to one deployment (coordinator evicts any prior one
+        # on registration), so the last-inserted entry is always the live one.
+        return next(reversed(self.models[model_name].values()))
 
     async def _await_first(self, response_gen, model: str, endpoint: str):
         """Await *response_gen*'s first item, translating a Ray-boundary failure into
