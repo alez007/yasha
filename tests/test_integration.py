@@ -1220,13 +1220,14 @@ def _hammer(
     stop: threading.Event,
     errors: list,
     *,
-    messages: list[dict] = _LOAD_PROMPT,
+    messages: list[dict] | None = None,
     max_tokens: int = 256,
 ) -> None:
     """Keep one request in flight at a time until `stop` is set. Several of these
     running concurrently sustain enough load to push past the autoscaler's
     per-replica setpoint (the defaults); pass a cheap messages/max_tokens pair
     instead to just prove continuous liveness."""
+    messages = messages if messages is not None else _LOAD_PROMPT
     while not stop.is_set():
         try:
             client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
