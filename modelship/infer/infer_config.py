@@ -417,17 +417,22 @@ class ModelshipConfig(BaseModel):
     models: list[ModelshipModelConfig]
 
     @model_validator(mode="after")
-    def check_unique_deployment_names(self):
-        seen: dict[str, int] = {}
+    def check_unique_names(self):
+        """A model name maps to exactly one deployment: reject any name reused
+        across entries, whether the repeated config is identical or not."""
+        seen: dict[str, str] = {}
         for cfg in self.models:
-            key = f"{cfg.name}-{cfg.fingerprint()}"
-            seen[key] = seen.get(key, 0) + 1
-        dupes = [name for name, count in seen.items() if count > 1]
-        if dupes:
-            raise ValueError(
-                f"Duplicate model entries (same name + identical fingerprint): {dupes}. "
-                f"Each model name must be unique; for multiple identical replicas use num_replicas."
-            )
+            fp = cfg.fingerprint()
+            prior = seen.get(cfg.name)
+            if prior is None:
+                seen[cfg.name] = fp
+            elif prior == fp:
+                raise ValueError(
+                    f"Duplicate model entries named {cfg.name!r} with identical config. "
+                    f"For multiple identical replicas, use num_replicas instead."
+                )
+            else:
+                raise ValueError(f"duplicate model name {cfg.name!r}: a model name maps to exactly one deployment.")
         return self
 
 

@@ -47,7 +47,8 @@ def load_raw_models(arg_path: str | None) -> list[dict]:
 
     The effective-config store keeps raw dicts (not validated configs, which don't
     round-trip through num_gpus/tp normalization), so the deploy path merges at the
-    raw-dict level and validates only the merged result."""
+    raw-dict level; ``merge()`` validates this input before folding it in, and the
+    merged result is validated again before deploy."""
     with open(resolve_config_path(arg_path)) as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):

@@ -452,29 +452,30 @@ class TestModelshipConfig:
         config = ModelshipConfig(models=[])
         assert len(config.models) == 0
 
-    def test_duplicate_names_allowed(self):
-        config = ModelshipConfig(
-            models=[
-                ModelshipModelConfig(
-                    name="kokoro",
-                    model="hexgrad/Kokoro-82M",
-                    usecase=ModelUsecase.tts,
-                    loader=ModelLoader.custom,
-                    plugin="kokoroonnx",
-                    num_gpus=0.07,
-                ),
-                ModelshipModelConfig(
-                    name="kokoro",
-                    model="hexgrad/Kokoro-82M",
-                    usecase=ModelUsecase.tts,
-                    loader=ModelLoader.custom,
-                    plugin="kokoroonnx",
-                    num_gpus=0,
-                ),
-            ]
-        )
-        assert len(config.models) == 2
-        assert config.models[0].name == config.models[1].name == "kokoro"
+    def test_duplicate_name_different_config_rejected(self):
+        # a model name maps to exactly one deployment; same name + different
+        # config used to be the round-robin case, now a hard error.
+        with pytest.raises(ValidationError, match="duplicate model name"):
+            ModelshipConfig(
+                models=[
+                    ModelshipModelConfig(
+                        name="kokoro",
+                        model="hexgrad/Kokoro-82M",
+                        usecase=ModelUsecase.tts,
+                        loader=ModelLoader.custom,
+                        plugin="kokoroonnx",
+                        num_gpus=0.07,
+                    ),
+                    ModelshipModelConfig(
+                        name="kokoro",
+                        model="hexgrad/Kokoro-82M",
+                        usecase=ModelUsecase.tts,
+                        loader=ModelLoader.custom,
+                        plugin="kokoroonnx",
+                        num_gpus=0,
+                    ),
+                ]
+            )
 
     def test_duplicate_name_and_fingerprint_rejected(self):
         with pytest.raises(ValidationError, match="Duplicate model entries"):

@@ -47,19 +47,6 @@ def _model_name(raw: dict) -> str:
     return ModelshipModelConfig.model_validate(raw).name
 
 
-def _reject_duplicate_names(raw_models: list[dict], gateway_name: str) -> None:
-    """Raise if two dicts share a model name but normalize to different
-    deployment_names; identical normalizations are allowed through."""
-    by_name: dict[str, str] = {}
-    for raw in raw_models:
-        model_name = _model_name(raw)
-        dep_name = _deployment_name(raw, gateway_name)
-        prior = by_name.get(model_name)
-        if prior is not None and prior != dep_name:
-            raise ValueError(f"duplicate model name {model_name!r}: a model name maps to exactly one deployment.")
-        by_name[model_name] = dep_name
-
-
 def merge(
     effective_raw: list[dict],
     input_raw: list[dict],
@@ -73,10 +60,12 @@ def merge(
       existing entry for that name rather than joining it.
     - reconcile: input replaces the effective set entirely.
 
-    Raises ValueError if *input_raw* itself declares two entries with the same
-    model name and different configs.
+    Validates *input_raw* alone (not the merged result) via ModelshipConfig, so a
+    model name reused with a different config in this file is rejected before it
+    ever reaches the persisted effective set; pre-existing effective state from
+    before this rule existed is left alone.
     """
-    _reject_duplicate_names(input_raw, gateway_name)
+    to_config(input_raw)
     if mode == "reconcile":
         return list(input_raw)
 
