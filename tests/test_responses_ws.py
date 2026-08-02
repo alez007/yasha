@@ -55,7 +55,6 @@ def _wire(api, model: str, gen):
     handle = MagicMock()
     handle.respond.options.return_value.remote.return_value = gen
     api.models = {model: {f"{model}-a1b2c": handle}}
-    api._round_robin = {model: 0}
     return handle
 
 

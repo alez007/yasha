@@ -247,7 +247,6 @@ def _wire(api, gen):
     handle = MagicMock()
     handle.generate.options.return_value.remote.return_value = gen
     api.models = {"m": {"m-a1b2c": handle}}
-    api._round_robin = {"m": 0}
     return handle
 
 
@@ -335,7 +334,6 @@ class TestCompactResponseRoute:
         handle = MagicMock()
         handle.generate.options.return_value.remote.return_value = gen()
         api.models = {"m": {"m-a1b2c": handle}}
-        api._round_robin = {"m": 0}
 
         request = CompactRequest(model="m", input="hi")
         result = await api.compact_response(request, _raw_request())

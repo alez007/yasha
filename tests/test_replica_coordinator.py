@@ -56,6 +56,21 @@ class TestRoutingRegistry:
         assert (await coord.get_routing("gw-a"))["generation"] == 1
         assert (await coord.get_routing("gw-b"))["generation"] == 0
 
+    @pytest.mark.asyncio
+    async def test_register_evicts_prior_deployment_for_same_model(self, coord):
+        await coord.register_deployment("gw", "qwen-OLD", "qwen")
+        await coord.register_deployment("gw", "qwen-NEW", "qwen")
+        routing = await coord.get_routing("gw")
+        assert routing["models"] == {"qwen-NEW": "qwen"}
+        assert routing["generation"] == 2
+
+    @pytest.mark.asyncio
+    async def test_register_does_not_evict_other_models(self, coord):
+        await coord.register_deployment("gw", "qwen-aaaa", "qwen")
+        await coord.register_deployment("gw", "kokoro-bbbb", "kokoro")
+        routing = await coord.get_routing("gw")
+        assert routing["models"] == {"qwen-aaaa": "qwen", "kokoro-bbbb": "kokoro"}
+
 
 class TestWaitForChange:
     @pytest.mark.asyncio

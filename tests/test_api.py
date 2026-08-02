@@ -166,7 +166,6 @@ class TestReconcileRemovals:
         _apply(api, {}, gen=2)
         assert "qwen" not in api.models
         assert api.model_list == []
-        assert "qwen" not in api._round_robin
 
     def test_one_of_many_dropped_keeps_model(self, api):
         h1, h2 = MagicMock(), MagicMock()
@@ -285,12 +284,17 @@ class TestWatchReconcile:
 
 
 class TestGetHandle:
-    def test_round_robin(self, api):
+    def test_returns_the_deployment(self, api):
+        handle = MagicMock()
+        _apply(api, {"qwen-a3f9k": "qwen"}, handles=[handle])
+        assert api._get_handle("qwen") is handle
+
+    def test_prefers_the_most_recently_registered(self, api):
+        # Two entries under one model name is a transient state the coordinator
+        # no longer produces, but the gateway still resolves it deterministically.
         ha, hb = MagicMock(), MagicMock()
         _apply(api, {"qwen-a3f9k": "qwen", "qwen-b7x2p": "qwen"}, handles=[ha, hb])
-        assert api._get_handle("qwen") is ha
         assert api._get_handle("qwen") is hb
-        assert api._get_handle("qwen") is ha
 
     def test_unknown_model_raises(self, api):
         from fastapi import HTTPException
@@ -317,7 +321,6 @@ class TestImageEditRoutes:
         handle = MagicMock()
         remote = handle.edit_image.options.return_value.remote
         api.models = {"sdxl": {"sdxl-a1b2c": handle}}
-        api._round_robin = {"sdxl": 0}
 
         request = ImageEditRequest(
             image=UploadFile(file=io.BytesIO(b"IMAGE_BYTES"), filename="i.png"),
@@ -357,7 +360,6 @@ class TestImageEditRoutes:
         handle = MagicMock()
         remote = handle.vary_image.options.return_value.remote
         api.models = {"sdxl": {"sdxl-a1b2c": handle}}
-        api._round_robin = {"sdxl": 0}
 
         request = ImageVariationRequest(
             image=UploadFile(file=io.BytesIO(b"IMAGE_BYTES"), filename="i.png"),

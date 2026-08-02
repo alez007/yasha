@@ -118,7 +118,6 @@ def _wire(api, side_effect):
     handle = MagicMock()
     handle.respond.options.return_value.remote.side_effect = side_effect
     api.models = {"m": {"m-a1b2c": handle}}
-    api._round_robin = {"m": 0}
     return handle
 
 
@@ -253,7 +252,6 @@ class TestMcpBackgroundWiring:
     async def test_background_mcp_routes_through_loop_and_persists_approval_request(self, api):
         handle = MagicMock()
         api.models = {"m": {"m-a1b2c": handle}}
-        api._round_robin = {"m": 0}
 
         async def fake_mcp_gen(*args, **kwargs):
             response_id = kwargs.get("response_id")

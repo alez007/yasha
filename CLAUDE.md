@@ -53,7 +53,7 @@ Docker's `CMD` is `uv run --no-sync mship_deploy.py` (auto-detecting CPUs/GPUs u
 - `modelship/plugins/base_plugin.py` — `BasePlugin` ABC that each plugin package subclasses as `ModelPlugin`.
 - `plugins/*` — workspace packages, each opt-in via a matching root extra. The plugin module name and extra name **must match** (`ensure_plugin()` does `importlib.import_module(config.plugin)`).
 
-Multiple deployments with the same model name are round-robin load-balanced by the gateway. Each deployment can also scale with `num_replicas` via Ray Serve.
+A model name maps to exactly one deployment (enforced at the coordinator — a second deployment registering under the same name atomically evicts the first). Scale a model with `num_replicas` via Ray Serve, which load-balances across its own replicas.
 
 ## Tests
 

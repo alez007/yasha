@@ -42,6 +42,17 @@ def _deployment_name(raw: dict, gateway_name: str) -> str:
     return ModelshipModelConfig.model_validate(raw).deployment_name(gateway_name)
 
 
+def _model_name(raw: dict) -> str:
+    """Human-facing model name for a raw model dict."""
+    return ModelshipModelConfig.model_validate(raw).name
+
+
+def _identity(raw: dict, gateway_name: str) -> tuple[str, str]:
+    """(deployment_name, model_name) for a raw model dict from one validation pass."""
+    cfg = ModelshipModelConfig.model_validate(raw)
+    return cfg.deployment_name(gateway_name), cfg.name
+
+
 def merge(
     effective_raw: list[dict],
     input_raw: list[dict],
@@ -50,22 +61,41 @@ def merge(
 ) -> list[dict]:
     """Fold the user's input into the effective raw model set under *mode*.
 
-    - additive: union — append input dicts whose deployment name isn't already
-      present (identical config = idempotent skip; same name + different config =
-      a distinct deployment the gateway round-robins, preserved as today).
+    - additive: replace-by-name — identical config (same deployment_name) is an
+      idempotent skip; a different config sharing a model name replaces the
+      existing entry for that name rather than joining it.
     - reconcile: input replaces the effective set entirely.
+
+    Validates *input_raw* alone (not the merged result) via ModelshipConfig, so a
+    model name reused with a different config in this file is rejected before it
+    ever reaches the persisted effective set; pre-existing effective state from
+    before this rule existed is left alone.
     """
+    to_config(input_raw)
     if mode == "reconcile":
         return list(input_raw)
 
-    present = {_deployment_name(d, gateway_name) for d in effective_raw}
-    merged = list(effective_raw)
+    # dep_name -> raw dict, and model_name -> its current dep_name, both built in
+    # one validation pass per dict so lookups below are O(1) instead of rescanning
+    # (and re-validating) the whole accumulated set per input entry.
+    merged: dict[str, dict] = {}
+    dep_name_by_model_name: dict[str, str] = {}
+    for m in effective_raw:
+        dep_name, model_name = _identity(m, gateway_name)
+        merged[dep_name] = m
+        dep_name_by_model_name[model_name] = dep_name
+
     for d in input_raw:
-        name = _deployment_name(d, gateway_name)
-        if name not in present:
-            merged.append(d)
-            present.add(name)
-    return merged
+        dep_name, model_name = _identity(d, gateway_name)
+        if dep_name in merged:
+            continue
+        prior_dep_name = dep_name_by_model_name.get(model_name)
+        if prior_dep_name is not None:
+            del merged[prior_dep_name]
+        merged[dep_name] = d
+        dep_name_by_model_name[model_name] = dep_name
+
+    return list(merged.values())
 
 
 def deployment_names(raw_models: list[dict], gateway_name: str) -> set[str]:

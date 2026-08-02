@@ -27,7 +27,7 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 - **Per-model GPU budgeting** — `num_gpus` controls VRAM allocation (e.g. 0.70 for 70%)
 - **Sequential startup** — models deploy one at a time to prevent memory spikes, ordered by tensor parallelism size (TP > 1 first)
 - **Additive deploys** — by default, `mship_deploy.py` adds models to a running cluster without disrupting existing deployments, enabling incremental composition from multiple config files. Use `--reconcile` to instead make the cluster match a config exactly (add/remove/replace), without ever tearing down the cluster
-- **Multi-deployment routing** — the same model name can appear multiple times with different configs (e.g. GPU + CPU). The gateway round-robins requests across all deployments sharing a name. Each deployment also supports `num_replicas` for scaling identical copies via Ray Serve's built-in load balancing
+- **One deployment per model name** — a model name maps to exactly one deployment; scale it with `num_replicas` (or `autoscaling_config`), which Ray Serve load-balances across replicas natively. Changing a model's config replaces its deployment (`--replace-strategy`, default `blue_green`) rather than adding a second one alongside it
 - **Multi-gateway support** — multiple independent gateways can run on the same cluster via `--gateway-name`, each managing its own set of models
 
 ### Inference Loaders

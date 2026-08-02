@@ -74,7 +74,6 @@ class TestResponsesRoute:
         handle = MagicMock()
         remote = handle.respond.options.return_value.remote
         api.models = {"m": {"m-a1b2c": handle}}
-        api._round_robin = {"m": 0}
 
         request = ResponsesRequest(model="m", input="hi", instructions="be terse")
 
@@ -102,7 +101,6 @@ class TestResponsesRoute:
 
         handle.respond.options.return_value.remote.return_value = gen()
         api.models = {"m": {"m-a1b2c": handle}}
-        api._round_robin = {"m": 0}
 
         request = ResponsesRequest(model="m", input="hi", stream=True)
         result = await api.create_response(request, _raw_request())
@@ -126,7 +124,6 @@ class TestResponsesRoute:
 
         handle.respond.options.return_value.remote.return_value = gen()
         api.models = {"m": {"m-a1b2c": handle}}
-        api._round_robin = {"m": 0}
 
         request = ResponsesRequest(model="m", input="hi", reasoning={"effort": "turbo"})
         result = await api.create_response(request, _raw_request())
@@ -150,7 +147,6 @@ class TestResponsesRoute:
 
         handle.respond.options.return_value.remote.return_value = gen()
         api.models = {"m": {"m-a1b2c": handle}}
-        api._round_robin = {"m": 0}
 
         request = ResponsesRequest(model="m", input="hi")
         result = await api.create_response(request, _raw_request())
@@ -171,7 +167,6 @@ class TestMcpRouting:
     async def test_mcp_tool_routes_through_mcp_loop_not_handle_respond(self, api):
         handle = MagicMock()
         api.models = {"m": {"m-a1b2c": handle}}
-        api._round_robin = {"m": 0}
 
         async def fake_mcp_gen():
             yield ResponseObject(
@@ -198,7 +193,6 @@ class TestMcpRouting:
 
         handle.respond.options.return_value.remote.return_value = gen()
         api.models = {"m": {"m-a1b2c": handle}}
-        api._round_robin = {"m": 0}
 
         request = ResponsesRequest(model="m", input="hi")
         with patch("modelship.openai.api.mcp_loop.run_mcp_response") as run_mcp:
@@ -223,7 +217,6 @@ def _wire(api, gen):
     handle = MagicMock()
     handle.respond.options.return_value.remote.return_value = gen
     api.models = {"m": {"m-a1b2c": handle}}
-    api._round_robin = {"m": 0}
     return handle
 
 

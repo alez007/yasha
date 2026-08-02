@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 620" width="1180" height="620" role="img" aria-label="Modelship architecture diagram" font-family="Helvetica, Arial, sans-serif">
   <title>Modelship architecture</title>
-  <desc>An agent app calls the Modelship gateway's OpenAI-compatible API. The gateway exposes chat, embeddings, audio, and image endpoints plus a highlighted Responses API with reasoning, tool calling, and streaming, backed by a shared conversation-state store and gateway/cluster auth. Requests are routed round-robin to Ray Serve deployments running across multiple cluster nodes on GPU or CPU.</desc>
+  <desc>An agent app calls the Modelship gateway's OpenAI-compatible API. The gateway exposes chat, embeddings, audio, and image endpoints plus a highlighted Responses API with reasoning, tool calling, and streaming, backed by a shared conversation-state store and gateway/cluster auth. Requests are routed to Ray Serve deployments running across multiple cluster nodes on GPU or CPU.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#EAF0F7"/>
@@ -63,7 +63,7 @@
   <!-- Arrows gateway -> nodes -->
   <line x1="695" y1="170" x2="758" y2="140" stroke="#EAF0F7" stroke-width="2" marker-end="url(#arrow)"/>
   <line x1="695" y1="380" x2="758" y2="410" stroke="#EAF0F7" stroke-width="2" marker-end="url(#arrow)"/>
-  <text x="718" y="270" text-anchor="middle" font-size="11" fill="#9FB3C8">round-robin</text>
+  <text x="718" y="270" text-anchor="middle" font-size="11" fill="#9FB3C8">routes to</text>
 
   <!-- Node A -->
   <rect x="760" y="40" width="380" height="230" rx="12" fill="none" stroke="#EAF0F7" stroke-width="2"/>
