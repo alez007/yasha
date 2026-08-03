@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.8] - 2026-08-03
+
+### Added
+- capability-aware Ray scheduling for loaders and accelerators
+
+### Fixed
+- match unquoted exec target in llama-server wrapper detection
+- numeric card ordering + full loader coverage in capability parity check
+
+### Changed
+- make effective_config.merge() O(n) instead of O(n^2)
+- avoid mutable default argument in _hammer
+- enforce unique model names in ModelshipConfig, not effective_config
+- add sharded GGUF example to llama-server.yaml
+- replace gateway round-robin with atomic per-name deployment cutover
+
 ## [0.7.7] - 2026-08-01
 
 ### Changed
