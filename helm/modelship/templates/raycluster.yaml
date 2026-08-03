@@ -95,8 +95,10 @@ spec:
       replicas: {{ .replicas }}
       minReplicas: {{ .minReplicas }}
       maxReplicas: {{ .maxReplicas }}
+      {{- $img := .image | default dict }}
+      {{- $variant := $img.variant | default $.Values.image.variant | default "cuda" }}
       rayStartParams:
-        {{- include "modelship.rayStartParams" (dict "root" $ "isHead" false "params" .rayStartParams) | nindent 8 }}
+        {{- include "modelship.rayStartParams" (dict "root" $ "isHead" false "params" .rayStartParams "variant" $variant) | nindent 8 }}
       template:
         metadata:
           labels:
@@ -122,8 +124,8 @@ spec:
           # (repository/tag/variant/pullPolicy); any field left unset falls back to
           # the cluster-wide `image`. Lets a lean CPU image run cluster-wide while
           # the GPU group pulls the full CUDA image — set `variant: cuda` on that
-          # group (both built at the same Ray version).
-          {{- $img := .image | default dict }}
+          # group (both built at the same Ray version). $img/$variant are defined
+          # above, alongside rayStartParams.
           containers:
             - name: ray-worker
               image: {{ printf "%s:%s" ($img.repository | default $.Values.image.repository) (include "modelship.imageTag" (dict "root" $ "tag" $img.tag "variant" $img.variant)) }}

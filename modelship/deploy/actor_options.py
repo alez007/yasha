@@ -12,6 +12,7 @@ import os
 import platform
 from pathlib import Path
 
+from modelship.deploy.capabilities import deployment_capability_resources
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
 from modelship.utils.cache import resolve_cache_root
@@ -137,6 +138,8 @@ def build_deployment_options(config: ModelshipModelConfig, plugin_wheel: Path | 
         # wheel reuse the install.
         runtime_env["pip"] = [str(plugin_wheel)]
 
+    capability_resources = deployment_capability_resources(config)
+
     if config.loader == ModelLoader.stable_diffusion_cpp and platform.system() != "Darwin":
         # Off Darwin the loader's ggml backend genuinely is CPU-only. On Darwin,
         # ggml's runtime device registry picks up Metal automatically — forcing
@@ -148,7 +151,14 @@ def build_deployment_options(config: ModelshipModelConfig, plugin_wheel: Path | 
                 config.num_gpus,
                 config.name,
             )
-        opts: dict = {"ray_actor_options": {"num_gpus": 0, "num_cpus": config.num_cpus, "runtime_env": runtime_env}}
+        opts: dict = {
+            "ray_actor_options": {
+                "num_gpus": 0,
+                "num_cpus": config.num_cpus,
+                "runtime_env": runtime_env,
+                "resources": capability_resources,
+            }
+        }
     else:
         world_size = _world_size(config)
         if world_size == 1:
@@ -159,6 +169,7 @@ def build_deployment_options(config: ModelshipModelConfig, plugin_wheel: Path | 
                     "num_gpus": config.num_gpus,
                     "num_cpus": config.num_cpus,
                     "runtime_env": runtime_env,
+                    "resources": capability_resources,
                 }
             }
         else:
@@ -166,8 +177,10 @@ def build_deployment_options(config: ModelshipModelConfig, plugin_wheel: Path | 
             # same node (NVLink). Outer actor sits in bundle 0 with 0 GPU; vLLM's
             # ray executor reuses the PG via get_current_placement_group() and
             # pins each worker actor to its bundle. Each bundle requests a whole
-            # GPU, so Ray spreads across distinct physical GPUs.
-            bundles = [{"GPU": 1, "CPU": config.num_cpus} for _ in range(world_size)]
+            # GPU, so Ray spreads across distinct physical GPUs. The capability
+            # resource is requested on every bundle (not the outer actor) since
+            # the bundles are what pin the deploy to a capable node.
+            bundles = [{"GPU": 1, "CPU": config.num_cpus, **capability_resources} for _ in range(world_size)]
             opts = {
                 "ray_actor_options": {"num_gpus": 0, "num_cpus": config.num_cpus, "runtime_env": runtime_env},
                 "placement_group_bundles": bundles,

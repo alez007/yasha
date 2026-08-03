@@ -105,6 +105,7 @@ class TestGpuDiscoveryUuid:
         mock_torch.cuda.device_count.return_value = 1
         mock_torch.cuda.get_device_properties.return_value = mock_props
         mock_torch.cuda.mem_get_info.return_value = (1024, 2048)
+        mock_torch.version.hip = None
 
         with patch.dict(sys.modules, {"torch": mock_torch}):
             gpus = preflight_base._torch_cuda_discover()
@@ -123,11 +124,87 @@ class TestGpuDiscoveryUuid:
         mock_torch.cuda.device_count.return_value = 1
         mock_torch.cuda.get_device_properties.return_value = mock_props
         mock_torch.cuda.mem_get_info.return_value = (1024, 2048)
+        mock_torch.version.hip = None
 
         with patch.dict(sys.modules, {"torch": mock_torch}):
             gpus = preflight_base._torch_cuda_discover()
 
         assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid=None)]
+
+    def test_torch_probe_derives_rocm_kind_from_hip_version(self):
+        """ROCm PyTorch maps torch.cuda onto HIP; torch.version.hip is the only
+        signal distinguishing an AMD device from a real CUDA one on this path."""
+        from modelship.preflight import base as preflight_base
+
+        mock_props = SimpleNamespace(name="MI300X", total_memory=2048)
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.device_count.return_value = 1
+        mock_torch.cuda.get_device_properties.return_value = mock_props
+        mock_torch.cuda.mem_get_info.return_value = (1024, 2048)
+        mock_torch.version.hip = "5.7.1"
+
+        with patch.dict(sys.modules, {"torch": mock_torch}):
+            gpus = preflight_base._torch_cuda_discover()
+
+        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="MI300X", uuid=None, kind="rocm")]
+
+    def test_torch_probe_defaults_to_cuda_kind_when_hip_unset(self):
+        from modelship.preflight import base as preflight_base
+
+        mock_props = SimpleNamespace(name="A100", total_memory=2048)
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.device_count.return_value = 1
+        mock_torch.cuda.get_device_properties.return_value = mock_props
+        mock_torch.cuda.mem_get_info.return_value = (1024, 2048)
+        mock_torch.version.hip = None
+
+        with patch.dict(sys.modules, {"torch": mock_torch}):
+            gpus = preflight_base._torch_cuda_discover()
+
+        assert gpus[0].kind == "cuda"
+
+
+class TestRocmSmiDiscovery:
+    """_rocm_smi_node_discover() — the non-torch ROCm probe for an
+    llama_server-only install, which has no torch to key off of at all."""
+
+    def test_no_binary_returns_empty(self):
+        from modelship.preflight import base as preflight_base
+
+        with patch("shutil.which", return_value=None):
+            assert preflight_base._rocm_smi_node_discover() == []
+
+    def test_parses_rocm_smi_json(self):
+        from modelship.preflight import base as preflight_base
+
+        payload = json.dumps(
+            {
+                "card0": {
+                    "Card series": "MI300X",
+                    "VRAM Total Memory (B)": "1000",
+                    "VRAM Total Used Memory (B)": "400",
+                }
+            }
+        )
+        mock_result = SimpleNamespace(stdout=payload)
+        with (
+            patch("shutil.which", return_value="/opt/rocm/bin/rocm-smi"),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            gpus = preflight_base._rocm_smi_node_discover()
+
+        assert gpus == [GPUInfo(index=0, available_bytes=600, name="MI300X", uuid=None, kind="rocm")]
+
+    def test_binary_failure_returns_empty(self):
+        from modelship.preflight import base as preflight_base
+
+        with (
+            patch("shutil.which", return_value="/opt/rocm/bin/rocm-smi"),
+            patch("subprocess.run", side_effect=OSError("boom")),
+        ):
+            assert preflight_base._rocm_smi_node_discover() == []
 
 
 class TestAppleMetalDiscovery:
@@ -246,11 +323,29 @@ class TestAppleMetalDiscovery:
         with (
             patch.object(preflight_base, "_torch_cuda_discover", return_value=[]),
             patch.object(preflight_base, "_pynvml_node_discover", return_value=[]),
+            patch.object(preflight_base, "_rocm_smi_node_discover", return_value=[]),
             patch.object(preflight_base, "_apple_metal_discover", return_value=[mps_gpu]),
         ):
             gpus = preflight_base.detect_gpus()
 
         assert gpus == [mps_gpu]
+
+    def test_detect_gpus_tries_rocm_smi_before_metal(self):
+        """pynvml is NVIDIA-only, so a torch-less ROCm install (llama_server-only)
+        needs a chance to answer via rocm-smi before falling all the way to Metal."""
+        from modelship.preflight import base as preflight_base
+
+        rocm_gpu = GPUInfo(index=0, available_bytes=1, name="MI300X", uuid=None, kind="rocm")
+        with (
+            patch.object(preflight_base, "_torch_cuda_discover", return_value=[]),
+            patch.object(preflight_base, "_pynvml_node_discover", return_value=[]),
+            patch.object(preflight_base, "_rocm_smi_node_discover", return_value=[rocm_gpu]),
+            patch.object(preflight_base, "_apple_metal_discover") as mock_metal,
+        ):
+            gpus = preflight_base.detect_gpus()
+
+        assert gpus == [rocm_gpu]
+        mock_metal.assert_not_called()
 
 
 class TestUnifiedMemory:

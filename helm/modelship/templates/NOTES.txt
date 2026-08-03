@@ -36,3 +36,12 @@ NOTE: this chart assumes the KubeRay operator + CRDs are already installed in th
 cluster. If `kubectl get rayclusters` errors with "no matches for kind", install
 the operator (once, cluster-wide) or set `kuberay-operator.enabled=true`.
 {{- end }}
+
+{{- if not .Values.workerGroups }}
+
+WARNING: workerGroups is empty. The head runs the `thin` image (no torch/vllm) and
+never schedules models — with no worker groups, this cluster deploys ZERO model
+capacity and every model in models.yaml will pend forever. Add at least one entry
+to workerGroups, or set head.image.variant if you genuinely want the head itself
+to run models.
+{{- end }}

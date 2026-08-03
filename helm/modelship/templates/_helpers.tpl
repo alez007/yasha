@@ -42,22 +42,33 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{/*
-Effective image tag, resolving the gpu/cpu variant onto the base tag. `variant: cpu` appends "-cpu";
-an explicit `tag`/`variant` (e.g. a per-worker-group override) wins over the
-cluster-wide image values. Call with a dict: (dict "root" $) or
+Effective image tag, resolving the gpu/cpu/thin variant onto the base tag. `variant:
+cpu` appends "-cpu"; an explicit `tag`/`variant` (e.g. a per-worker-group override)
+wins over the cluster-wide image values. `isHead: true` defaults to `thin` (via
+head.image.variant, itself defaulting to "thin") instead of the cluster-wide
+`image.variant` — the head never runs models, so it doesn't need torch/vllm. Call
+with a dict: (dict "root" $ "isHead" true) or
 (dict "root" $ "tag" $img.tag "variant" $img.variant).
 */}}
 {{- define "modelship.imageTag" -}}
 {{- $tag := .tag | default .root.Values.image.tag -}}
-{{- $variant := .variant | default .root.Values.image.variant | default "cuda" -}}
+{{- $variant := .variant -}}
+{{- if not $variant -}}
+{{- if .isHead -}}
+{{- $variant = .root.Values.head.image.variant | default "thin" -}}
+{{- else -}}
+{{- $variant = .root.Values.image.variant | default "cuda" -}}
+{{- end -}}
+{{- end -}}
 {{- if eq $variant "cpu" -}}{{ printf "%s-cpu" $tag }}{{- else if eq $variant "cuda" -}}{{ printf "%s-cuda" $tag }}{{- else -}}{{ $tag }}{{- end -}}
 {{- end -}}
 
 {{/*
-The container image reference shared by the Ray head and the RayJob submitter.
+The container image reference shared by the Ray head and the RayJob submitter —
+both are coordination-only (no models scheduled there), so both default to `thin`.
 */}}
 {{- define "modelship.image" -}}
-{{- printf "%s:%s" .Values.image.repository (include "modelship.imageTag" (dict "root" .)) -}}
+{{- printf "%s:%s" .Values.image.repository (include "modelship.imageTag" (dict "root" . "isHead" true)) -}}
 {{- end -}}
 
 {{/*
@@ -148,19 +159,42 @@ env at all) when disabled, matching Ray's own unauthenticated-by-default posture
 {{- end -}}
 
 {{/*
+Capability resources for an image variant — mirrors modelship/deploy/capabilities.py's
+LOADER_MODULES (kept in lockstep by a CI check comparing this against that table).
+The chart can't probe like the Python side does (KubeRay starts the raylet, so no
+modelship code runs first); it doesn't need to, since the variant already determines
+what's installed. Call with a variant string, e.g. (include "modelship.capabilityResources" "cuda").
+*/}}
+{{- define "modelship.capabilityResources" -}}
+{{- if eq . "cuda" -}}
+{"mship_vllm": 1, "mship_diffusers": 1, "mship_llama_server": 1, "mship_stable_diffusion_cpp": 1}
+{{- else if eq . "cpu" -}}
+{"mship_vllm": 1, "mship_llama_server": 1, "mship_stable_diffusion_cpp": 1}
+{{- else -}}
+{}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Full rayStartParams for a Ray node: chart-managed defaults plus the caller's
 overrides (overrides win). metrics-export-port is pinned to metrics.port on every
 node so Ray's Prometheus endpoint matches the `metrics` containerPort + PodMonitor
-(unset, ray start binds a random port and scrapes fail). The head additionally
-runs CPU-only (num-gpus 0) and binds the dashboard on all interfaces; workers keep
-num-gpus caller-controlled (GPU groups omit it to autodetect).
-Call with (dict "root" $ "isHead" <bool> "params" <rayStartParams>).
+(unset, ray start binds a random port and scrapes fail). The head is additionally
+pinned to num-gpus/num-cpus 0 (it's coordination-only) and binds the dashboard on
+all interfaces; workers instead render `resources` from their resolved variant, so
+a model can't schedule onto a node missing its loader's backend.
+Call with (dict "root" $ "isHead" <bool> "params" <rayStartParams> "variant" <variant, workers only>).
 */}}
 {{- define "modelship.rayStartParams" -}}
 {{- $defaults := dict "metrics-export-port" (.root.Values.metrics.port | toString) -}}
 {{- if .isHead -}}
 {{- $_ := set $defaults "num-gpus" "0" -}}
+{{- $_ := set $defaults "num-cpus" "0" -}}
 {{- $_ := set $defaults "dashboard-host" "0.0.0.0" -}}
+{{- else -}}
+{{- $capabilities := include "modelship.capabilityResources" .variant | fromJson | toJson -}}
+{{- $escaped := $capabilities | replace "\"" "\\\"" -}}
+{{- $_ := set $defaults "resources" (printf "\"%s\"" $escaped) -}}
 {{- end -}}
 {{- merge (deepCopy (.params | default dict)) $defaults | toYaml -}}
 {{- end -}}

@@ -112,6 +112,12 @@ with client.responses.stream(model="reasoning-qwen", input="Explain why, briefly
 
 Ray automatically schedules model deployments across available GPUs based on the `num_gpus` fraction each model requests. For example, two models each requesting `num_gpus: 0.9` will be placed on separate GPUs.
 
+### Capability-aware scheduling
+
+`num_gpus`/`num_cpus` alone only describe *how much* hardware a deployment needs, not *whether the node can actually run the loader at all*. Every node advertises a `mship_<loader>` Ray custom resource (e.g. `mship_vllm`) for each loader whose backend is actually installed — probed via `importlib.util.find_spec()` at startup, plus a real-binary check for `llama_server` (`modelship/deploy/capabilities.py`). Every model deployment except `loader: custom` requests its loader's resource alongside `num_gpus`/`GPU`, so it can only schedule onto a node with that backend present. A deploy with no capable node pends, and Ray Serve's own slow-start warning names the missing `mship_<loader>` resource — the same way it already names an unsatisfiable `GPU` request. `loader: custom` (plugins) is exempt: plugin wheels install onto whatever node was already picked, via `runtime_env`, so there's nothing to probe up front.
+
+This is what lets a `thin` (no-torch) coordinator node deploy models onto `cuda`/`cpu` worker nodes in a multi-node cluster, and what stops a `diffusers` model from landing on a `cpu`-image node that doesn't have `diffusers` installed. `MSHIP_NODE_CAPABILITIES` (a JSON object) overrides a node's advertised set wholesale, for environments where the probe isn't accurate.
+
 ## Plugin System
 
 Custom backends are isolated `uv` workspace packages under `plugins/`. Each plugin:

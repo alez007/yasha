@@ -150,6 +150,13 @@ Consequences:
 See [Multi-node without Kubernetes](multi-node-docker.md) for the full non-k8s
 cluster setup (auth, ports, co-location) this behavior enables.
 
+A model also only schedules onto a node whose image actually has that loader's
+backend installed (the `cpu` image has no `diffusers`, for instance) — a node
+advertises what it can run, and every deploy requests what its loader needs, as
+Ray custom resources. See [Architecture: Capability-aware
+scheduling](architecture.md#capability-aware-scheduling) for how this works and
+`MSHIP_NODE_CAPABILITIES` for overriding it.
+
 ### Multi-variant GGUF repos
 
 If `model:` points at an HF repo containing more than one `.gguf` file and no
@@ -520,6 +527,7 @@ deployment.
 | `MSHIP_NODE_NUM_CPUS` | Optional override: CPUs this node reserves (`--node-num-cpus` flag) | auto-detect |
 | `MSHIP_NODE_NUM_GPUS` | Optional override: GPUs this node reserves (`--node-num-gpus` flag). Refused at startup if it exceeds what the container can actually see | auto-detect |
 | `MSHIP_NODE_MEMORY` | Optional override: this node's total memory budget, e.g. `8Gi` (`--node-memory` flag). Split into Ray's `object_store_memory` (30%) and schedulable `memory` resource (70%), the same proportion Ray itself uses for auto-detection. Set this when co-locating multiple modelship containers on one host without per-container cgroup memory limits | auto-detect |
+| `MSHIP_NODE_CAPABILITIES` | Optional override: this node's advertised `mship_<loader>` capability resources, as a JSON object (e.g. `{"mship_vllm": 1}`) — replaces the `find_spec()`/binary probe wholesale. See [Architecture: Capability-aware scheduling](architecture.md#capability-aware-scheduling) | auto-probed |
 | `RAY_OBJECT_STORE_SHM_SIZE` | Shared memory for Ray object store | `8g` |
 | `VLLM_USE_V1` | Use vLLM v1 API | `1` |
 | `ONNX_PROVIDER` | ONNX Runtime execution provider | `CUDAExecutionProvider` |
