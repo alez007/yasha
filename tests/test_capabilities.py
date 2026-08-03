@@ -89,6 +89,31 @@ class TestNodeCapabilityResources:
             resources = node_capability_resources()
         assert resources == {"mship_llama_server": 1}
 
+    def test_llama_server_unquoted_wrapper_with_missing_target_is_unavailable(self, tmp_path):
+        """The Dockerfile's actual llama-server.sh emits an unquoted exec target
+        (unlike launcher._write_wrapper's quoted form) — the regex must handle both."""
+        missing_target = tmp_path / "nonexistent" / "llama-server"
+        wrapper = tmp_path / "llama-server.sh"
+        wrapper.write_text(f'#!/bin/sh\nexport LD_LIBRARY_PATH="{tmp_path}"\nexec {missing_target} "$@"\n')
+        with (
+            patch("importlib.util.find_spec", return_value=None),
+            patch.dict(os.environ, {"MSHIP_LLAMA_SERVER_BIN": str(wrapper)}, clear=True),
+        ):
+            resources = node_capability_resources()
+        assert "mship_llama_server" not in resources
+
+    def test_llama_server_unquoted_wrapper_with_present_target_is_available(self, tmp_path):
+        real_bin = tmp_path / "llama-server"
+        real_bin.write_text("binary")
+        wrapper = tmp_path / "llama-server.sh"
+        wrapper.write_text(f'#!/bin/sh\nexec {real_bin} "$@"\n')
+        with (
+            patch("importlib.util.find_spec", return_value=None),
+            patch.dict(os.environ, {"MSHIP_LLAMA_SERVER_BIN": str(wrapper)}, clear=True),
+        ):
+            resources = node_capability_resources()
+        assert resources == {"mship_llama_server": 1}
+
     def test_llama_server_unset_env_is_unavailable(self):
         with patch("importlib.util.find_spec", return_value=None), patch.dict(os.environ, {}, clear=True):
             resources = node_capability_resources()
