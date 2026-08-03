@@ -73,8 +73,11 @@ secrets:
 
 ## Topology
 
-- **Head** — CPU-only (`num-gpus: 0`); runs GCS and the gateway. No models are
-  scheduled here.
+- **Head** — coordination-only (`num-gpus: 0`, `num-cpus: 0`); runs GCS and the
+  gateway. Always runs the `thin` image (no torch/vllm) regardless of the
+  cluster-wide `image.variant`, so no model can schedule there even if it only
+  asks for CPU — override with `head.image.variant` if you genuinely want
+  capacity on the head. The RayJob submitter pod uses the same (thin) image.
 - **Serve HTTP proxies** — one runs on **every** Ray node (`proxy_location=EveryNode`),
   not just the head, and the gateway Service load-balances across all of them so
   ingress survives losing any single pod. Each proxy can route to any gateway
@@ -181,7 +184,8 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | Key | Default | Purpose |
 |-----|---------|---------|
 | `image.repository` / `image.tag` | `ghcr.io/modelship-ai/modelship` / `<app version>` | Stamped to the release version |
-| `image.variant` | `cuda` | `cuda`\|`cpu`\|`thin`. Appends `-cuda`/`-cpu` to the tag (`thin` is bare). CUDA runs everywhere with a GPU; set `cpu` on CPU-only clusters, or per worker group for a mixed cluster |
+| `image.variant` | `cuda` | `cuda`\|`cpu`\|`thin`. Worker default — appends `-cuda`/`-cpu` to the tag (`thin` is bare). Set `cpu` on CPU-only clusters, or per worker group for a mixed cluster. Does **not** affect the head (see below) |
+| `head.image.variant` | `thin` | The head/RayJob submitter always default to `thin` regardless of `image.variant` above — override only if you genuinely want model capacity on the head |
 | `rayVersion` | `2.54.1` | Must match the Ray in the image |
 | `models.config` / `models.existingConfigMap` | `models: []` | Your model set |
 | `gateway.replicas` | `1` | API gateway replicas; raise (with ≥1 worker) for routing/ingress HA |

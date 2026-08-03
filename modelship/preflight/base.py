@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -18,7 +19,7 @@ class GPUInfo:
     available_bytes: int  # free VRAM at preflight time, not the device's total capacity
     name: str
     uuid: str | None = None  # e.g. "GPU-<uuid>"; None when the probe can't read it (see per-probe notes)
-    kind: str = "cuda"  # "cuda" or "mps" (Apple Silicon unified-memory GPU)
+    kind: str = "cuda"  # "cuda" | "rocm" | "xpu" | "mps" (Apple Silicon unified-memory GPU)
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,8 @@ def detect_gpus() -> list[GPUInfo]:
             logger.debug(
                 "preflight: actor has no direct GPU ownership; using node-level pynvml view (%d GPU(s))", len(gpus)
             )
+    if not gpus:
+        gpus = _rocm_smi_node_discover()
     if not gpus:
         gpus = _apple_metal_discover()
     return gpus
@@ -282,6 +285,8 @@ def _torch_cuda_discover() -> list[GPUInfo]:
     try:
         if not torch.cuda.is_available():
             return []
+        # ROCm PyTorch maps torch.cuda onto HIP; torch.version.hip distinguishes it.
+        kind = "rocm" if torch.version.hip is not None else "cuda"
         gpus: list[GPUInfo] = []
         for i in range(torch.cuda.device_count()):
             props = torch.cuda.get_device_properties(i)
@@ -296,7 +301,7 @@ def _torch_cuda_discover() -> list[GPUInfo]:
             # `uuid` on device properties was added in a torch 2.x release; guard for
             # older builds rather than raising out of a hardware-discovery probe.
             uuid = f"GPU-{props.uuid}" if getattr(props, "uuid", None) is not None else None
-            gpus.append(GPUInfo(index=i, available_bytes=available, name=props.name, uuid=uuid))
+            gpus.append(GPUInfo(index=i, available_bytes=available, name=props.name, uuid=uuid, kind=kind))
         return gpus
     except Exception:
         logger.debug("preflight: torch.cuda probe failed", exc_info=True)
@@ -340,6 +345,48 @@ def _pynvml_node_discover() -> list[GPUInfo]:
     finally:
         with contextlib.suppress(Exception):
             pynvml.nvmlShutdown()
+
+
+def _card_sort_key(card: str) -> tuple[int, int | str]:
+    """Sorts rocm-smi's "card0".."card10" keys numerically, not lexicographically
+    (plain string sort would put "card10" before "card2")."""
+    match = re.search(r"\d+$", card)
+    return (0, int(match.group())) if match else (1, card)
+
+
+def _rocm_smi_node_discover() -> list[GPUInfo]:
+    """AMD GPUs via `rocm-smi --json`, for a torch-less process (pynvml above is
+    NVIDIA-only). Best-effort: any failure returns []."""
+    import json
+    import shutil
+    import subprocess
+
+    binary = shutil.which("rocm-smi")
+    if binary is None:
+        return []
+    try:
+        out = subprocess.run(
+            [binary, "--showproductname", "--showmeminfo", "vram", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        data = json.loads(out.stdout)
+    except Exception:
+        logger.debug("preflight: rocm-smi node discovery failed", exc_info=True)
+        return []
+    gpus: list[GPUInfo] = []
+    for i, card in enumerate(sorted(data, key=_card_sort_key)):
+        info = data[card]
+        try:
+            total = int(info["VRAM Total Memory (B)"])
+            used = int(info["VRAM Total Used Memory (B)"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        name = info.get("Card series") or info.get("Card model") or card
+        gpus.append(GPUInfo(index=i, available_bytes=max(0, total - used), name=str(name), uuid=None, kind="rocm"))
+    return gpus
 
 
 # Conservative fraction of total RAM assumed usable by Metal when the

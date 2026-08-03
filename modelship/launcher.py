@@ -11,12 +11,12 @@ import platform
 import stat
 import sys
 
+from modelship.deploy.capabilities import LOADER_MODULES
 from modelship.utils import download, extract_tar, verify_sha256
 from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.cache import resolve_cache_root
 
 _REQUIRED_PYTHON = (3, 12, 10)
-_LOADER_MODULES = {"vllm": "vllm", "diffusers": "diffusers", "stable_diffusion_cpp": "stable_diffusion_cpp"}
 
 _LLAMA_CPP_TAG = "b10200"
 _LLAMA_CPP_METAL_ASSET_URL = (
@@ -54,7 +54,8 @@ def _cmd_deploy(argv: list[str]) -> None:
     if detect_accelerator() == "metal":
         _provision_macos_llama_server()
 
-    _check_loader_capabilities(args.config)
+    if _is_own_head_deploy():
+        _check_loader_capabilities(args.config)
 
     from modelship.driver import main as driver_main
 
@@ -140,6 +141,15 @@ def _write_wrapper(wrapper_path: str, extract_dir: str) -> None:
     os.chmod(wrapper_path, os.stat(wrapper_path).st_mode | stat.S_IEXEC)
 
 
+def _is_own_head_deploy() -> bool:
+    """True only when this driver IS the node the model will run on (no --address
+    join, no --use-existing-ray-cluster) — the only topology where this local
+    module-presence check is meaningful."""
+    if os.environ.get("MSHIP_ADDRESS"):
+        return False
+    return os.environ.get("MSHIP_USE_EXISTING_RAY_CLUSTER", "false").lower() != "true"
+
+
 def _check_loader_capabilities(config_path: str | None) -> None:
     if not config_path or not os.path.isfile(config_path):
         return
@@ -149,7 +159,7 @@ def _check_loader_capabilities(config_path: str | None) -> None:
         raw = yaml.safe_load(f) or {}
     loaders = {str(m.get("loader")) for m in raw.get("models", []) if isinstance(m, dict) and m.get("loader")}
     for loader in loaders:
-        module = _LOADER_MODULES.get(loader)
+        module = LOADER_MODULES.get(loader)
         if module and importlib.util.find_spec(module) is None:
             print(
                 f"error: models.yaml uses loader: {loader}, but '{module}' isn't installed in this "

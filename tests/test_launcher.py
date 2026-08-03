@@ -69,6 +69,29 @@ class TestCheckLoaderCapabilities:
         assert exc.value.code == 1
 
 
+class TestIsOwnHeadDeploy:
+    """The driver-local capability gate is only meaningful when this process IS
+    the node the model will run on — the join and existing-cluster paths hand
+    scheduling to Ray's own capability resources instead (see
+    modelship/deploy/capabilities.py)."""
+
+    def test_bare_own_head_returns_true(self):
+        with patch.dict(os.environ, {}, clear=True):
+            assert launcher._is_own_head_deploy() is True
+
+    def test_address_set_returns_false(self):
+        with patch.dict(os.environ, {"MSHIP_ADDRESS": "10.0.0.1:6380"}, clear=True):
+            assert launcher._is_own_head_deploy() is False
+
+    def test_use_existing_ray_cluster_true_returns_false(self):
+        with patch.dict(os.environ, {"MSHIP_USE_EXISTING_RAY_CLUSTER": "true"}, clear=True):
+            assert launcher._is_own_head_deploy() is False
+
+    def test_use_existing_ray_cluster_false_returns_true(self):
+        with patch.dict(os.environ, {"MSHIP_USE_EXISTING_RAY_CLUSTER": "false"}, clear=True):
+            assert launcher._is_own_head_deploy() is True
+
+
 class TestProvisionMacosLlamaServer:
     def test_short_circuits_when_env_set(self):
         with patch.dict(os.environ, {"MSHIP_LLAMA_SERVER_BIN": "/existing/bin"}, clear=True):
@@ -185,6 +208,44 @@ class TestCmdDeploy:
         ):
             launcher._cmd_deploy([])
         mock_provision.assert_not_called()
+
+    def test_gate_skipped_on_address_join(self):
+        argv = ["--address", "10.0.0.1:6380", "--node-num-gpus", "0"]
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
+            patch.object(launcher, "detect_accelerator", return_value="cpu"),
+            patch.object(launcher, "_check_loader_capabilities") as mock_gate,
+            patch.object(launcher, "_guard_python_version"),
+            patch("modelship.driver.main"),
+        ):
+            launcher._cmd_deploy(argv)
+        mock_gate.assert_not_called()
+
+    def test_gate_skipped_on_use_existing_ray_cluster(self):
+        argv = ["--use-existing-ray-cluster"]
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
+            patch.object(launcher, "detect_accelerator", return_value="cpu"),
+            patch.object(launcher, "_check_loader_capabilities") as mock_gate,
+            patch.object(launcher, "_guard_python_version"),
+            patch("modelship.driver.main"),
+        ):
+            launcher._cmd_deploy(argv)
+        mock_gate.assert_not_called()
+
+    def test_gate_runs_on_own_head(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
+            patch.object(launcher, "detect_accelerator", return_value="cpu"),
+            patch.object(launcher, "_check_loader_capabilities") as mock_gate,
+            patch.object(launcher, "_guard_python_version"),
+            patch("modelship.driver.main"),
+        ):
+            launcher._cmd_deploy([])
+        mock_gate.assert_called_once()
 
     def test_driver_not_imported_when_guard_exits(self):
         with (

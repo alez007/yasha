@@ -18,11 +18,13 @@ from ray.serve.config import HTTPOptions, ProxyLocation
 from ray.serve.schema import LoggingConfig
 
 from modelship.deploy.actor_options import build_passthrough_env_vars
+from modelship.deploy.capabilities import node_capability_resources
 from modelship.infer.infer_config import ModelshipConfig
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_available_ram_bytes, detect_gpus
 from modelship.utils import parse_memory_bytes, rand_suffix
+from modelship.utils.accelerator import detect_accelerator
 
 if TYPE_CHECKING:
     from ray._private.node import Node
@@ -125,22 +127,35 @@ def _resolve_node_memory_kwargs() -> dict[str, int]:
     return {"memory": total_bytes - object_store_memory, "object_store_memory": object_store_memory}
 
 
+def _resolve_node_num_gpus() -> int | None:
+    """GPU count for this node (own-head and join paths alike). Explicit
+    MSHIP_NODE_NUM_GPUS always wins; else metal -> 1 (no Ray Apple plugin), cpu ->
+    0 (closes the cpu-image-with-`--gpus` hole), else None so Ray autodetects the
+    real device count instead of pinning multi-GPU boxes to 1."""
+    if gpus := os.environ.get("MSHIP_NODE_NUM_GPUS"):
+        return int(gpus)
+    accelerator = detect_accelerator()
+    if accelerator == "metal":
+        return 1
+    if accelerator == "cpu":
+        return 0
+    return None
+
+
 def _own_cluster_init_kwargs() -> dict[str, object]:
     """ray.init kwargs to start our own head. Resources auto-detect when
     MSHIP_NODE_NUM_*/MSHIP_NODE_MEMORY are unset."""
     kwargs: dict[str, object] = {
         "include_dashboard": True,
         "dashboard_host": os.environ.get("MSHIP_RAY_DASHBOARD", "127.0.0.1"),
+        "resources": node_capability_resources(),
     }
     if dashboard_port := os.environ.get("MSHIP_RAY_DASHBOARD_PORT"):
         kwargs["dashboard_port"] = int(dashboard_port)
     if cpus := os.environ.get("MSHIP_NODE_NUM_CPUS"):
         kwargs["num_cpus"] = int(cpus)
-    if gpus := os.environ.get("MSHIP_NODE_NUM_GPUS"):
-        kwargs["num_gpus"] = int(gpus)
-    elif detect_gpus():
-        # Ray has no Apple accelerator plugin; advertise Metal as one ordinary GPU unit.
-        kwargs["num_gpus"] = 1
+    if (num_gpus := _resolve_node_num_gpus()) is not None:
+        kwargs["num_gpus"] = num_gpus
     if node_memory := _resolve_node_memory_kwargs():
         kwargs["_memory"] = node_memory["memory"]
         kwargs["object_store_memory"] = node_memory["object_store_memory"]
@@ -238,14 +253,7 @@ def _join_ray_cluster(address: str) -> Node:
         raise RuntimeError(f"Could not resolve the Ray head address {address!r} to join.")
 
     cpus = os.environ.get("MSHIP_NODE_NUM_CPUS")
-    gpus = os.environ.get("MSHIP_NODE_NUM_GPUS")
-    if gpus is not None:
-        num_gpus: int | None = int(gpus)
-    elif detect_gpus():
-        # Same Metal auto-advertise as _own_cluster_init_kwargs.
-        num_gpus = 1
-    else:
-        num_gpus = None
+    num_gpus = _resolve_node_num_gpus()
     node_memory = _resolve_node_memory_kwargs()
     # Unlike the head, a joining node never needs a fixed metrics port: nothing external
     # targets it directly, and the head's PrometheusServiceDiscoveryWriter already picks up
@@ -260,6 +268,7 @@ def _join_ray_cluster(address: str) -> Node:
         memory=node_memory.get("memory"),
         object_store_memory=node_memory.get("object_store_memory"),
         metrics_export_port=None,
+        resources=node_capability_resources(),
     )
 
     # Fail early and clearly if auth is on but no token is available locally,
