@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""CI check: every loader in modelship.deploy.capabilities.LOADER_MODULES must also
-appear in the Helm chart's cuda-variant capability table (helm/modelship/templates/
+"""CI check: every loader in modelship.deploy.capabilities.ALL_CAPABILITY_LOADERS must
+also appear in the Helm chart's cuda-variant capability table (helm/modelship/templates/
 _helpers.tpl's modelship.capabilityResources). The two tables are maintained by hand
 in lockstep (the chart can't probe like the Python side does); this catches a new
 loader added to one and forgotten in the other.
@@ -18,7 +18,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from modelship.deploy.capabilities import LOADER_MODULES, RESOURCE_PREFIX
+from modelship.deploy.capabilities import ALL_CAPABILITY_LOADERS, RESOURCE_PREFIX
 
 _CHART_DIR = Path(__file__).resolve().parent.parent / "helm" / "modelship"
 
@@ -63,16 +63,17 @@ def _rendered_cuda_resources() -> dict[str, float]:
 def main() -> None:
     rendered = _rendered_cuda_resources()
     rendered_loaders = {name.removeprefix(RESOURCE_PREFIX) for name in rendered}
-    missing = set(LOADER_MODULES) - rendered_loaders
+    missing = set(ALL_CAPABILITY_LOADERS) - rendered_loaders
     if missing:
         print(
-            f"error: loader(s) {sorted(missing)} are in modelship.deploy.capabilities.LOADER_MODULES "
-            "but missing from the Helm chart's cuda capability table "
-            "(helm/modelship/templates/_helpers.tpl's modelship.capabilityResources). Add them there too.",
+            f"error: loader(s) {sorted(missing)} are in "
+            "modelship.deploy.capabilities.ALL_CAPABILITY_LOADERS but missing from the Helm chart's "
+            "cuda capability table (helm/modelship/templates/_helpers.tpl's modelship.capabilityResources). "
+            "Add them there too.",
             file=sys.stderr,
         )
         sys.exit(1)
-    print(f"OK: {sorted(LOADER_MODULES)} all present in the chart's cuda capability table.")
+    print(f"OK: {sorted(ALL_CAPABILITY_LOADERS)} all present in the chart's cuda capability table.")
 
 
 if __name__ == "__main__":

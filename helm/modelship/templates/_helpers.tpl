@@ -160,7 +160,7 @@ env at all) when disabled, matching Ray's own unauthenticated-by-default posture
 
 {{/*
 Capability resources for an image variant — mirrors modelship/deploy/capabilities.py's
-LOADER_MODULES (kept in lockstep by a CI check comparing this against that table).
+ALL_CAPABILITY_LOADERS (kept in lockstep by a CI check comparing this against that table).
 The chart can't probe like the Python side does (KubeRay starts the raylet, so no
 modelship code runs first); it doesn't need to, since the variant already determines
 what's installed. Call with a variant string, e.g. (include "modelship.capabilityResources" "cuda").

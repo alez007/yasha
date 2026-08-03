@@ -206,6 +206,31 @@ class TestRocmSmiDiscovery:
         ):
             assert preflight_base._rocm_smi_node_discover() == []
 
+    def test_orders_cards_numerically_not_lexicographically(self):
+        from modelship.preflight import base as preflight_base
+
+        def card(n):
+            return {
+                f"card{n}": {
+                    "Card series": f"MI300X-{n}",
+                    "VRAM Total Memory (B)": "1000",
+                    "VRAM Total Used Memory (B)": "0",
+                }
+            }
+
+        payload = {}
+        for n in (0, 1, 2, 10):
+            payload.update(card(n))
+        mock_result = SimpleNamespace(stdout=json.dumps(payload))
+        with (
+            patch("shutil.which", return_value="/opt/rocm/bin/rocm-smi"),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            gpus = preflight_base._rocm_smi_node_discover()
+
+        assert [gpu.name for gpu in gpus] == ["MI300X-0", "MI300X-1", "MI300X-2", "MI300X-10"]
+        assert [gpu.index for gpu in gpus] == [0, 1, 2, 3]
+
 
 class TestAppleMetalDiscovery:
     """_apple_metal_discover() — darwin+arm64 only, torch.mps preferred over the

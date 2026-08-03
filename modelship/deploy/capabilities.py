@@ -30,6 +30,10 @@ LOADER_MODULES = {
 
 _LLAMA_SERVER_LOADER = "llama_server"
 
+# Every loader that gets a capability resource, including llama_server (probed via a
+# binary check below, not find_spec like the LOADER_MODULES entries).
+ALL_CAPABILITY_LOADERS = frozenset({*LOADER_MODULES, _LLAMA_SERVER_LOADER})
+
 # Matches a wrapper script's `exec "<target>" ...` line (see Dockerfile's
 # llama-server.sh and launcher._write_wrapper).
 _WRAPPER_EXEC_RE = re.compile(r'exec\s+"([^"]+)"')

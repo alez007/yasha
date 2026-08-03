@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -346,6 +347,13 @@ def _pynvml_node_discover() -> list[GPUInfo]:
             pynvml.nvmlShutdown()
 
 
+def _card_sort_key(card: str) -> tuple[int, int | str]:
+    """Sorts rocm-smi's "card0".."card10" keys numerically, not lexicographically
+    (plain string sort would put "card10" before "card2")."""
+    match = re.search(r"\d+$", card)
+    return (0, int(match.group())) if match else (1, card)
+
+
 def _rocm_smi_node_discover() -> list[GPUInfo]:
     """AMD GPUs via `rocm-smi --json`, for a torch-less process (pynvml above is
     NVIDIA-only). Best-effort: any failure returns []."""
@@ -369,7 +377,7 @@ def _rocm_smi_node_discover() -> list[GPUInfo]:
         logger.debug("preflight: rocm-smi node discovery failed", exc_info=True)
         return []
     gpus: list[GPUInfo] = []
-    for i, card in enumerate(sorted(data)):
+    for i, card in enumerate(sorted(data, key=_card_sort_key)):
         info = data[card]
         try:
             total = int(info["VRAM Total Memory (B)"])
