@@ -101,7 +101,7 @@ def _resolve_app_level(level_name: str) -> int:
 
 
 def compute_lib_level(app_level: int) -> tuple[int, str]:
-    """Libraries mirror the app level at DEBUG or below; fully silent otherwise."""
+    """Silent above DEBUG; at DEBUG or TRACE, floor at DEBUG — no library defines lower."""
     if app_level <= logging.DEBUG:
         return logging.DEBUG, "DEBUG"
     return _LIB_SILENT_LEVEL, "CRITICAL"  # name must be one library env vars recognize
