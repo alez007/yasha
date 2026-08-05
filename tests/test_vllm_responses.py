@@ -31,6 +31,7 @@ class _FakeRawRequest:
 
     request_id = "req-1"
     is_watchable = False
+    identity = None
 
     async def is_disconnected(self) -> bool:
         return False

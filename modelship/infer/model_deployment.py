@@ -269,7 +269,7 @@ class ModelDeployment:
     ):
         self._set_request_id(request_id)
         self._set_identity(identity)
-        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id)
+        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id, identity)
         start = time.monotonic()
         result = await self.infer.create_chat_completion(request, proxy)
         if isinstance(result, AsyncGenerator):
@@ -296,7 +296,7 @@ class ModelDeployment:
     ):
         self._set_request_id(request_id)
         self._set_identity(identity)
-        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id)
+        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id, identity)
         start = time.monotonic()
         result = await self.infer.create_response(request, proxy, response_id=response_id)
         if isinstance(result, AsyncGenerator):
@@ -319,7 +319,7 @@ class ModelDeployment:
     ):
         self._set_request_id(request_id)
         self._set_identity(identity)
-        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id)
+        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id, identity)
         start = time.monotonic()
         result = await self.infer.create_embedding(request, proxy)
         EMBEDDING_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
@@ -340,7 +340,7 @@ class ModelDeployment:
     ):
         self._set_request_id(request_id)
         self._set_identity(identity)
-        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id)
+        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id, identity)
         start = time.monotonic()
         result = await self.infer.create_transcription(audio_data, request, proxy)
         TRANSCRIPTION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
@@ -361,7 +361,7 @@ class ModelDeployment:
     ):
         self._set_request_id(request_id)
         self._set_identity(identity)
-        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id)
+        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id, identity)
         start = time.monotonic()
         result = await self.infer.create_translation(audio_data, request, proxy)
         TRANSCRIPTION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
@@ -381,7 +381,7 @@ class ModelDeployment:
     ):
         self._set_request_id(request_id)
         self._set_identity(identity)
-        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id)
+        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id, identity)
         start = time.monotonic()
         result = await self.infer.create_speech(request, proxy)
         TTS_GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
@@ -401,7 +401,7 @@ class ModelDeployment:
     ):
         self._set_request_id(request_id)
         self._set_identity(identity)
-        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id)
+        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id, identity)
         start = time.monotonic()
         result = await self.infer.create_image_generation(request, proxy)
         IMAGE_GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
@@ -423,7 +423,7 @@ class ModelDeployment:
     ):
         self._set_request_id(request_id)
         self._set_identity(identity)
-        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id)
+        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id, identity)
         start = time.monotonic()
         result = await self.infer.create_image_edit(image_data, mask_data, request, proxy)
         IMAGE_GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
@@ -444,7 +444,7 @@ class ModelDeployment:
     ):
         self._set_request_id(request_id)
         self._set_identity(identity)
-        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id)
+        proxy = RawRequestProxy(disconnect_registry, request_headers, request_id, identity)
         start = time.monotonic()
         result = await self.infer.create_image_variation(image_data, request, proxy)
         IMAGE_GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})

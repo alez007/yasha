@@ -2,6 +2,7 @@
 infrastructure (`mship_cluster`, `model_deployer`, `client`, `MODEL_CONFIGS`), so
 every `@pytest.mark.integration` file shares one live cluster per session."""
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -329,6 +330,12 @@ def mship_cluster(tmp_path_factory):
             "--prune-ray-sessions",
             "false",
         ],
+        # Non-blocking: a request without this header just falls through to the
+        # next identity-resolution tier (unchanged behavior for every existing
+        # test), so enabling it session-wide is safe. Lets tests simulate distinct
+        # callers via `extra_headers={"X-Mship-Test-Identity": "..."}` without
+        # needing real API-key auth (which would 401 every unauthenticated test).
+        env={**os.environ, "MSHIP_TRUSTED_IDENTITY_HEADER": "X-Mship-Test-Identity"},
         stdout=log_file,
         stderr=subprocess.STDOUT,
         text=True,

@@ -65,6 +65,19 @@ class TestBuildVllmRequest:
         vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None)
         assert vllm_req.chat_template_kwargs == {"a": 1}
 
+    def test_cache_salt_set_from_identity(self):
+        # Scopes vLLM's prefix-cache reuse to the caller's identity — a different
+        # identity must never share cached KV blocks (see architecture.md's
+        # "Identity-scoped vLLM prefix caching").
+        request = ChatCompletionRequest.model_validate({"model": "m", "messages": [{"role": "user", "content": "hi"}]})
+        vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None, cache_salt="identity-a")
+        assert vllm_req.cache_salt == "identity-a"
+
+    def test_no_cache_salt_leaves_it_unset(self):
+        request = ChatCompletionRequest.model_validate({"model": "m", "messages": [{"role": "user", "content": "hi"}]})
+        vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None)
+        assert vllm_req.cache_salt is None
+
 
 class TestDeriveReasoningEnded:
     def test_include_reasoning_false_forces_true(self):

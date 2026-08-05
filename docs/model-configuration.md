@@ -196,6 +196,7 @@ The `vllm` loader supports chat/generation, embeddings, transcription, and trans
 | `tool_call_parser` | string | — | Tool call parser (e.g. `llama3_json`, `hermes`) |
 | `enforce_eager` | bool | — | Disable CUDA graph capture |
 | `kv_cache_dtype` | string | — | KV cache dtype (e.g. `fp8`) |
+| `enable_prefix_caching` | bool | — (vLLM's own default: on) | Disable to turn off vLLM's automatic prefix caching entirely. Not usually needed — every request is already cache-salted per caller identity (see [Identity-scoped prefix caching](architecture.md#identity-scoped-vllm-prefix-caching)), so this is only for an operator who wants caching off regardless of identity. |
 
 > **GGUF is not supported on the `vllm` loader.** vLLM 0.24 dropped in-tree GGUF, so
 > pointing the vllm loader at a `.gguf` is rejected at startup. Use `loader: llama_server`

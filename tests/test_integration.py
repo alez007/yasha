@@ -333,6 +333,50 @@ class TestChatCapable:
 
 @pytest.mark.integration
 @pytest.mark.vllm
+class TestIdentityScopedPrefixCache:
+    """vLLM's automatic prefix caching must be scoped per caller identity (see
+    architecture.md's "Identity-scoped vLLM prefix caching") — otherwise a
+    caller's TTFT leaks whether another identity recently sent the same
+    prefix. `cache_salt` (build from `RawRequestProxy.identity`) is what
+    closes that: same identity repeating a prompt should get a real cache
+    hit; a different identity sending the identical prompt should not,
+    despite sharing byte-identical content. `usage.prompt_tokens_details.cached_tokens`
+    (vLLM's own `RequestOutput.num_cached_tokens`, now threaded through) gives
+    a deterministic signal instead of a flaky TTFT timing measurement.
+    Distinguishing identities relies on `MSHIP_TRUSTED_IDENTITY_HEADER` being
+    set on the shared cluster (see `mship_cluster` in conftest.py) — a header
+    that every other integration test simply never sends, so this doesn't
+    affect them."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        model_deployer.deploy("chat-capable")
+
+    # Long enough to span multiple vLLM KV-cache blocks (block_size defaults to
+    # 16 tokens) so a real cache hit is unambiguous, not a rounding artifact.
+    _PROMPT = "Summarize in one word: " + "Ray Serve is a scalable model serving library built on Ray. " * 8
+
+    def test_prefix_cache_hit_scoped_to_identity(self, client):
+        def _cached_tokens(identity: str) -> int:
+            completion = client.chat.completions.create(
+                model="chat-capable",
+                messages=[{"role": "user", "content": self._PROMPT}],
+                max_tokens=8,
+                extra_headers={"X-Mship-Test-Identity": identity},
+            )
+            details = completion.usage.prompt_tokens_details
+            return details.cached_tokens if details and details.cached_tokens else 0
+
+        _cached_tokens("cache-test-identity-a")  # cold — populates identity A's own cache entry
+        assert _cached_tokens("cache-test-identity-a") > 0, "same identity repeating a prompt should hit the cache"
+        assert _cached_tokens("cache-test-identity-b") == 0, (
+            "a different identity sending an identical prompt must never see a cache hit "
+            "from identity A's entry — that would be the cross-identity timing leak"
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.vllm
 class TestChatReasoning:
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
