@@ -38,6 +38,8 @@ def _reset_logging():
     root.setLevel(logging.WARNING)
     root.propagate = True
     saved_lib_levels = {name: logging.getLogger(name).level for name in _LIB_LOGGERS}
+    saved_lib_handlers = {name: list(logging.getLogger(name).handlers) for name in _LIB_LOGGERS}
+    saved_lib_propagate = {name: logging.getLogger(name).propagate for name in _LIB_LOGGERS}
     saved_env = {k: os.environ.get(k) for k in _LIB_ENV_VARS}
     # Clear so each test exercises a clean setdefault path. Importing mship_deploy.py
     # in another test runs propagate_lib_log_env() and pollutes os.environ for
@@ -54,7 +56,10 @@ def _reset_logging():
     yl._configured = False
     root.handlers.clear()
     for name, lvl in saved_lib_levels.items():
-        logging.getLogger(name).setLevel(lvl)
+        lib_logger = logging.getLogger(name)
+        lib_logger.setLevel(lvl)
+        lib_logger.handlers = saved_lib_handlers[name]
+        lib_logger.propagate = saved_lib_propagate[name]
     for k, v in saved_env.items():
         if v is None:
             os.environ.pop(k, None)
@@ -92,20 +97,41 @@ class TestConfigureLogging:
         root = logging.getLogger("modelship")
         assert root.level == logging.DEBUG
 
-    def test_lib_loggers_default_to_warning(self):
+    def test_lib_loggers_silent_by_default(self):
+        from modelship.logging import _LIB_SILENT_LEVEL
+
         configure_logging()
         for name in _LIB_LOGGERS:
-            assert logging.getLogger(name).level == logging.WARNING
+            assert logging.getLogger(name).level == _LIB_SILENT_LEVEL
         for env_var, lib_name in _LIB_ENV_VARS.items():
-            expected = "warning" if lib_name in _LOWERCASE_LEVEL_LIBS else "WARNING"
+            expected = "critical" if lib_name in _LOWERCASE_LEVEL_LIBS else "CRITICAL"
             assert os.environ.get(env_var) == expected
 
     @patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "DEBUG"})
-    def test_lib_loggers_info_at_debug(self):
+    def test_lib_loggers_mirror_debug(self):
         configure_logging()
         assert logging.getLogger("modelship").level == logging.DEBUG
         for name in _LIB_LOGGERS:
-            assert logging.getLogger(name).level == logging.INFO
+            assert logging.getLogger(name).level == logging.DEBUG
+
+    def test_lib_loggers_get_modelship_handler(self):
+        # Also covers the double-print risk: a pre-existing handler (e.g. Ray's
+        # own, attached at import time) must be cleared, not just appended to.
+        stray = logging.StreamHandler()
+        logging.getLogger("ray").addHandler(stray)
+
+        configure_logging()
+        root_formatter = logging.getLogger("modelship").handlers[0].formatter
+        for name in _LIB_LOGGERS:
+            lib_logger = logging.getLogger(name)
+            assert len(lib_logger.handlers) == 1
+            # Formatter is shared, but the handler instance must NOT be — code
+            # like ray.init(logging_level=...) mutates whatever handler it finds
+            # on "ray" in place, which would corrupt modelship's own formatting
+            # too if the object were shared rather than just the formatter.
+            assert lib_logger.handlers[0] is not logging.getLogger("modelship").handlers[0]
+            assert lib_logger.handlers[0].formatter is root_formatter
+            assert lib_logger.propagate is False
 
     @patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "TRACE"})
     def test_trace_mode_sets_trace_app_debug_libs(self):

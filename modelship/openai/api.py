@@ -91,6 +91,9 @@ class PayloadSizeLimitMiddleware(BaseHTTPMiddleware):
 
 
 def build_app():
+    # Runs at import time in both the driver process (binding the deployment) and
+    # each replica process — before ModelshipAPI.__init__'s configure_logging() call
+    # — so it must stay logging-free; ModelshipAPI.__init__ logs the outcome below instead.
     app = FastAPI()
     app.add_middleware(
         CORSMiddleware,
@@ -102,14 +105,10 @@ def build_app():
 
     max_body_bytes = int(os.environ.get("MSHIP_MAX_REQUEST_BODY_BYTES", _DEFAULT_MAX_BODY_BYTES))
     app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=max_body_bytes)
-    logger.info("Payload size limit: %d bytes", max_body_bytes)
 
     api_keys = get_api_keys()
     if api_keys:
         app.add_middleware(ApiKeyMiddleware, api_keys=api_keys)
-        logger.info("API key authentication enabled (%d key(s))", len(api_keys))
-    else:
-        logger.warning("API key authentication disabled (MSHIP_API_KEYS not set)")
 
     @app.exception_handler(RequestValidationError)
     async def log_validation_error(request: Request, exc: RequestValidationError):
@@ -183,6 +182,13 @@ class ModelshipAPI:
         # Set up modelship-formatted application loggers at the driver's level;
         # MSHIP_LOG_* are forwarded to this replica via runtime_env (see serve_utils).
         configure_logging()
+        max_body_bytes = int(os.environ.get("MSHIP_MAX_REQUEST_BODY_BYTES", _DEFAULT_MAX_BODY_BYTES))
+        logger.info("Payload size limit: %d bytes", max_body_bytes)
+        api_keys = get_api_keys()
+        if api_keys:
+            logger.info("API key authentication enabled (%d key(s))", len(api_keys))
+        else:
+            logger.warning("API key authentication disabled (MSHIP_API_KEYS not set)")
         # model_name -> (app_name -> handle). The inner dict is keyed by app_name
         # so a specific deployment can be dropped by name in remove_deployments.
         self.models: dict[str, dict[str, DeploymentHandle]] = {}
