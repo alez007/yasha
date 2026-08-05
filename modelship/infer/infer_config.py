@@ -82,10 +82,8 @@ class VllmEngineConfig(BaseModel):
     reasoning_parser: str | None = None
     chat_template_content_format: ChatTemplateContentFormatOption = "auto"
     enforce_eager: bool | None = None
-    # None -> inherit vLLM's own default (prefix caching on). Per-identity requests
-    # are already cache-salted (see build_vllm_request/cache_salt) so cross-identity
-    # sharing is closed by default; this is an operator escape hatch to disable
-    # prefix caching entirely regardless of identity scoping.
+    # None -> inherit vLLM's own default (prefix caching on). Escape hatch to
+    # disable it entirely, independent of the per-identity cache_salt below.
     enable_prefix_caching: bool | None = None
     max_num_batched_tokens: int | None = None
     max_num_seqs: int | None = None

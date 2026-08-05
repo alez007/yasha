@@ -65,10 +65,7 @@ def build_vllm_request(
     value (request wins) — vLLM renders the chat template internally, so
     unlike llama.cpp-family loaders this can't be patched in after the fact.
 
-    `cache_salt` scopes vLLM's automatic prefix-cache reuse to the caller's own
-    identity (see RawRequestProxy.identity) — without it, KV-cache hits are
-    shared across every identity on the engine, letting one identity infer
-    another's recent prompts via TTFT timing.
+    `cache_salt` scopes vLLM's prefix-cache reuse to the caller's identity.
     """
     request_data = request.model_dump()
     if chat_template_kwargs:

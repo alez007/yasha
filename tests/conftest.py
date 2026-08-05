@@ -330,11 +330,8 @@ def mship_cluster(tmp_path_factory):
             "--prune-ray-sessions",
             "false",
         ],
-        # Non-blocking: a request without this header just falls through to the
-        # next identity-resolution tier (unchanged behavior for every existing
-        # test), so enabling it session-wide is safe. Lets tests simulate distinct
-        # callers via `extra_headers={"X-Mship-Test-Identity": "..."}` without
-        # needing real API-key auth (which would 401 every unauthenticated test).
+        # Non-blocking if absent, so safe to enable session-wide; lets tests
+        # simulate distinct identities via extra_headers.
         env={**os.environ, "MSHIP_TRUSTED_IDENTITY_HEADER": "X-Mship-Test-Identity"},
         stdout=log_file,
         stderr=subprocess.STDOUT,
