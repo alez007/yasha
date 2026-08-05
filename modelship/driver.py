@@ -215,7 +215,7 @@ def main(argv: list[str] | None = None) -> None:
         input_raw = load_raw_models(args.config)
         desired_raw = merge(effective_raw, input_raw, gateway_name, mode)
     yml_conf = to_config(desired_raw)
-    logger.info("Deploying effective config (%s mode, %d model(s)): %s", mode, len(desired_raw), yml_conf)
+    logger.debug("Deploying effective config (%s mode, %d model(s)): %s", mode, len(desired_raw), yml_conf)
 
     plugin_wheels = resolve_all_plugin_wheels(yml_conf)
 

@@ -91,7 +91,8 @@ _LIB_ENV_VARS = {
 # logging-module names.
 _LOWERCASE_LEVEL_LIBS = frozenset({"transformers", "diffusers", "huggingface_hub"})
 
-_LEVELS = [TRACE, logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL]
+# Above CRITICAL — effectively off, until the app drops to DEBUG/TRACE.
+_LIB_SILENT_LEVEL = logging.CRITICAL + 10
 
 
 def _resolve_app_level(level_name: str) -> int:
@@ -100,9 +101,10 @@ def _resolve_app_level(level_name: str) -> int:
 
 
 def compute_lib_level(app_level: int) -> tuple[int, str]:
-    """Library log level is one step above the app level (with CRITICAL as ceiling)."""
-    lib_level = next((lv for lv in _LEVELS if lv > app_level), logging.CRITICAL)
-    return lib_level, logging.getLevelName(lib_level)
+    """Libraries mirror the app level at DEBUG or below; fully silent otherwise."""
+    if app_level <= logging.DEBUG:
+        return logging.DEBUG, "DEBUG"
+    return _LIB_SILENT_LEVEL, "CRITICAL"  # name must be one library env vars recognize
 
 
 def get_lib_log_config() -> tuple[int, str]:
@@ -129,6 +131,10 @@ def propagate_lib_log_env(level_name: str | None = None) -> None:
     # We own vLLM's level via setLevel + VLLM_LOGGING_LEVEL, so its dictConfig is pure
     # downside. setdefault so an explicit user value wins.
     os.environ.setdefault("VLLM_CONFIGURE_LOGGING", "0")
+
+    # tqdm disables per-file byte progress bars by default when not a real TTY
+    # (true for every modelship process). This forces them on.
+    os.environ.setdefault("TQDM_POSITION", "-1")
 
 
 def _parse_syslog_target(target: str) -> SysLogHandler:
@@ -184,11 +190,20 @@ def configure_logging() -> None:
     if otel_endpoint:
         _setup_otel(root_logger, otel_endpoint, app_level)
 
-    # Set library log levels via both the Python logger (immediate effect) and
-    # the library's native env var (so the level sticks when the library
-    # re-configures its own loggers later, e.g. vLLM's init_logger).
+    # Give libraries modelship's formatter, each via its own handler instance —
+    # not modelship's own handler object, which e.g. ray.init(logging_level=...)
+    # reaches into and mutates in place, corrupting modelship's own formatting too
+    # since Handler objects are shared by reference, not copied.
     for name in _LIB_LOGGERS:
-        logging.getLogger(name).setLevel(lib_level)
+        lib_logger = logging.getLogger(name)
+        lib_logger.handlers.clear()
+        lib_logger.propagate = False
+        lib_logger.setLevel(lib_level)
+        lib_handler = _parse_syslog_target(log_target) if log_target.startswith("syslog") else logging.StreamHandler()
+        lib_handler.setLevel(lib_level)
+        lib_handler.setFormatter(handler.formatter)
+        lib_handler.addFilter(RequestContextFilter())
+        lib_logger.addHandler(lib_handler)
     propagate_lib_log_env(level_name)
 
 

@@ -21,7 +21,7 @@ import contextlib
 import ray
 
 from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE
-from modelship.logging import get_logger
+from modelship.logging import configure_logging, get_logger
 from modelship.metrics import COORDINATOR_GENERATION
 from modelship.state import MemoryStateStore, get_state_store
 
@@ -42,6 +42,10 @@ class ReplicaCoordinator:
     """Durable per-gateway routing registry with long-poll change notification."""
 
     def __init__(self):
+        # MSHIP_LOG_* rides along via the actor's runtime_env (see serve_utils) — this
+        # actor never otherwise runs configure_logging(), so without this its own
+        # logger falls back to Python's bare, unprefixed lastResort handler.
+        configure_logging()
         # Durable ownership registry: gateway_name -> {deployment_name -> model_name}.
         # The driver writes it on (un)deploy; gateway replicas reconcile their
         # routing tables from it (see get_routing / wait_for_change), so the driver
