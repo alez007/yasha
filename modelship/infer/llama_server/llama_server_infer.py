@@ -113,8 +113,12 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         self._log_lock = threading.Lock()
         self._recent_log_lines: deque[str] = deque(maxlen=_RECENT_LOG_LINES)
         self._log_threads: list[threading.Thread] = []
+        # True during our own shutdown()/retry teardown, so _watch_process can
+        # tell an intentional kill from a real crash.
+        self._shutting_down = False
 
     def shutdown(self) -> None:
+        self._shutting_down = True
         if self._proc is not None:
             if self._proc.poll() is None:
                 logger.info("Shutting down llama-server for %s", self.model_config.name)
@@ -204,12 +208,26 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             raise
 
         assert self._port is not None
+        assert self._proc is not None
+        # A prior retry's shutdown() (see the _EarlyCrashError branch above) may
+        # have left this set — this is the process we're actually keeping, so
+        # arm the watcher fresh rather than inheriting a stale "don't crash" flag.
+        self._shutting_down = False
+        threading.Thread(target=self._watch_process, args=(self._proc,), daemon=True).start()
         self._client = httpx.AsyncClient(
             base_url=f"http://127.0.0.1:{self._port}",
             headers={"Authorization": f"Bearer {self._api_key}"},
             timeout=httpx.Timeout(timeout=None, connect=10.0),
         )
         self._set_max_context_length(self.config.n_ctx)
+
+    def _watch_process(self, proc: subprocess.Popen) -> None:
+        """Crash the actor if the subprocess exits outside of our own shutdown()."""
+        rc = proc.wait()
+        if self._shutting_down:
+            return
+        logger.error("llama-server for '%s' exited unexpectedly (rc=%s) — exiting actor", self.model_config.name, rc)
+        os._exit(1)
 
     async def _launch(self, binary: str, model_path: str) -> None:
         loop = asyncio.get_running_loop()

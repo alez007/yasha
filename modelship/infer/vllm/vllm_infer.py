@@ -1,4 +1,6 @@
+import asyncio
 import io
+import os
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -360,6 +362,19 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         self.serving_embedding = await self.init_serving_embedding()
         self.serving_transcription = await self.init_serving_transcription()
         self.serving_translation = await self.init_serving_translation()
+
+        if self.engine.output_handler is not None:
+            self.engine.output_handler.add_done_callback(self._on_engine_output_handler_done)
+        else:
+            logger.warning("vllm engine for '%s' has no output_handler to watch for crashes", self.model_config.name)
+
+    def _on_engine_output_handler_done(self, task: asyncio.Task) -> None:
+        """shutdown() cancels output_handler intentionally, so a non-cancelled
+        completion here means the engine core died on its own."""
+        if task.cancelled():
+            return
+        logger.error("vllm engine core for '%s' died — exiting actor", self.model_config.name)
+        os._exit(1)
 
     async def warmup(self) -> None:
         logger.info("Warming up vllm model: %s", self.model_config.name)
