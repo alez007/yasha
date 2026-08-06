@@ -93,7 +93,7 @@ MODEL_CONFIGS: dict[str, dict] = {
         # target_ongoing_requests=1 makes a handful of concurrent requests
         # exceed one replica's setpoint and drive scale-out; the short delays
         # keep the test's poll windows tractable.
-        "model": "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf",
+        "model": "lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf",
         "usecase": "generate",
         "loader": "llama_server",
         "num_cpus": 1,

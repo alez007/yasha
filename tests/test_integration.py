@@ -1309,6 +1309,56 @@ class TestAutoscaling:
         assert settled == 1, f"expected scale-in to min_replicas=1 after load, saw {settled}"
 
 
+def _find_and_kill_vllm_engine_core(deadline_s: float = 30) -> int:
+    """SIGKILL the vLLM engine-core subprocess (titled `VLLM::EngineCore` via
+    setproctitle) and return its PID."""
+    import psutil
+
+    end = time.time() + deadline_s
+    while time.time() < end:
+        for proc in psutil.process_iter():
+            try:
+                cmdline = " ".join(proc.cmdline())
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            if "VLLM::EngineCore" in cmdline:
+                pid = proc.pid
+                proc.kill()
+                return pid
+        time.sleep(1)
+    pytest.fail("Could not find a vLLM EngineCore subprocess to kill within the deadline")
+
+
+@pytest.mark.integration
+@pytest.mark.vllm
+class TestVllmCrashRecovery:
+    """Kills the vLLM engine-core subprocess directly and verifies the replica recovers."""
+
+    MODEL = "chat-capable"
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        model_deployer.deploy(self.MODEL)
+
+    def test_recovers_after_engine_core_crash(self, client):
+        # Sanity: the deployment is actually serving before we kill anything.
+        client.chat.completions.create(model=self.MODEL, messages=_PING_PROMPT, max_tokens=4)
+
+        _find_and_kill_vllm_engine_core()
+
+        def _request_succeeds() -> bool:
+            try:
+                client.chat.completions.create(model=self.MODEL, messages=_PING_PROMPT, max_tokens=4, timeout=15)
+                return True
+            except Exception:
+                return False
+
+        recovered = _poll(_request_succeeds, deadline_s=90)
+        assert recovered, (
+            "expected the deployment to recover (replica respawn) after its engine core crashed; requests kept failing"
+        )
+
+
 def _model_in_all_samples(client: OpenAI, model: str, samples: int = 20) -> bool:
     """True iff `model` appears in /v1/models on EVERY sampled request. With the
     gateway load-balanced across replicas, a stale replica would omit it on some
