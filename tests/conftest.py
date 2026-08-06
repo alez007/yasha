@@ -2,6 +2,7 @@
 infrastructure (`mship_cluster`, `model_deployer`, `client`, `MODEL_CONFIGS`), so
 every `@pytest.mark.integration` file shares one live cluster per session."""
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -329,6 +330,9 @@ def mship_cluster(tmp_path_factory):
             "--prune-ray-sessions",
             "false",
         ],
+        # Non-blocking if absent, so safe to enable session-wide; lets tests
+        # simulate distinct identities via extra_headers.
+        env={**os.environ, "MSHIP_TRUSTED_IDENTITY_HEADER": "X-Mship-Test-Identity"},
         stdout=log_file,
         stderr=subprocess.STDOUT,
         text=True,

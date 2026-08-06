@@ -57,12 +57,15 @@ logger = get_logger("infer.vllm.engine_ops")
 def build_vllm_request(
     request: ChatCompletionRequest,
     chat_template_kwargs: dict[str, Any] | None,
+    cache_salt: str | None = None,
 ) -> VllmChatCompletionRequest:
     """Shape a modelship chat request into vLLM's own request model.
 
     Merges the model's default `chat_template_kwargs` under any per-request
     value (request wins) — vLLM renders the chat template internally, so
     unlike llama.cpp-family loaders this can't be patched in after the fact.
+
+    `cache_salt` scopes vLLM's prefix-cache reuse to the caller's identity.
     """
     request_data = request.model_dump()
     if chat_template_kwargs:
@@ -70,6 +73,8 @@ def build_vllm_request(
             **chat_template_kwargs,
             **(request_data.get("chat_template_kwargs") or {}),
         }
+    if cache_salt is not None:
+        request_data["cache_salt"] = cache_salt
     return VllmChatCompletionRequest(**request_data)
 
 

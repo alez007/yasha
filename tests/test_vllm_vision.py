@@ -117,7 +117,7 @@ async def test_image_part_rejected_on_text_only_model_with_400(monkeypatch: pyte
         ],
     )
 
-    result = await infer.create_chat_completion(request, raw_request=MagicMock())
+    result = await infer.create_chat_completion(request, raw_request=MagicMock(identity=None))
 
     assert isinstance(result, ErrorResponse)
     assert result._http_status == 400
@@ -139,7 +139,7 @@ async def test_text_only_request_reaches_streaming_path_on_vlm(monkeypatch: pyte
         stream=True,
     )
 
-    await infer.create_chat_completion(request, raw_request=MagicMock())
+    await infer.create_chat_completion(request, raw_request=MagicMock(identity=None))
 
     infer._create_chat_completion_stream.assert_called_once()
 
@@ -152,7 +152,7 @@ async def test_model_chat_template_kwargs_merged_into_vllm_request(monkeypatch: 
     infer.model_config.chat_template_kwargs = {"enable_thinking": False}
     request = ChatCompletionRequest(model="llm", messages=[{"role": "user", "content": "hi"}], stream=True)
 
-    await infer.create_chat_completion(request, raw_request=MagicMock())
+    await infer.create_chat_completion(request, raw_request=MagicMock(identity=None))
 
     prepared = infer._create_chat_completion_stream.call_args.args[1]
     assert prepared.vllm_request.chat_template_kwargs == {"enable_thinking": False}

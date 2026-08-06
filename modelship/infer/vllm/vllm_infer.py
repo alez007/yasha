@@ -81,6 +81,7 @@ from modelship.openai.protocol import (
     EmbeddingCompletionRequest,
     EmbeddingRequest,
     ErrorResponse,
+    PromptTokenUsageInfo,
     ResponseObject,
     ResponsesRequest,
     TranscriptionRequest,
@@ -310,6 +311,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             quantization=self.vllm_engine_kwargs.quantization,
             kv_cache_dtype=self.vllm_engine_kwargs.kv_cache_dtype or "auto",  # type: ignore[arg-type]
             enforce_eager=self.vllm_engine_kwargs.enforce_eager or False,
+            enable_prefix_caching=self.vllm_engine_kwargs.enable_prefix_caching,
             max_num_batched_tokens=self.vllm_engine_kwargs.max_num_batched_tokens,
             max_num_seqs=self.vllm_engine_kwargs.max_num_seqs,
             **mm_kwargs,
@@ -546,7 +548,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             )
         except UnsupportedContentError as exc:
             return _to_error_response(exc)
-        vllm_request = engine_ops.build_vllm_request(request, self.model_config.chat_template_kwargs)
+        vllm_request = engine_ops.build_vllm_request(
+            request, self.model_config.chat_template_kwargs, cache_salt=raw_request.identity
+        )
         return await self._render_bundle(vllm_request)
 
     async def _create_chat_completion_stream(
@@ -653,6 +657,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             completion_tokens_details=CompletionTokenUsageInfo(reasoning_tokens=reasoning_tokens)
             if reasoning_tokens is not None
             else None,
+            prompt_tokens_details=PromptTokenUsageInfo(cached_tokens=final_res.num_cached_tokens)
+            if final_res.num_cached_tokens
+            else None,
         )
         _trace_parsed_response(request_id, choices, finish_reasons, usage)
         return build_from_parsed(
@@ -686,7 +693,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         except UnsupportedContentError as exc:
             return _to_error_response(exc)
         chat_request.stream = request.stream or False
-        vllm_request = engine_ops.build_vllm_request(chat_request, self.model_config.chat_template_kwargs)
+        vllm_request = engine_ops.build_vllm_request(
+            chat_request, self.model_config.chat_template_kwargs, cache_salt=raw_request.identity
+        )
         return await self._render_bundle(vllm_request)
 
     async def _create_response_no_stream(
@@ -746,6 +755,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             total_tokens=prompt_tokens + completion_tokens,
             completion_tokens_details=CompletionTokenUsageInfo(reasoning_tokens=reasoning_tokens)
             if reasoning_tokens is not None
+            else None,
+            prompt_tokens_details=PromptTokenUsageInfo(cached_tokens=final_res.num_cached_tokens)
+            if final_res.num_cached_tokens
             else None,
         )
         _trace_parsed_response(request_id, choices, finish_reasons, usage)

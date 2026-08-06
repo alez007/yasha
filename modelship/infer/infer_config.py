@@ -82,6 +82,9 @@ class VllmEngineConfig(BaseModel):
     reasoning_parser: str | None = None
     chat_template_content_format: ChatTemplateContentFormatOption = "auto"
     enforce_eager: bool | None = None
+    # None -> inherit vLLM's own default (prefix caching on). Escape hatch to
+    # disable it entirely, independent of the per-identity cache_salt below.
+    enable_prefix_caching: bool | None = None
     max_num_batched_tokens: int | None = None
     max_num_seqs: int | None = None
     # Cap on multimodal items per prompt (e.g. {"image": 4}). vLLM allows a
@@ -593,15 +596,18 @@ class RawRequestProxy:
 
       - raw_request.headers.get(...)     → Starlette Headers built from the dict
       - await raw_request.is_disconnected() → polls the DisconnectRegistry by id
+      - raw_request.identity             → the caller's identity_key(), resolved once at
+                                            the gateway (modelship/openai/auth.py)
 
     Any additional attributes vllm reads from raw_request in future should be added here.
     """
 
-    def __init__(self, registry, headers: dict, request_id: str | None = None):
+    def __init__(self, registry, headers: dict, request_id: str | None = None, identity: str | None = None):
         self._registry = registry
         self.headers = Headers(headers=headers)
         self.state = State()  # vllm writes per-request state here; lives in the actor process
         self.request_id = request_id
+        self.identity = identity
 
     @property
     def is_watchable(self) -> bool:

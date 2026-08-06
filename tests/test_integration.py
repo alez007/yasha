@@ -333,6 +333,38 @@ class TestChatCapable:
 
 @pytest.mark.integration
 @pytest.mark.vllm
+class TestIdentityScopedPrefixCache:
+    """cache_salt must scope vLLM prefix-cache hits to one identity; a
+    different identity sending an identical prompt must never see a hit."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        model_deployer.deploy("chat-capable")
+
+    # Long enough to span multiple KV-cache blocks (16 tokens each) for an unambiguous hit.
+    _PROMPT = "Summarize in one word: " + "Ray Serve is a scalable model serving library built on Ray. " * 8
+
+    def test_prefix_cache_hit_scoped_to_identity(self, client):
+        def _cached_tokens(identity: str) -> int:
+            completion = client.chat.completions.create(
+                model="chat-capable",
+                messages=[{"role": "user", "content": self._PROMPT}],
+                max_tokens=8,
+                extra_headers={"X-Mship-Test-Identity": identity},
+            )
+            details = completion.usage.prompt_tokens_details
+            return details.cached_tokens if details and details.cached_tokens else 0
+
+        _cached_tokens("cache-test-identity-a")  # cold — populates identity A's own cache entry
+        assert _cached_tokens("cache-test-identity-a") > 0, "same identity repeating a prompt should hit the cache"
+        assert _cached_tokens("cache-test-identity-b") == 0, (
+            "a different identity sending an identical prompt must never see a cache hit "
+            "from identity A's entry — that would be the cross-identity timing leak"
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.vllm
 class TestChatReasoning:
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
