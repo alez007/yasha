@@ -1,28 +1,11 @@
-# vLLM loader on CPU — no GPU required.
-#
-# Requires a non-GGUF checkpoint: safetensors, or an AWQ/GPTQ/compressed-tensors
-# quant (CPU backend supports AWQ/GPTQ on x86, plus INT8 W8A8).
-#
-# gpu_memory_utilization means something different here than on GPU: vLLM's
-# CPU backend repurposes it as the fraction of HOST RAM to reserve for the KV
-# cache, not VRAM. modelship defaults it to 0.4 for num_gpus: 0 deploys (the
-# GPU-oriented 0.9 default would ask to reserve 90% of node RAM and fail at
-# worker init on a real machine) — set it explicitly here to whatever your
-# box can spare. For finer control, vLLM also reads VLLM_CPU_KVCACHE_SPACE
-# (a fixed GiB budget instead of a RAM fraction) and VLLM_CPU_OMP_THREADS_BIND
-# from the process environment directly; see docs/model-configuration.md.
-#
-# See docs/model-configuration.md for the full vllm_engine_kwargs reference.
+# vLLM loader on CPU — no GPU required. Requires a non-GGUF checkpoint:
+# safetensors, or an AWQ/GPTQ/compressed-tensors quant. gpu_memory_utilization
+# and max_model_len are left unset so preflight sizes both from free host RAM.
 
 models:
   - name: "qwen-cpu"
-    model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    model: "Qwen/Qwen3-8B-AWQ"
     usecase: "generate"
     loader: "vllm"
     num_gpus: 0
     num_cpus: 4
-    vllm_engine_kwargs:
-      max_model_len: 8192
-      enable_auto_tool_choice: true
-      tool_call_parser: "hermes"
-      gpu_memory_utilization: 0.4

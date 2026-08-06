@@ -75,7 +75,7 @@ MODEL_CONFIGS: dict[str, dict] = {
     },
     "chat-vlm": {
         "name": "chat-vlm",
-        "model": "Qwen/Qwen2.5-VL-3B-Instruct",
+        "model": "Qwen/Qwen3-VL-2B-Instruct",
         "usecase": "generate",
         "loader": "vllm",
         "num_gpus": 1,
@@ -194,13 +194,11 @@ MODEL_CONFIGS: dict[str, dict] = {
     },
     "image-cpu-model": {
         "name": "image-cpu-model",
-        # SD2.1 packaged as a single-file sd.cpp GGUF (CLIP + UNet + VAE bundled).
-        # CPU-only; few steps + small size keep the integration run tractable.
-        "model": "jiaowobaba02/stable-diffusion-v2-1-GGUF:*q4_1.gguf",
+        "model": "gpustack/stable-diffusion-v2-1-turbo-GGUF:*Q4_1.gguf",
         "usecase": "image",
         "loader": "stable_diffusion_cpp",
         "num_cpus": 4,
-        "stable_diffusion_cpp_config": {"sample_steps": 6, "cfg_scale": 7.0},
+        "stable_diffusion_cpp_config": {"sample_steps": 4, "cfg_scale": 1.0},
     },
 }
 

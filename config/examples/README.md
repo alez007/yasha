@@ -7,7 +7,9 @@ Ready-to-run `models.yaml` configs for common scenarios. Mount one into the cont
 | [llama-server.yaml](llama-server.yaml) | Quantized GGUF chat (concurrent), vision, sharded GGUF, embeddings via a llama-server subprocess | CPU or NVIDIA GPU |
 | [vllm-cpu.yaml](vllm-cpu.yaml) | Quantized (AWQ/GPTQ) chat via vLLM's CPU backend | CPU |
 | [vllm.yaml](vllm.yaml) | High-throughput chat with tool calling, embeddings, Whisper | NVIDIA GPU |
+| [vllm-vision.yaml](vllm-vision.yaml) | Vision-language chat (image_url content parts) | NVIDIA GPU |
 | [diffusers.yaml](diffusers.yaml) | SDXL Turbo image generation | NVIDIA GPU |
+| [stable-diffusion-cpp.yaml](stable-diffusion-cpp.yaml) | GGUF-quantized image generation (SD 2.1, Flux-schnell) | CPU |
 | [kokoro-tts.yaml](kokoro-tts.yaml) | Kokoro ONNX TTS with GPU + CPU fallback replicas | Mixed |
 | [full-stack.yaml](full-stack.yaml) | LLM + TTS + STT + embeddings on one GPU | NVIDIA GPU |
 | [mini-pc.yaml](mini-pc.yaml) | Low-resource stack: llama-server chat + Kokoro ONNX TTS + whisper.cpp STT | CPU (e.g. Intel N100) |
