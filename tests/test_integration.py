@@ -1318,11 +1318,10 @@ def _find_and_kill_vllm_engine_core(deadline_s: float = 30) -> int:
     while time.time() < end:
         for proc in psutil.process_iter():
             try:
-                name = proc.name()
                 cmdline = " ".join(proc.cmdline())
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
-            if "EngineCore" in name or "EngineCore" in cmdline:
+            if "VLLM::EngineCore" in cmdline:
                 pid = proc.pid
                 proc.kill()
                 return pid

@@ -368,12 +368,14 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         else:
             logger.warning("vllm engine for '%s' has no output_handler to watch for crashes", self.model_config.name)
 
-    def _on_engine_output_handler_done(self, task: asyncio.Task) -> None:
+    def _on_engine_output_handler_done(self, future: asyncio.Future) -> None:
         """shutdown() cancels output_handler intentionally, so a non-cancelled
         completion here means the engine core died on its own."""
-        if task.cancelled():
+        if future.cancelled():
             return
-        logger.error("vllm engine core for '%s' died — exiting actor", self.model_config.name)
+        logger.error(
+            "vllm engine core for '%s' died — exiting actor", self.model_config.name, exc_info=future.exception()
+        )
         os._exit(1)
 
     async def warmup(self) -> None:
