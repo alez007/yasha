@@ -3,14 +3,10 @@
 
 models:
   - name: "llm"
-    model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    model: "Qwen/Qwen3-8B-AWQ"
     usecase: "generate"
     loader: "vllm"
     num_gpus: 0.55
-    vllm_engine_kwargs:
-      max_model_len: 16000
-      enable_auto_tool_choice: true
-      tool_call_parser: "hermes"
 
   - name: "kokoro"
     model: "hexgrad/Kokoro-82M"
@@ -22,7 +18,7 @@ models:
       onnx_provider: "CUDAExecutionProvider"
 
   - name: "whisper"
-    model: "openai/whisper-small"
+    model: "openai/whisper-large-v3-turbo"
     usecase: "transcription"
     loader: "vllm"
     num_gpus: 0.15

@@ -2,19 +2,13 @@
 # See docs/model-configuration.md for the full vllm_engine_kwargs reference.
 
 models:
-  # High-throughput chat with tool calling
+  # Tool calling and reasoning parsers auto-detect from the chat template.
   - name: "llm"
-    model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    model: "Qwen/Qwen3-8B-AWQ"
     usecase: "generate"
     loader: "vllm"
     num_gpus: 0.7
-    vllm_engine_kwargs:
-      tensor_parallel_size: 1
-      max_model_len: 16000
-      enable_auto_tool_choice: true
-      tool_call_parser: "hermes"
 
-  # Embeddings
   - name: "nomic-embed"
     model: "nomic-ai/nomic-embed-text-v1.5"
     usecase: "embed"
@@ -23,22 +17,18 @@ models:
     vllm_engine_kwargs:
       trust_remote_code: true
 
-  # Speech-to-text (Whisper)
   - name: "whisper"
-    model: "openai/whisper-small"
+    model: "openai/whisper-large-v3-turbo"
     usecase: "transcription"
     loader: "vllm"
     num_gpus: 0.25
     vllm_engine_kwargs:
       trust_remote_code: true
 
-  # Load-driven autoscaling. Ray Serve scales replicas between min_replicas and
-  # max_replicas based on in-flight requests. Mutually exclusive with
-  # num_replicas (set one or the other, never both). min_replicas: 0 enables
-  # scale-to-zero — the model releases its GPU when idle and cold-starts on the
-  # next request.
+  # Autoscaling replaces num_replicas (set one or the other, never both).
+  # min_replicas: 0 enables scale-to-zero.
   - name: "bursty-llm"
-    model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    model: "Qwen/Qwen3-8B-AWQ"
     usecase: "generate"
     loader: "vllm"
     num_gpus: 0.5

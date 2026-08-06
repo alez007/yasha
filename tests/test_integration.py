@@ -445,7 +445,7 @@ _RED_PIXEL_DATA_URI = (
 @pytest.mark.integration
 @pytest.mark.vllm
 class TestChatVlm:
-    """End-to-end vision: a real Qwen2.5-VL-3B deployment receiving an
+    """End-to-end vision: a real Qwen3-VL-2B deployment receiving an
     ``image_url`` content part through the modelship gateway."""
 
     @pytest.fixture(autouse=True, scope="class")

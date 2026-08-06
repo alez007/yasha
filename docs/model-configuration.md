@@ -228,7 +228,7 @@ The fool-proof minimum — preflight fills in everything else:
 ```yaml
 models:
   - name: qwen-cpu
-    model: Qwen/Qwen2.5-7B-Instruct-AWQ
+    model: Qwen/Qwen3-8B-AWQ
     usecase: generate
     loader: vllm
     num_gpus: 0
@@ -308,7 +308,7 @@ models:
 ```yaml
 models:
   - name: whisper
-    model: openai/whisper-small
+    model: openai/whisper-large-v3-turbo
     usecase: transcription
     loader: vllm
     num_gpus: 0.15
@@ -366,7 +366,7 @@ The fool-proof minimum — preflight fills in `n_ctx`, `n_gpu_layers`, and `thre
 ```yaml
 models:
   - name: "qwen-llama-server"
-    model: "lmstudio-community/Qwen2.5-7B-Instruct-GGUF:*Q4_K_M.gguf"
+    model: "lmstudio-community/Qwen3-8B-GGUF:*Q4_K_M.gguf"
     usecase: "generate"
     loader: "llama_server"
     num_gpus: 1
@@ -388,12 +388,12 @@ Set `mmproj` to a multimodal projector file (local path or `repo:filename`, reso
 
 ```yaml
 models:
-  - name: "llava-llama-server"
-    model: "second-state/Llava-v1.5-7B-GGUF:llava-v1.5-7b-Q4_K_M.gguf"
+  - name: "qwen-vl-llama-server"
+    model: "lmstudio-community/Qwen3-VL-8B-Instruct-GGUF:*Q4_K_M.gguf"
     usecase: "generate"
     loader: "llama_server"
     llama_server_config:
-      mmproj: "second-state/Llava-v1.5-7B-GGUF:llava-v1.5-7b-mmproj-model-f16.gguf"
+      mmproj: "lmstudio-community/Qwen3-VL-8B-Instruct-GGUF:mmproj-Qwen3-VL-8B-Instruct-F16.gguf"
 ```
 
 ### Embeddings (GGUF)
@@ -430,8 +430,8 @@ GGUF variants in a HuggingFace repo are picked via the `:filename` syntax on the
 
 ```yaml
 models:
-  - name: sdxl-turbo
-    model: "second-state/stable-diffusion-xl-turbo-GGUF:*Q4_0.gguf"
+  - name: sd21-turbo
+    model: "gpustack/stable-diffusion-v2-1-turbo-GGUF:*Q4_1.gguf"
     usecase: image
     loader: stable_diffusion_cpp
     num_cpus: 4
