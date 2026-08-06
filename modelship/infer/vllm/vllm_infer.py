@@ -311,6 +311,8 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             quantization=self.vllm_engine_kwargs.quantization,
             kv_cache_dtype=self.vllm_engine_kwargs.kv_cache_dtype or "auto",  # type: ignore[arg-type]
             enforce_eager=self.vllm_engine_kwargs.enforce_eager or False,
+            # Unlike the bools above, vLLM's own field is bool | None and resolves
+            # None to its model-dependent default itself — don't coerce to False.
             enable_prefix_caching=self.vllm_engine_kwargs.enable_prefix_caching,
             max_num_batched_tokens=self.vllm_engine_kwargs.max_num_batched_tokens,
             max_num_seqs=self.vllm_engine_kwargs.max_num_seqs,
