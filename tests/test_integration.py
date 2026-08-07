@@ -1020,6 +1020,22 @@ class TestAudio:
 
 
 @pytest.mark.integration
+@pytest.mark.whispercpp
+def test_audio_transcription_whispercpp(client, model_deployer, tmp_path):
+    model_deployer.deploy("tts-model", "stt-cpp-model")
+    audio_data = client.audio.speech.create(
+        model="tts-model", voice="af_bella", input="This is a test transcription."
+    ).content
+
+    audio_file = tmp_path / "test_audio.mp3"
+    audio_file.write_bytes(audio_data)
+
+    with open(audio_file, "rb") as f:
+        transcription = client.audio.transcriptions.create(model="stt-cpp-model", file=f)
+    assert "test" in transcription.text.lower()
+
+
+@pytest.mark.integration
 @pytest.mark.diffusers
 class TestImage:
     """End-to-end image generation, editing and variations through the

@@ -69,6 +69,16 @@ def resolve_all_plugin_wheels(yml_conf: ModelshipConfig) -> dict[str, Path]:
     return wheels
 
 
+def _is_whispercpp_builtin_model_name(model: str) -> bool:
+    """A pywhispercpp built-in model name (e.g. `base.en`) resolves/downloads
+    itself; unavailable (False) on a `pywhispercpp`-less `thin` driver."""
+    try:
+        from pywhispercpp.constants import AVAILABLE_MODELS
+    except ImportError:
+        return False
+    return model in AVAILABLE_MODELS
+
+
 def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
     """Pre-flight: check every built-in-loader model's source, without
     downloading any weight bytes.
@@ -87,6 +97,10 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
     """
     for cfg in yml_conf.models:
         if cfg.loader == ModelLoader.custom:
+            continue
+        if cfg.loader == ModelLoader.whispercpp and cfg.model and _is_whispercpp_builtin_model_name(cfg.model):
+            # pywhispercpp resolves/downloads its own built-in models; nothing to pin here.
+            logger.info("Skipping source check for '%s': pywhispercpp built-in model %r", cfg.name, cfg.model)
             continue
         assert cfg.model is not None  # validator guarantees this for built-in loaders
         trust_remote_code = bool(cfg.vllm_engine_kwargs and cfg.vllm_engine_kwargs.trust_remote_code)
@@ -107,4 +121,17 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
                 f"Model '{cfg.name}' resolves to a GGUF file, which the vllm loader does not support "
                 f"(vLLM 0.24 dropped in-tree GGUF). Use `loader: llama_server` for GGUF models, or point "
                 f"the vllm loader at a non-GGUF checkpoint (safetensors, or an AWQ/GPTQ/FP8 quant)."
+            )
+
+        # whisper.cpp needs its own legacy ggml/bin format, never GGUF or safetensors.
+        if cfg.loader == ModelLoader.whispercpp and cfg._pinned_source.resolves_to_gguf:
+            raise ValueError(
+                f"Model '{cfg.name}' resolves to a GGUF file, which the whispercpp loader does not support "
+                f"(whisper.cpp needs its own legacy ggml/bin format, e.g. a `ggml-base.en.bin` file)."
+            )
+        if cfg.loader == ModelLoader.whispercpp and cfg._pinned_source.resolves_to_safetensors:
+            raise ValueError(
+                f"Model '{cfg.name}' resolves to a safetensors checkpoint, which the whispercpp loader does not "
+                f"support (whisper.cpp needs the legacy ggml/bin format). Use `loader: vllm` for a HF-format "
+                f"Whisper checkpoint instead (e.g. openai/whisper-large-v3-turbo)."
             )
