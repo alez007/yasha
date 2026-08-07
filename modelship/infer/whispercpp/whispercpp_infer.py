@@ -90,9 +90,9 @@ class WhispercppInfer(BaseInfer):
 
     def _decode_kwargs(self, request: TranscriptionRequest | TranslationRequest, *, translate: bool) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"translate": translate, "temperature": request.temperature}
-        language = None if translate else getattr(request, "language", None)
-        if language:
-            kwargs["language"] = language
+        # Source hint for both tasks; no target-language knob exists, so to_language is unread.
+        if request.language:
+            kwargs["language"] = request.language
         if request.prompt:
             kwargs["initial_prompt"] = request.prompt
         return kwargs

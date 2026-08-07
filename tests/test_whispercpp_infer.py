@@ -94,11 +94,17 @@ class TestDecodeKwargs:
         assert kwargs["initial_prompt"] == "hello"
         assert kwargs["temperature"] == 0.6
 
-    def test_translate_never_forwards_language(self):
+    def test_translate_forwards_language_as_source_hint(self):
         infer = _infer(_StubModel([]))
         kwargs = infer._decode_kwargs(_translation_request(language="fr"), translate=True)
-        assert "language" not in kwargs
+        assert kwargs["language"] == "fr"
         assert kwargs["translate"] is True
+
+    def test_to_language_is_ignored(self):
+        infer = _infer(_StubModel([]))
+        kwargs = infer._decode_kwargs(_translation_request(to_language="de"), translate=True)
+        assert "to_language" not in kwargs
+        assert "language" not in kwargs
 
 
 class TestTranscribeOnce:
@@ -137,7 +143,10 @@ class TestTranscribeOnce:
     async def test_translation_verbose_language_is_always_english(self):
         infer = _infer(_StubModel([_Segment("hello")]))
         result = await infer._transcribe_once(
-            MINIMAL_WAV, _translation_request(response_format="verbose_json"), translate=True, request_id="r1"
+            MINIMAL_WAV,
+            _translation_request(response_format="verbose_json", language="fr"),
+            translate=True,
+            request_id="r1",
         )
         assert isinstance(result, TranslationResponseVerbose)
         assert result.language == "english"
