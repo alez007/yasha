@@ -117,12 +117,6 @@ class PinnedSource(NamedTuple):
         downloading it."""
         return self._resolves_to_extension(".gguf")
 
-    @property
-    def resolves_to_safetensors(self) -> bool:
-        """Whether this source resolves to a `.safetensors` file, without
-        downloading it."""
-        return self._resolves_to_extension(".safetensors")
-
     def _resolves_to_extension(self, suffix: str) -> bool:
         if self.resolved_path is not None:
             return self.resolved_path.lower().endswith(suffix)
