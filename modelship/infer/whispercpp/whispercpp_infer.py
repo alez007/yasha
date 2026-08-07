@@ -27,7 +27,8 @@ from modelship.utils.audio import decode_audio
 logger = get_logger("infer.whispercpp")
 
 _WHISPER_SAMPLE_RATE = 16000
-_GGML_MAGIC = b"ggml"
+# whisper.cpp writes the ggml magic as a little-endian uint32, so on disk it reads "lmgg".
+_GGML_MAGIC = b"lmgg"
 _GGUF_MAGIC = b"GGUF"
 
 # TranslationResponseVerbose.language is documented as always "english" (the output language).
@@ -41,6 +42,7 @@ class WhispercppInfer(BaseInfer):
         super().__init__(model_config)
         self.config = model_config.whispercpp_config or WhispercppConfig()
         self.model: Any = None
+        self._multilingual = True
 
     def shutdown(self) -> None:
         self.model = None
@@ -53,6 +55,7 @@ class WhispercppInfer(BaseInfer):
         self.model = await loop.run_in_executor(None, self._load)
 
     def _load(self) -> Any:
+        import _pywhispercpp as _pw
         from pywhispercpp.constants import AVAILABLE_MODELS
         from pywhispercpp.model import Model
 
@@ -83,7 +86,9 @@ class WhispercppInfer(BaseInfer):
                 kwargs["models_dir"] = models_dir
 
         logger.info("loading whisper.cpp model %r (gpu=%s) for '%s'", model_ref, use_gpu, self.model_config.name)
-        return Model(model_ref, **kwargs)
+        model: Any = Model(model_ref, **kwargs)
+        self._multilingual = bool(_pw.whisper_is_multilingual(model._ctx))
+        return model
 
     async def warmup(self) -> None:
         pass
@@ -98,6 +103,10 @@ class WhispercppInfer(BaseInfer):
         return kwargs
 
     async def _detect_language(self, samples: Any) -> str:
+        # Detection on an English-only model returns an out-of-range id, which
+        # pywhispercpp maps to a wrong language.
+        if not self._multilingual:
+            return "en"
         (lang, _prob), _all = await asyncio.to_thread(self.model.auto_detect_language, samples)
         return lang
 

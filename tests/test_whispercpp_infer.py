@@ -140,6 +140,18 @@ class TestTranscribeOnce:
         assert result.language == "es"
 
     @pytest.mark.asyncio
+    async def test_english_only_model_skips_detection(self):
+        # A real ggml-tiny.en detects as 'sq' here.
+        model = _StubModel([_Segment("hello")], detected=("sq", 0.4))
+        infer = _infer(model)
+        infer._multilingual = False
+        result = await infer._transcribe_once(
+            MINIMAL_WAV, _transcription_request(response_format="verbose_json"), translate=False, request_id="r1"
+        )
+        assert isinstance(result, TranscriptionResponseVerbose)
+        assert result.language == "en"
+
+    @pytest.mark.asyncio
     async def test_translation_verbose_language_is_always_english(self):
         infer = _infer(_StubModel([_Segment("hello")]))
         result = await infer._transcribe_once(
@@ -191,7 +203,8 @@ class TestStreaming:
 class TestValidateGgmlModelFile:
     def test_accepts_ggml_magic(self, tmp_path):
         path = tmp_path / "ggml-base.en.bin"
-        path.write_bytes(b"ggml" + b"\x00" * 16)
+        # Byte order matches a real whisper.cpp model file, not the "ggml" spelling.
+        path.write_bytes((0x67676D6C).to_bytes(4, "little") + b"\x00" * 16)
         _validate_ggml_model_file(str(path), "m")  # no raise
 
     def test_rejects_gguf(self, tmp_path):
