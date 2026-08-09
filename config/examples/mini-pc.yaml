@@ -23,9 +23,8 @@ models:
   - name: "whisper"
     model: "base.en"
     usecase: "transcription"
-    loader: "custom"
-    plugin: "whispercpp"
+    loader: "whispercpp"
     num_gpus: 0
     num_cpus: 1
-    plugin_config:
+    whispercpp_config:
       n_threads: 2

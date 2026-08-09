@@ -153,19 +153,17 @@ Hitting an error? Check [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Plugin Support
 
-Modelship's TTS and STT systems are built around a plugin architecture — each backend is an opt-in package with its own isolated dependencies. Plugins ship inside this repo (`plugins/`) or can be installed from PyPI.
+Modelship's TTS system is built around a plugin architecture — each backend is an opt-in package with its own isolated dependencies. Plugins ship inside this repo (`plugins/`) or can be installed from PyPI.
 
 Built-in plugins:
 
 - [Kokoro ONNX](plugins/kokoroonnx/README.md) — lightweight TTS via ONNX Runtime (CPU or GPU)
 - [Orpheus](plugins/orpheus/README.md) — expressive TTS
-- [whisper.cpp](plugins/whispercpp/README.md) — CPU-only STT via `pywhispercpp`
 
 To enable plugins for local development, pass them as extras at sync time:
 
 ```bash
 uv sync --extra kokoroonnx
-uv sync --extra kokoroonnx --extra whispercpp  # multiple plugins
 ```
 
 For deployment, plugins are automatically loaded from standalone Python wheels via Ray's `runtime_env` when referenced in `models.yaml`. This ensures that complex backend dependencies don't pollute the main API gateway or other deployments.

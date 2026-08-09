@@ -189,7 +189,7 @@ Every plugin must include a `README.md` in its package root (`plugins/myplugin/R
 - **Voices / options** — any model-specific choices (voice presets, providers, etc.)
 - **Example request** — a working `curl` command
 
-See the built-in plugins for reference: [Kokoro ONNX](https://github.com/modelship-ai/modelship/blob/main/plugins/kokoroonnx/README.md), [Orpheus](https://github.com/modelship-ai/modelship/blob/main/plugins/orpheus/README.md), [whisper.cpp](https://github.com/modelship-ai/modelship/blob/main/plugins/whispercpp/README.md).
+See the built-in plugins for reference: [Kokoro ONNX](https://github.com/modelship-ai/modelship/blob/main/plugins/kokoroonnx/README.md), [Orpheus](https://github.com/modelship-ai/modelship/blob/main/plugins/orpheus/README.md).
 
 ## Submitting to this repo
 
