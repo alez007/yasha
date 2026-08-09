@@ -54,7 +54,6 @@ members = [
     "kokoroonnx",
     "mship",
     "orpheus",
-    "whispercpp",
 ]
 
 [[package]]
@@ -1846,9 +1845,6 @@ otel = [
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-sdk" },
 ]
-whispercpp = [
-    { name = "whispercpp" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -1917,9 +1913,8 @@ requires-dist = [
     { name = "vllm", marker = "extra == 'cuda'", specifier = "==0.26.0" },
     { name = "vllm", extras = ["audio"], marker = "extra == 'cpu'", specifier = "==0.26.0", index = "https://wheels.vllm.ai/0.26.0/cpu", conflict = { package = "mship", extra = "cpu" } },
     { name = "vllm", extras = ["audio"], marker = "extra == 'cuda'", specifier = "==0.26.0" },
-    { name = "whispercpp", marker = "extra == 'whispercpp'", editable = "plugins/whispercpp" },
 ]
-provides-extras = ["thin", "metal", "cuda", "cpu", "kokoroonnx", "orpheus", "whispercpp", "otel", "docs", "dev"]
+provides-extras = ["thin", "metal", "cuda", "cpu", "kokoroonnx", "orpheus", "otel", "docs", "dev"]
 
 [[package]]
 name = "multidict"
@@ -4711,17 +4706,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c3/f0/f3a17365441ed1c27f850a80b2bc680a0fa9505d733fe152fdf5e98c1c0b/websockets-16.0-cp312-cp312-win_amd64.whl", hash = "sha256:5569417dc80977fc8c2d43a86f78e0a5a22fee17565d78621b6bb264a115d4ea", size = 178693, upload-time = "2026-01-10T09:22:57.478Z" },
     { url = "https://files.pythonhosted.org/packages/6f/28/258ebab549c2bf3e64d2b0217b973467394a9cea8c42f70418ca2c5d0d2e/websockets-16.0-py3-none-any.whl", hash = "sha256:1637db62fad1dc833276dded54215f2c7fa46912301a24bd94d45d46a011ceec", size = 171598, upload-time = "2026-01-10T09:23:45.395Z" },
 ]
-
-[[package]]
-name = "whispercpp"
-version = "0.1.0"
-source = { editable = "plugins/whispercpp" }
-dependencies = [
-    { name = "pywhispercpp" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "pywhispercpp", specifier = ">=1.3.0" }]
 
 [[package]]
 name = "win32-setctime"

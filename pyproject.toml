@@ -83,7 +83,6 @@ cpu = [
 ]
 kokoroonnx = ["kokoroonnx"]
 orpheus = ["orpheus"]
-whispercpp = ["whispercpp"]
 otel = [
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
@@ -137,7 +136,6 @@ explicit = true
 [tool.uv.sources]
 kokoroonnx = { workspace = true }
 orpheus = { workspace = true }
-whispercpp = { workspace = true }
 torch = [
   { index = "pytorch-cu130", extra = "cuda" },
   { index = "pytorch-cpu", extra = "cpu" },

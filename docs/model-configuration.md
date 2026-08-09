@@ -472,7 +472,8 @@ The `custom` loader delegates to a plugin module. The `plugin` field is required
 See each plugin's README for configuration details:
 - [Kokoro ONNX TTS](https://github.com/modelship-ai/modelship/blob/main/plugins/kokoroonnx/README.md)
 - [Orpheus TTS](https://github.com/modelship-ai/modelship/blob/main/plugins/orpheus/README.md)
-- whisper.cpp STT: superseded by [`loader: whispercpp`](#whispercpp-loader) above; the plugin still exists but the loader is the supported path going forward.
+
+whisper.cpp STT was previously a plugin; it's now [`loader: whispercpp`](#whispercpp-loader) above.
 
 For writing your own plugin, see [Plugin Development](plugins.md).
 
