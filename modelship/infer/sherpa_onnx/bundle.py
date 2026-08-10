@@ -2,12 +2,13 @@
 shared cache dir, via modelship.utils.fetch_and_extract_archive (also used by
 modelship/launcher.py for llama.cpp's binary tarball)."""
 
+import fcntl
 import os
 import shutil
 
 from modelship.infer.sherpa_onnx.registry import REGISTRY, SherpaOnnxRegistryEntry
 from modelship.logging import get_logger
-from modelship.utils import cache_dir, fetch_and_extract_archive, is_pathy, random_uuid
+from modelship.utils import cache_dir, fetch_and_extract_archive, is_pathy
 
 logger = get_logger("infer.sherpa_onnx.bundle")
 
@@ -25,18 +26,36 @@ def resolve_bundle_dir(model: str) -> tuple[str, SherpaOnnxRegistryEntry]:
 
     entry = REGISTRY[model]
     bundle_dir = os.path.join(cache_dir(), "sherpa_onnx", model)
-    if os.path.isdir(bundle_dir):
+    if _is_valid(bundle_dir, entry):
+        return bundle_dir, entry
+
+    # flock serializes same-node replicas of one deployment onto a single
+    # download+extract instead of each fetching its own copy.
+    root = os.path.join(cache_dir(), "sherpa_onnx")
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, f".{model}.lock"), "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
         try:
+            if _is_valid(bundle_dir, entry):  # a lock-holder ahead of us may have fixed it
+                return bundle_dir, entry
+            if os.path.isdir(bundle_dir):
+                logger.warning("cached sherpa_onnx bundle %r failed validation, re-fetching", model)
+                shutil.rmtree(bundle_dir, ignore_errors=True)
+
+            archive_path = os.path.join(root, f".{model}.tar.bz2")
+            fetch_and_extract_archive(entry.tarball_url, entry.sha256, archive_path, bundle_dir)
             validate_bundle(bundle_dir, entry)
             return bundle_dir, entry
-        except ValueError:
-            logger.warning("cached sherpa_onnx bundle %r failed validation, re-fetching", model)
-            shutil.rmtree(bundle_dir, ignore_errors=True)
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
-    archive_path = os.path.join(cache_dir(), "sherpa_onnx", f".{model}-{random_uuid()}.tar.bz2")
-    fetch_and_extract_archive(entry.tarball_url, entry.sha256, archive_path, bundle_dir)
-    validate_bundle(bundle_dir, entry)
-    return bundle_dir, entry
+
+def _is_valid(bundle_dir: str, entry: SherpaOnnxRegistryEntry) -> bool:
+    try:
+        validate_bundle(bundle_dir, entry)
+        return True
+    except ValueError:
+        return False
 
 
 def validate_bundle(bundle_dir: str, entry: SherpaOnnxRegistryEntry) -> None:
