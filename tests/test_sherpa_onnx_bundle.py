@@ -5,6 +5,8 @@ import os
 import tarfile
 from unittest.mock import patch
 
+import pytest
+
 from modelship.infer.sherpa_onnx import bundle
 from modelship.infer.sherpa_onnx.registry import REGISTRY
 
@@ -69,3 +71,19 @@ def test_stale_cached_bundle_is_cleared_and_refetched(tmp_path, monkeypatch):
 
     assert os.path.isfile(os.path.join(bundle_dir, "model.onnx"))
     assert not os.path.exists(os.path.join(bundle_dir, "leftover_junk.txt"))
+
+
+def test_concurrent_fetches_use_distinct_archive_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr(bundle, "cache_dir", lambda: str(tmp_path / "cache"))
+    archive_paths = []
+
+    def fake_fetch(url, sha256, archive_path, extract_dir):
+        archive_paths.append(archive_path)
+
+    with patch.object(bundle, "fetch_and_extract_archive", side_effect=fake_fetch):
+        for _ in range(2):
+            with pytest.raises(ValueError, match="not found"):
+                bundle.resolve_bundle_dir("kokoro-en-v0_19")
+
+    assert len(archive_paths) == 2
+    assert archive_paths[0] != archive_paths[1]

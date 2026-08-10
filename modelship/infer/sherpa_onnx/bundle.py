@@ -7,7 +7,7 @@ import shutil
 
 from modelship.infer.sherpa_onnx.registry import REGISTRY, SherpaOnnxRegistryEntry
 from modelship.logging import get_logger
-from modelship.utils import cache_dir, fetch_and_extract_archive, is_pathy
+from modelship.utils import cache_dir, fetch_and_extract_archive, is_pathy, random_uuid
 
 logger = get_logger("infer.sherpa_onnx.bundle")
 
@@ -33,7 +33,7 @@ def resolve_bundle_dir(model: str) -> tuple[str, SherpaOnnxRegistryEntry]:
             logger.warning("cached sherpa_onnx bundle %r failed validation, re-fetching", model)
             shutil.rmtree(bundle_dir, ignore_errors=True)
 
-    archive_path = os.path.join(cache_dir(), "sherpa_onnx", f".{model}.tar.bz2")
+    archive_path = os.path.join(cache_dir(), "sherpa_onnx", f".{model}-{random_uuid()}.tar.bz2")
     fetch_and_extract_archive(entry.tarball_url, entry.sha256, archive_path, bundle_dir)
     validate_bundle(bundle_dir, entry)
     return bundle_dir, entry
