@@ -191,6 +191,22 @@ class TestComputeDeployPlanGpuOrdering:
         plan = compute_deploy_plan(desired, set(), set(), "g")
         assert [c.name for c in plan.models_to_add] == ["whole", "frac"]
 
+    def test_whole_gpu_sorts_before_fractional_at_the_same_ceil_footprint(self):
+        # num_gpus=1 and num_gpus=0.5 both round up to footprint 1 via math.ceil —
+        # a plain footprint tie the sort must still break toward the whole request.
+        from modelship.deploy.strategy import compute_deploy_plan
+
+        desired = to_config([_model("frac", num_gpus=0.5), _model("whole", num_gpus=1)])
+        plan = compute_deploy_plan(desired, set(), set(), "g")
+        assert [c.name for c in plan.models_to_add] == ["whole", "frac"]
+
+    def test_larger_fraction_sorts_first_among_fractional_models(self):
+        from modelship.deploy.strategy import compute_deploy_plan
+
+        desired = to_config([_model("small", num_gpus=0.3), _model("big", num_gpus=0.7)])
+        plan = compute_deploy_plan(desired, set(), set(), "g")
+        assert [c.name for c in plan.models_to_add] == ["big", "small"]
+
 
 class TestCase2AdditiveAccumulation:
     """The bug this design fixes: additive deploys accumulate beyond the last
