@@ -44,10 +44,6 @@ Configuration is in `pyproject.toml`. Key settings: Python 3.12, 120 character l
 3. Ensure `ruff check`, `ruff format --check`, and `pyright` pass
 4. Open a pull request against `main` with a clear description of what changed and why
 
-## Writing Plugins
-
-If you're contributing a TTS backend, see [docs/plugins.md](docs/plugins.md) for the plugin architecture and development guide. Plugins live in `plugins/` as isolated uv workspace packages.
-
 ## Reporting Issues
 
 Use [GitHub Issues](https://github.com/modelship-ai/modelship/issues). For bugs, include:

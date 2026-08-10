@@ -8,14 +8,14 @@ models:
     loader: "vllm"
     num_gpus: 0.55
 
+  # sherpa_onnx has no VRAM-fraction knob (whole GPUs or CPU only); Kokoro is
+  # light enough to run on CPU alongside the GPU-bound models below.
   - name: "kokoro"
-    model: "hexgrad/Kokoro-82M"
+    model: "kokoro-en-v0_19"
     usecase: "tts"
-    loader: "custom"
-    plugin: "kokoroonnx"
-    num_gpus: 0.07
-    plugin_config:
-      onnx_provider: "CUDAExecutionProvider"
+    loader: "sherpa_onnx"
+    num_gpus: 0
+    num_cpus: 2
 
   - name: "whisper"
     model: "openai/whisper-large-v3-turbo"

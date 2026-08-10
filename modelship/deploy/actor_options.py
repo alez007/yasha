@@ -1,16 +1,14 @@
 """Ray Serve actor option construction for model deployments.
 
-Centralises the GPU-allocation decisions and the plugin-wheel runtime_env
-injection for custom-loader models. Multi-slot vLLM deploys always use a
-Ray Serve placement group (one whole-GPU bundle per slot) that vLLM
-inherits via its ray distributed executor.
+Centralises the GPU-allocation decisions for model deployments. Multi-slot
+vLLM deploys always use a Ray Serve placement group (one whole-GPU bundle
+per slot) that vLLM inherits via its ray distributed executor.
 """
 
 from __future__ import annotations
 
 import os
 import platform
-from pathlib import Path
 
 from modelship.deploy.capabilities import deployment_capability_resources
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
@@ -69,26 +67,6 @@ def build_cache_env_vars() -> dict[str, str]:
     return env_vars
 
 
-def _plugin_wheel_dir() -> Path:
-    return Path(os.environ.get("MSHIP_PLUGIN_WHEEL_DIR", ".build/plugin-wheels"))
-
-
-def resolve_plugin_wheel(plugin: str) -> Path:
-    wheel_dir = _plugin_wheel_dir()
-    normalized_name = plugin.replace("-", "_")
-    wheels = sorted(wheel_dir.glob(f"{normalized_name}-*.whl"))
-    if not wheels:
-        raise RuntimeError(
-            f"No wheel found for plugin '{plugin}' (normalized: '{normalized_name}') in {wheel_dir}. "
-            f"Build wheels with `make plugin-wheels` (or rebuild the Docker image), "
-            f"or set MSHIP_PLUGIN_WHEEL_DIR to the directory containing them."
-        )
-    # Absolute path required: Ray workers run with a different cwd
-    # (/tmp/ray/session_*/runtime_resources/.../exec_cwd), so a relative wheel
-    # path in runtime_env.pip would fail to resolve on the worker.
-    return wheels[-1].resolve()
-
-
 def _world_size(config: ModelshipModelConfig) -> int:
     if config.loader != ModelLoader.vllm:
         return 1
@@ -122,7 +100,7 @@ def _total_reservation(deploy_opts: dict, bundle_key: str, actor_key: str) -> fl
     return float(deploy_opts.get("ray_actor_options", {}).get(actor_key, 0) or 0)
 
 
-def build_deployment_options(config: ModelshipModelConfig, plugin_wheel: Path | None = None) -> dict:
+def build_deployment_options(config: ModelshipModelConfig) -> dict:
     """Return a kwargs dict for `Deployment.options(**...)`.
 
     Always contains ``ray_actor_options``; for multi-slot vLLM deploys also
@@ -135,11 +113,6 @@ def build_deployment_options(config: ModelshipModelConfig, plugin_wheel: Path | 
     env_vars.update(build_passthrough_env_vars())
 
     runtime_env: dict = {"env_vars": env_vars}
-    if plugin_wheel is not None:
-        # Ship the plugin to the Ray worker via runtime_env. Ray content-hashes
-        # and caches the resulting per-job venv, so repeat deploys of the same
-        # wheel reuse the install.
-        runtime_env["pip"] = [str(plugin_wheel)]
 
     capability_resources = deployment_capability_resources(config)
 

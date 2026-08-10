@@ -5,7 +5,7 @@ import pytest
 import requests
 
 from modelship.deploy.actor_options import build_cache_env_vars
-from modelship.utils import cache_dir, download, plugins_dir
+from modelship.utils import cache_dir, download
 from modelship.utils.cache import resolve_cache_root
 
 
@@ -45,11 +45,6 @@ def test_utils_cache_dir_default():
     # but cache_dir calls os.makedirs.
     with mock.patch.dict(os.environ, {"MSHIP_CACHE_DIR": "/.cache"}, clear=True), mock.patch("os.makedirs"):
         assert cache_dir() == "/.cache"
-
-
-def test_utils_plugins_dir():
-    with mock.patch.dict(os.environ, {"MSHIP_CACHE_DIR": "/tmp/cache"}, clear=True), mock.patch("os.makedirs"):
-        assert plugins_dir() == "/tmp/cache/plugins"
 
 
 class TestResolveCacheRoot:

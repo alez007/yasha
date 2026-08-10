@@ -113,35 +113,6 @@ class TestModelshipModelConfig:
         )
         assert config.chat_template_kwargs == {"enable_thinking": False}
 
-    def test_custom_loader_requires_plugin(self):
-        with pytest.raises(ValidationError, match="loader='custom' requires plugin"):
-            ModelshipModelConfig(
-                name="test-tts",
-                model="some-model",
-                usecase=ModelUsecase.tts,
-                loader=ModelLoader.custom,
-            )
-
-    def test_custom_loader_with_plugin(self):
-        config = ModelshipModelConfig(
-            name="test-tts",
-            model="some-model",
-            usecase=ModelUsecase.tts,
-            loader=ModelLoader.custom,
-            plugin="kokoroonnx",
-        )
-        assert config.plugin == "kokoroonnx"
-
-    def test_custom_loader_plugin_only(self):
-        config = ModelshipModelConfig(
-            name="test-tts",
-            model="some-model",
-            usecase=ModelUsecase.tts,
-            loader=ModelLoader.custom,
-            plugin="kokoroonnx",
-        )
-        assert config.plugin == "kokoroonnx"
-
     def test_model_required(self):
         with pytest.raises(ValidationError, match="`model:` is required for loader"):
             ModelshipModelConfig(
@@ -370,11 +341,10 @@ class TestModelshipModelConfig:
         # Non-vllm loaders have no parallelism config; num_gpus stays as-is
         # for the loader to interpret directly.
         config = ModelshipModelConfig(
-            name="test-tts",
+            name="test-stt",
             model="some-model",
-            usecase=ModelUsecase.tts,
-            loader=ModelLoader.custom,
-            plugin="myplugin",
+            usecase=ModelUsecase.transcription,
+            loader=ModelLoader.whispercpp,
             num_gpus=2,
         )
         assert config.num_gpus == 2
@@ -402,8 +372,6 @@ class TestModelshipModelConfig:
             else:
                 usecase, model = ModelUsecase.generate, "some-model"
             kwargs = {"name": "test", "model": model, "usecase": usecase}
-            if loader == ModelLoader.custom:
-                kwargs["plugin"] = "test-plugin"
             config = ModelshipModelConfig(loader=loader, **kwargs)
             assert config.loader == loader
 
@@ -443,11 +411,10 @@ class TestModelshipConfig:
                 ),
                 ModelshipModelConfig(
                     name="tts",
-                    model="some-model",
+                    model="kokoro-en-v0_19",
                     usecase=ModelUsecase.tts,
-                    loader=ModelLoader.custom,
-                    plugin="kokoroonnx",
-                    num_gpus=0.05,
+                    loader=ModelLoader.sherpa_onnx,
+                    num_gpus=0,
                 ),
             ]
         )
@@ -467,19 +434,19 @@ class TestModelshipConfig:
                 models=[
                     ModelshipModelConfig(
                         name="kokoro",
-                        model="hexgrad/Kokoro-82M",
+                        model="kokoro-en-v0_19",
                         usecase=ModelUsecase.tts,
-                        loader=ModelLoader.custom,
-                        plugin="kokoroonnx",
-                        num_gpus=0.07,
+                        loader=ModelLoader.sherpa_onnx,
+                        num_gpus=0,
+                        num_cpus=1,
                     ),
                     ModelshipModelConfig(
                         name="kokoro",
-                        model="hexgrad/Kokoro-82M",
+                        model="kokoro-en-v0_19",
                         usecase=ModelUsecase.tts,
-                        loader=ModelLoader.custom,
-                        plugin="kokoroonnx",
+                        loader=ModelLoader.sherpa_onnx,
                         num_gpus=0,
+                        num_cpus=2,
                     ),
                 ]
             )

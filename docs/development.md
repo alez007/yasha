@@ -21,7 +21,6 @@ The recommended way to develop Modelship is with VS Code Dev Containers. The con
 3. Once inside the container, sync dependencies:
 
    ```bash
-   # Sync project deps (add --extra <plugin> for each plugin you need)
    uv sync --extra dev
    ```
 
@@ -62,14 +61,6 @@ The following environment variables are set in the dev image with sensible defau
 | `MSHIP_GATEWAY_REPLICAS` | `1` | Number of API gateway replicas. Raise for routing/ingress HA and to spread request-proxying load under high concurrency; replicas keep routing tables in sync via the deploy coordinator's watch loop. |
 | `MSHIP_GATEWAY_MAX_ONGOING` | `1024` | Per-replica Ray Serve concurrency cap for the gateway. The gateway holds a slot for the whole lifetime of each streamed response, so a low cap throttles before the engine does. |
 | `MSHIP_LLAMA_SERVER_BIN` | `/opt/llama.cpp/llama-server.sh` | `llama-server` executable used by the `llama_server` loader. The image ships a pinned llama.cpp build; see [llama-server binary](#llama-server-binary-llama_server-loader) for running outside the image. |
-
-### Installing plugin dependencies for IntelliSense
-
-Plugin packages (e.g. `kokoro_onnx`, `onnxruntime`) are only installed when their extra is enabled. If you're working on a plugin and want full IntelliSense, sync the extras inside the container:
-
-```bash
-uv sync --extra kokoroonnx --extra dev
-```
 
 ## Manual setup (without Dev Containers)
 

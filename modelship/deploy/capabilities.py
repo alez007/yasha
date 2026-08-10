@@ -1,6 +1,5 @@
 """Node/deployment capability resources: `mship_<loader>` alongside Ray's native
 `GPU`, so a deploy only schedules onto a node with that loader installed.
-`loader: custom` requests neither — plugins install post-scheduling via runtime_env.
 
 Must stay ray-free at import time: modelship/launcher.py imports LOADER_MODULES
 from here before resolve_ray_auth_env runs, so the ModelshipModelConfig annotation
@@ -58,11 +57,8 @@ def node_capability_resources() -> dict[str, float]:
 
 
 def deployment_capability_resources(config: ModelshipModelConfig) -> dict[str, float]:
-    """{"mship_vllm": 0.001} for the config's loader; empty for loader='custom'."""
-    loader = str(config.loader)
-    if loader == "custom":
-        return {}
-    return {f"{RESOURCE_PREFIX}{loader}": 0.001}
+    """{"mship_vllm": 0.001} for the config's loader."""
+    return {f"{RESOURCE_PREFIX}{config.loader!s}": 0.001}
 
 
 def _llama_server_available() -> bool:

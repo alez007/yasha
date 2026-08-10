@@ -5,17 +5,16 @@ Operational notes for agents working in this repo. Read before making changes.
 ## Toolchain
 
 - Python is pinned exactly to `3.12.10` (`requires-python = "==3.12.10"`). Not `>=3.12`.
-- Dependency manager is **uv** with a workspace. Plugins under `plugins/*` are workspace members.
+- Dependency manager is **uv**.
 - Never run `pip install`; always use `uv sync` / `uv run` / `uv lock`.
 - `cuda` and `cpu` extras are mutually exclusive (declared in `[tool.uv] conflicts`). `torch` / `torchvision` come from different indexes per extra (`pytorch-cu130` vs `pytorch-cpu`). A third extra, `thin`, is empty (base deps only) — no torch/vllm, used by the thin control/coordinator image.
 
 ## Commands you'd otherwise guess wrong
 
 ```bash
-# Install deps for development (choose cuda OR cpu, plus dev, plus any plugin extras)
-uv sync --extra dev --extra cuda                   # what CI uses
-uv sync --extra dev --extra cpu                    # CPU-only dev
-uv sync --extra dev --extra cpu --extra kokoroonnx # with a plugin
+# Install deps for development (choose cuda OR cpu, plus dev)
+uv sync --extra dev --extra cuda   # what CI uses
+uv sync --extra dev --extra cpu    # CPU-only dev
 
 # The canonical dev loop (mirrored in CI and Makefile)
 make lint        # ruff check + ruff format --check + pyright  (all three MUST pass)
@@ -49,8 +48,7 @@ When in doubt, check OpenAI's reference for the exact route. Existing deviations
 
 - Line length **120** (not 88). Ruff handles formatting; `E501` is disabled because the formatter owns line length.
 - Ruff rule set: `E, W, F, I, N, UP, B, SIM, RUF`. `I` means isort runs — don't hand-sort imports.
-- `known-first-party = ["modelship"]` — the `plugins/*` packages are treated as third-party by isort.
-- Pyright `typeCheckingMode = "basic"`, scoped to `modelship`, `plugins`, `mship_deploy.py`. Don't add `# type: ignore` without checking pyright actually complains in basic mode.
+- Pyright `typeCheckingMode = "basic"`, scoped to `modelship`, `mship_deploy.py`. Don't add `# type: ignore` without checking pyright actually complains in basic mode.
 
 ## Running the server
 
@@ -61,27 +59,17 @@ When in doubt, check OpenAI's reference for the exact route. Existing deviations
 3. Deploys models **additively** by default (new deployments get a random suffix, e.g. `qwen-a3f9k`). Pass `--reconcile` to instead make the cluster match the config exactly (add/remove/replace) — it never tears the cluster down.
 4. Starts a FastAPI gateway Ray Serve app named `modelship api` (override with `--gateway-name`), listening on port `8000`.
 
-The Docker image's `CMD` is `uv run --no-sync python -m modelship.launcher deploy` (against the venv baked at build time; extras selected by `--build-arg MSHIP_VARIANT=thin|cpu|cuda`), which starts its own Ray head and runs the deploy loop. Plugin wheels under `MSHIP_PLUGIN_WHEEL_DIR` are injected per-deployment via Ray `runtime_env`, resolved automatically from `models.yaml`. The Dev Container overrides this `CMD`, so inside a Dev Container you run `mship deploy` (or `mship_deploy.py`) manually (see `docs/development.md`).
+The Docker image's `CMD` is `uv run --no-sync python -m modelship.launcher deploy` (against the venv baked at build time; extras selected by `--build-arg MSHIP_VARIANT=thin|cpu|cuda`), which starts its own Ray head and runs the deploy loop. The Dev Container overrides this `CMD`, so inside a Dev Container you run `mship deploy` (or `mship_deploy.py`) manually (see `docs/development.md`).
 
 Right after connecting to Ray, the driver logs the cluster's observed totals (`Connected to Ray: N node(s), X GPU / Y CPU total (Xa GPU / Ya CPU schedulable now)`) — useful for telling a legitimately-waiting head (0 schedulable resources, no workers joined yet) apart from a misconfigured one.
 
 ## Architecture quick map
 
-- `modelship/driver.py` — Ray init + deploy loop (`mship_deploy.py`'s former contents; that file is now a 3-line shim). `build_deployment_options` (in `modelship/deploy/actor_options.py`) handles GPU allocation: multi-slot vLLM deploys (`tp*pp > 1`) always build a Ray Serve placement group (one whole-GPU bundle per slot, STRICT_PACK) that vLLM's ray executor inherits via `get_current_placement_group()`. Single-slot deploys use a scalar `num_gpus` on the outer actor. Fractional `num_gpus` (`<1`) is single-GPU only — combining it with TP/PP is rejected at config time (Ray packs fractional PG bundles onto the same physical GPU). Every non-`custom` deploy also requests a `mship_<loader>` custom resource (`modelship/deploy/capabilities.py`), so it only schedules onto a node that actually has that loader's backend installed — see `CLAUDE.md`'s capability-aware scheduling sharp edge.
+- `modelship/driver.py` — Ray init + deploy loop (`mship_deploy.py`'s former contents; that file is now a 3-line shim). `build_deployment_options` (in `modelship/deploy/actor_options.py`) handles GPU allocation: multi-slot vLLM deploys (`tp*pp > 1`) always build a Ray Serve placement group (one whole-GPU bundle per slot, STRICT_PACK) that vLLM's ray executor inherits via `get_current_placement_group()`. Single-slot deploys use a scalar `num_gpus` on the outer actor. Fractional `num_gpus` (`<1`) is single-GPU only — combining it with TP/PP is rejected at config time (Ray packs fractional PG bundles onto the same physical GPU). Every deploy also requests a `mship_<loader>` custom resource (`modelship/deploy/capabilities.py`), so it only schedules onto a node that actually has that loader's backend installed — see `CLAUDE.md`'s capability-aware scheduling sharp edge.
 - `modelship/openai/api.py` — FastAPI gateway. Uses `RequestWatcher` + a single shared `DisconnectRegistry` Ray actor (keyed by request id) to propagate client disconnects across process boundaries.
 - `modelship/infer/model_deployment.py` — the single `@serve.deployment` actor class; lazily imports the right backend based on `config.loader`.
 - `modelship/infer/infer_config.py` — pydantic config schemas **and** `RawRequestProxy` / `DisconnectRegistry`. `RawRequestProxy` exists because FastAPI `Request` cannot cross Ray process boundaries; any new attribute vLLM reads from `raw_request` must be added there.
-- `modelship/infer/{vllm,diffusers,custom}/` — one subdir per loader. Each has an `*_infer.py` and (for non-custom) an `openai/` adapter subpackage. `modelship/infer/llama_server/llama_server_infer.py` is a flat file with no `openai/` subpackage — it proxies a `llama-server` subprocess's own OpenAI-compatible HTTP API rather than parsing output in-process.
-- `modelship/plugins/base_plugin.py` — `BasePlugin` ABC that plugin packages subclass as `ModelPlugin`.
-- `plugins/*` — workspace packages, each opt-in via a root extra. The plugin module name and the extra name must match (`ensure_plugin()` calls `importlib.import_module(config.plugin)` and the error message says `uv sync --extra <plugin>`).
-
-## Adding a plugin (checklist that's easy to miss)
-
-1. Create `plugins/<name>/` with its own `pyproject.toml` (module-name = `<name>`, depends on `modelship` via `{ workspace = true }`).
-2. Export `ModelPlugin` from `plugins/<name>/<name>/__init__.py`.
-3. In root `pyproject.toml`: add `<name> = ["<name>"]` under `[project.optional-dependencies]` **and** `<name> = { workspace = true }` under `[tool.uv.sources]`. Both are required.
-4. Run `uv lock` to refresh `uv.lock`.
-5. Add a `README.md` inside the plugin (required — see `docs/plugins.md`).
+- `modelship/infer/{vllm,diffusers,llama_server,stable_diffusion_cpp,whispercpp,sherpa_onnx}/` — one subdir per loader. Each has an `*_infer.py` and an `openai/` adapter subpackage. `modelship/infer/llama_server/llama_server_infer.py` is the exception: a flat file with no `openai/` subpackage — it proxies a `llama-server` subprocess's own OpenAI-compatible HTTP API rather than parsing output in-process.
 
 ## Tests
 
@@ -127,8 +115,7 @@ Commit messages matter: use Conventional Commits prefixes so the changelog gener
 
 Prefer these over re-reading source when orienting:
 
-- `docs/architecture.md` — request lifecycle, loaders, plugin system
+- `docs/architecture.md` — request lifecycle, loaders
 - `docs/development.md` — full dev-container + manual-Docker setup, env vars
 - `docs/model-configuration.md` — `models.yaml` reference
-- `docs/plugins.md` — plugin authoring
 - `config/examples/` — working `models.yaml` files for each backend

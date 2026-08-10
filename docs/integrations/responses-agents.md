@@ -8,9 +8,9 @@ chat completions.
 ## Support matrix
 
 `/v1/responses` is implemented on the **vLLM** and **llama.cpp**
-(`llama_server`) loaders. It 404s on `diffusers` and `custom` (TTS/STT
-plugin) deployments, since those don't have a text generation loop to attach
-it to.
+(`llama_server`) loaders. It 404s on `diffusers`, `sherpa_onnx`, and
+`whispercpp` deployments, since those don't have a text generation loop to
+attach it to.
 
 Supported on both loaders:
 

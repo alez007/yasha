@@ -57,7 +57,6 @@ class ModelLoader(StrEnum):
     stable_diffusion_cpp = "stable_diffusion_cpp"
     whispercpp = "whispercpp"
     sherpa_onnx = "sherpa_onnx"
-    custom = "custom"
 
 
 class VllmEngineConfig(BaseModel):
@@ -244,7 +243,6 @@ class ModelshipModelConfig(BaseModel):
     model: str | None = None
     usecase: ModelUsecase
     loader: ModelLoader
-    plugin: str | None = None  # only meaningful for loader='custom'
     num_gpus: float = 0
     num_cpus: float = 0.1
     num_replicas: int = 1
@@ -257,7 +255,6 @@ class ModelshipModelConfig(BaseModel):
     llama_server_config: LlamaServerConfig | None = None
     stable_diffusion_cpp_config: StableDiffusionCppConfig | None = None
     whispercpp_config: WhispercppConfig | None = None
-    plugin_config: dict[str, Any] | None = None  # plugin devs parse this themselves
     # Extra variables forwarded verbatim into the chat-template Jinja render on
     # every text loader (e.g. `enable_thinking: false` for Qwen3). Only does
     # something if the model's template branches on the key.
@@ -307,10 +304,8 @@ class ModelshipModelConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def check_custom_requires_plugin(self):
-        if self.loader == ModelLoader.custom and self.plugin is None:
-            raise ValueError("loader='custom' requires plugin to be set")
-        if self.loader != ModelLoader.custom and not self.model:
+    def check_model_required(self):
+        if not self.model:
             raise ValueError(f"`model:` is required for loader={self.loader!r}")
         if self.loader in (ModelLoader.diffusers, ModelLoader.stable_diffusion_cpp) and (
             self.usecase is not ModelUsecase.image
@@ -326,7 +321,7 @@ class ModelshipModelConfig(BaseModel):
             return self
         from modelship.infer.sherpa_onnx.registry import registry_names
 
-        assert self.model is not None  # enforced by check_custom_requires_plugin above
+        assert self.model is not None  # enforced by check_model_required above
         name = os.path.basename(self.model.rstrip("/")) if is_pathy(self.model) else self.model
         names = registry_names()
         if name not in names:
