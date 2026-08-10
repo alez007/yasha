@@ -50,11 +50,7 @@ def compute_deploy_plan(
     dropped are. An empty prev-effective set (migration / fresh install) therefore
     removes nothing."""
 
-    # Schedule larger GPU footprints first so they claim whole GPU units before
-    # fractional models consume the pool. World size = tp * pp (vllm multi-slot);
-    # non-vllm loaders have no tp/pp, so num_gpus (rounded up) stands in for it.
-    # ceil() alone ties num_gpus=1 with num_gpus=0.5 (both round up to 1), so the
-    # tuple also breaks ties toward whole-GPU requests first, then larger fractions.
+    # Sort key: footprint desc, whole-GPU before fractional, larger fraction first.
     def _gpu_footprint(c: ModelshipModelConfig) -> tuple[int, bool, float]:
         world_size = (
             c.vllm_engine_kwargs.tensor_parallel_size * c.vllm_engine_kwargs.pipeline_parallel_size
