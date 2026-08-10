@@ -33,23 +33,19 @@ def _wav_frames_and_rate(audio: bytes) -> tuple[int, int]:
         return w.getnframes(), w.getframerate()
 
 
+def _transcribe(client, audio: bytes, tmp_path) -> str:
+    audio_file = tmp_path / "speech.wav"
+    audio_file.write_bytes(audio)
+    with open(audio_file, "rb") as f:
+        return client.audio.transcriptions.create(model="stt-cpp-model", file=f).text.lower()
+
+
 @pytest.mark.integration
 @pytest.mark.sherpa_onnx
 class TestSherpaOnnx:
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
-        model_deployer.deploy("tts-model")
-
-    def test_speech_returns_valid_wav_audio(self, client):
-        response = client.audio.speech.create(
-            model="tts-model", voice="af_bella", input="Hello from an integration test."
-        )
-        audio = response.content
-        assert audio.startswith(b"RIFF") and b"WAVE" in audio[:16]
-        with wave.open(io.BytesIO(audio)) as w:
-            assert w.getnchannels() == 1
-            assert w.getsampwidth() == 2
-            assert w.getnframes() > 0
+        model_deployer.deploy("tts-model", "stt-cpp-model")
 
     def test_multiple_voices_produce_distinct_audio(self, client):
         # A sample across the registry, not all 11 — enough to prove sid
@@ -61,14 +57,35 @@ class TestSherpaOnnx:
         ]
         assert len({clips[0], clips[1], clips[2]}) == len(sample)
 
-    def test_numeric_voice_is_accepted(self, client):
+    def test_speech_is_intelligible_via_transcription(self, client, tmp_path):
+        # Structural WAV checks alone don't prove the audio is clean speech
+        # rather than silence/noise that happens to be shaped like a WAV file
+        # — round-trip it through a real STT model (whispercpp, CPU-only so
+        # it can run alongside sherpa_onnx without a GPU) to confirm it is.
+        audio = client.audio.speech.create(
+            model="tts-model", voice="af_bella", input="The wizard counted seventeen purple bananas."
+        ).content
+        text = _transcribe(client, audio, tmp_path)
+        assert "wizard" in text
+        assert "banana" in text
+
+    def test_different_voices_are_all_intelligible(self, client, tmp_path):
+        sample = (_VOICE_NAMES[0], _VOICE_NAMES[len(_VOICE_NAMES) // 2], _VOICE_NAMES[-1])
+        for voice in sample:
+            audio = client.audio.speech.create(
+                model="tts-model", voice=voice, input="Open the door and turn on the light."
+            ).content
+            text = _transcribe(client, audio, tmp_path)
+            assert "door" in text or "light" in text, f"voice {voice!r} transcribed to unintelligible text: {text!r}"
+
+    def test_numeric_voice_is_accepted(self, client, tmp_path):
         # sherpa's kokoro model isn't byte-deterministic call-to-call (stochastic
         # vocoder), so this can't assert equality against the named-voice
         # request — only that the digit path round-trips through the API to
-        # real inference instead of being rejected somewhere along the way.
-        audio = client.audio.speech.create(model="tts-model", voice="0", input="Numeric voice.").content
-        assert audio.startswith(b"RIFF")
-        assert _wav_frames_and_rate(audio)[0] > 0
+        # real, intelligible inference instead of being rejected somewhere
+        # along the way.
+        audio = client.audio.speech.create(model="tts-model", voice="0", input="Numeric voice selection.").content
+        assert "numeric" in _transcribe(client, audio, tmp_path)
 
     def test_unknown_voice_returns_error(self, client):
         with pytest.raises(openai.BadRequestError, match="unknown voice"):
