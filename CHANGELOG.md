@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.9] - 2026-08-10
+
+### Added
+- add sherpa_onnx TTS loader (kokoro, CPU/CoreML, streaming)
+- promote whispercpp to a first-class in-process loader
+
+### Fixed
+- clear a stale extract_dir before re-fetching llama-server
+- single-flight sherpa_onnx bundle fetches with an flock
+- give each sherpa_onnx bundle fetch a unique archive path
+- clear a stale cached bundle before re-fetching
+- recognize whispercpp built-in model names on a pywhispercpp-less driver
+- correct whispercpp ggml magic and English-only language detection
+- forward the source-language hint on whispercpp translations
+- raise onnxruntime-gpu floor to 1.28.0 for CUDA 13 compatibility
+- type the vllm output_handler callback correctly and tighten the process match
+- crash the replica actor when a loader's backend dies unexpectedly
+- refresh stale and broken model references in example configs
+- close vLLM cross-identity prefix-cache timing side channel
+- correct compute_lib_level docstring to match its DEBUG floor
+- cut library log noise, prefix and de-duplicate startup log lines
+
+### Changed
+- remove the plugin system
+- validate sherpa_onnx speech output via real STT transcription
+- add end-to-end integration coverage for the sherpa_onnx loader
+- promote is_pathy to a shared utility
+- shorten fetch_and_extract_archive's docstring
+- derive the sherpa OfflineTtsConfig sub-config from entry.family
+- trim rationale out of two sherpa_onnx docstrings
+- drop per-file size/sha256 pins from the sherpa_onnx registry
+- unify tarball fetch/verify/extract into modelship.utils.fetch_and_extract_archive
+- drop the CUDA-wheel aside from sherpa_onnx scope notes
+- remove the whispercpp plugin, superseded by loader: whispercpp
+- remove unnecessary comment
+- clarify enable_prefix_caching None passthrough is intentional
+- trim comments to 1-2 lines
+
 ## [0.7.8] - 2026-08-03
 
 ### Added
