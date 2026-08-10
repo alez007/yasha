@@ -7,7 +7,8 @@ Modelship is built on [Ray Serve](https://docs.ray.io/en/latest/serve/) for depl
 - **[vLLM](https://github.com/vllm-project/vllm)** — high-throughput inference with continuous batching and PagedAttention, on GPU or CPU
 - **llama-server** — a proxied `llama-server` subprocess for quantized GGUF chat, embeddings, and vision on CPU or GPU
 - **[HuggingFace Diffusers](https://github.com/huggingface/diffusers)** — image generation via `AutoPipelineForText2Image`
-- **Plugin system** — custom TTS and STT backends (Kokoro ONNX, Orpheus, whisper.cpp)
+- **sherpa-onnx** — TTS (Kokoro), on CPU or GPU (CoreML on Metal)
+- **whisper.cpp** — STT, via `pywhispercpp` bindings
 
 ## Request Lifecycle
 
@@ -15,7 +16,7 @@ Modelship is built on [Ray Serve](https://docs.ray.io/en/latest/serve/) for depl
 2. The gateway identifies the target model from the request body
 3. A `RequestWatcher` begins monitoring the client connection for disconnects
 4. The request is forwarded to the model's Ray Serve deployment via a `RawRequestProxy` (serializable headers + cancellation event)
-5. The model deployment runs inference (vLLM, llama-server, diffusers, or plugin)
+5. The model deployment runs inference (vLLM, llama-server, diffusers, sherpa-onnx, or whisper.cpp)
 6. Response streams back as JSON or SSE
 7. If the client disconnects mid-inference, the watcher fires the cancellation event, freeing GPU resources immediately
 
@@ -120,20 +121,9 @@ Ray automatically schedules model deployments across available GPUs based on the
 
 ### Capability-aware scheduling
 
-`num_gpus`/`num_cpus` alone only describe *how much* hardware a deployment needs, not *whether the node can actually run the loader at all*. Every node advertises a `mship_<loader>` Ray custom resource (e.g. `mship_vllm`) for each loader whose backend is actually installed — probed via `importlib.util.find_spec()` at startup, plus a real-binary check for `llama_server` (`modelship/deploy/capabilities.py`). Every model deployment except `loader: custom` requests its loader's resource alongside `num_gpus`/`GPU`, so it can only schedule onto a node with that backend present. A deploy with no capable node pends, and Ray Serve's own slow-start warning names the missing `mship_<loader>` resource — the same way it already names an unsatisfiable `GPU` request. `loader: custom` (plugins) is exempt: plugin wheels install onto whatever node was already picked, via `runtime_env`, so there's nothing to probe up front.
+`num_gpus`/`num_cpus` alone only describe *how much* hardware a deployment needs, not *whether the node can actually run the loader at all*. Every node advertises a `mship_<loader>` Ray custom resource (e.g. `mship_vllm`) for each loader whose backend is actually installed — probed via `importlib.util.find_spec()` at startup, plus a real-binary check for `llama_server` (`modelship/deploy/capabilities.py`). Every model deployment requests its loader's resource alongside `num_gpus`/`GPU`, so it can only schedule onto a node with that backend present. A deploy with no capable node pends, and Ray Serve's own slow-start warning names the missing `mship_<loader>` resource — the same way it already names an unsatisfiable `GPU` request.
 
 This is what lets a `thin` (no-torch) coordinator node deploy models onto `cuda`/`cpu` worker nodes in a multi-node cluster, and what stops a `diffusers` model from landing on a `cpu`-image node that doesn't have `diffusers` installed. `MSHIP_NODE_CAPABILITIES` (a JSON object) overrides a node's advertised set wholesale, for environments where the probe isn't accurate.
-
-## Plugin System
-
-Custom backends are isolated `uv` workspace packages under `plugins/`. Each plugin:
-
-- Implements `BasePlugin` and overrides the `create_*` method(s) matching its `usecase` (e.g. `create_speech` for TTS, `create_transcription` for STT)
-- Has its own dependencies, isolated from the main project
-- Is automatically loaded from wheels via Ray's `runtime_env` when referenced in `models.yaml`
-- Returns raw, protocol-agnostic outputs; OpenAI-shape adaptation is handled by the serving wrappers in `modelship/infer/custom/openai/`
-
-See [Plugin Development](plugins.md) for details.
 
 ## Key Files
 
@@ -149,5 +139,4 @@ See [Plugin Development](plugins.md) for details.
 | `modelship/infer/llama_server/llama_server_infer.py` | llama-server subprocess proxy (GGUF chat/embed/vision) |
 | `modelship/infer/diffusers/diffusers_infer.py` | Diffusers pipeline wrapper |
 | `modelship/infer/stable_diffusion_cpp/stable_diffusion_cpp_infer.py` | stable-diffusion.cpp wrapper (CPU/Metal image gen) |
-| `modelship/plugins/base_plugin.py` | Plugin base classes |
 | `config/models.yaml` | Model configuration |

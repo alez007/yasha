@@ -1,7 +1,6 @@
 """Tests for mship_deploy.py CLI argument parsing and helpers."""
 
 import os
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,7 +9,6 @@ from modelship.deploy.actor_options import (
     build_cache_env_vars,
     build_deployment_options,
     build_passthrough_env_vars,
-    resolve_plugin_wheel,
     total_cpu_reservation,
     total_gpu_reservation,
 )
@@ -357,18 +355,6 @@ class TestBuildDeploymentOptions:
         assert "pip" not in actor["runtime_env"]
         assert "placement_group_bundles" not in opts
 
-    def test_with_plugin_wheel(self):
-        config = ModelshipModelConfig(
-            name="test-model",
-            model="some-model",
-            usecase=ModelUsecase.generate,
-            loader=ModelLoader.custom,
-            plugin="myplugin",
-        )
-        wheel_path = Path("/tmp/myplugin-0.1.0-py3-none-any.whl")
-        opts = build_deployment_options(config, plugin_wheel=wheel_path)
-        assert opts["ray_actor_options"]["runtime_env"]["pip"] == [str(wheel_path)]
-
     def test_llama_server_honors_num_gpus(self):
         config = ModelshipModelConfig(
             name="test-model",
@@ -565,8 +551,7 @@ class TestBuildDeploymentOptions:
 
 class TestBuildDeploymentOptionsCapabilityResources:
     """The `mship_<loader>` capability resource must gate scheduling regardless of
-    num_gpus, on single-slot, multi-slot (PG), and stable_diffusion_cpp deploys —
-    but never for loader='custom' (plugins install post-scheduling)."""
+    num_gpus, on single-slot, multi-slot (PG), and stable_diffusion_cpp deploys."""
 
     def test_single_slot_requests_capability(self):
         config = ModelshipModelConfig(
@@ -595,13 +580,6 @@ class TestBuildDeploymentOptionsCapabilityResources:
         with patch("modelship.deploy.actor_options.platform.system", return_value="Linux"):
             opts = build_deployment_options(config)
         assert opts["ray_actor_options"]["resources"] == {"mship_stable_diffusion_cpp": 0.001}
-
-    def test_custom_loader_requests_no_capability(self):
-        config = ModelshipModelConfig(
-            name="m", model="x", usecase=ModelUsecase.generate, loader=ModelLoader.custom, plugin="myplugin"
-        )
-        opts = build_deployment_options(config)
-        assert opts["ray_actor_options"]["resources"] == {}
 
     def test_llama_server_requests_capability_regardless_of_num_gpus(self):
         config = ModelshipModelConfig(
@@ -758,31 +736,6 @@ class TestStartGateway:
     def test_rejects_invalid_env(self, name, value):
         with pytest.raises(ValueError, match=name):
             self._run({name: value})
-
-
-class TestResolvePluginWheel:
-    def test_resolves_latest_wheel(self, tmp_path):
-        wheel_dir = tmp_path / "wheels"
-        wheel_dir.mkdir()
-        (wheel_dir / "myplugin-0.1.0-py3-none-any.whl").touch()
-        (wheel_dir / "myplugin-0.1.1-py3-none-any.whl").touch()
-
-        with patch.dict(os.environ, {"MSHIP_PLUGIN_WHEEL_DIR": str(wheel_dir)}):
-            wheel = resolve_plugin_wheel("myplugin")
-            assert wheel.name == "myplugin-0.1.1-py3-none-any.whl"
-            assert wheel.is_absolute()
-
-    def test_raises_if_no_wheel(self, tmp_path):
-        import pytest
-
-        wheel_dir = tmp_path / "wheels"
-        wheel_dir.mkdir()
-
-        with (
-            patch.dict(os.environ, {"MSHIP_PLUGIN_WHEEL_DIR": str(wheel_dir)}),
-            pytest.raises(RuntimeError, match="No wheel found for plugin 'myplugin'"),
-        ):
-            resolve_plugin_wheel("myplugin")
 
 
 class TestValidateNodeGpuReservation:

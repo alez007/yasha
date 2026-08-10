@@ -43,7 +43,6 @@ The base cache directory (`MSHIP_CACHE_DIR`, default: `/.cache`) is organized in
 - `{base_cache}/huggingface`: HuggingFace models and tokenizers (via `HF_HOME`).
 - `{base_cache}/vllm`: vLLM-specific compiled artifacts and caches (via `VLLM_CACHE_ROOT`).
 - `{base_cache}/flashinfer`: FlashInfer kernels (via `FLASHINFER_CACHE_DIR`).
-- `{base_cache}/plugins`: Downloaded weights and artifacts used by custom plugins.
 
 ### Additive Deploys
 
@@ -93,10 +92,9 @@ If `MSHIP_TRUSTED_IDENTITY_HEADER` is unset (the default), modelship falls back 
 | Field | Type | Description |
 |---|---|---|
 | `name` | string | Model identifier used in API requests |
-| `model` | string | HuggingFace repo ID, local path, or `repo:filename` (see [Model source](#model-source)). Required for built-in loaders; optional for `loader: custom` |
+| `model` | string | HuggingFace repo ID, local path, or `repo:filename` (see [Model source](#model-source)) |
 | `usecase` | string | `generate`, `embed`, `transcription`, `translation`, `tts`, or `image` |
-| `loader` | string | `vllm`, `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx`, or `custom` |
-| `plugin` | string | Plugin module name (required when `loader: custom`); automatically loaded from wheels when referenced |
+| `loader` | string | `vllm`, `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, or `sherpa_onnx` |
 | `num_gpus` | float \| int | GPU allocation. Fractional `< 1` shares one GPU (also sets vLLM `gpu_memory_utilization`); integer `≥ 1` requests that many whole GPUs (for `vllm`, this auto-sets `tensor_parallel_size = num_gpus` unless tp/pp is already specified). |
 | `num_cpus` | float | CPU units to allocate (default `0.1`) |
 | `num_replicas` | int | Fixed number of identical Ray Serve replicas for this deployment (default `1`). Mutually exclusive with `autoscaling_config`. |
@@ -106,7 +104,6 @@ If `MSHIP_TRUSTED_IDENTITY_HEADER` is unset (the default), modelship falls back 
 | `diffusers_config` | object | Diffusers pipeline options (see below) |
 | `llama_server_config` | object | llama-server loader options (see below) |
 | `stable_diffusion_cpp_config` | object | stable-diffusion.cpp loader options (see below) |
-| `plugin_config` | object | Plugin-specific options passed through to the plugin |
 | `chat_template_kwargs` | object | Extra variables forwarded into the chat-template render on text loaders (`vllm`) — e.g. `enable_thinking: false` for Qwen3. Only has an effect if the model's template branches on the key. A per-request `chat_template_kwargs` overrides the model default on `vllm`. |
 
 ## Model source
@@ -172,12 +169,6 @@ HF repo 'lmstudio-community/Qwen2.5-7B-Instruct-GGUF' contains 5 GGUF variants �
   - Qwen2.5-7B-Instruct-fp16.gguf
 Example: model: lmstudio-community/Qwen2.5-7B-Instruct-GGUF:*Q4_K_M.gguf
 ```
-
-### Plugins (`loader: custom`)
-
-Plugins manage their own model files; Modelship does not pre-resolve `model:` for
-them. The field is optional for custom loaders and acts as a label only —
-plugins are free to ignore it and use `plugin_config` instead.
 
 ## vLLM Loader
 
@@ -489,18 +480,6 @@ models:
 
 See `config/examples/sherpa-onnx.yaml` for the local-directory form.
 
-## Custom Loader (Plugins)
-
-The `custom` loader delegates to a plugin module. The `plugin` field is required and must match an installed plugin package. Plugin-specific options are passed via `plugin_config`.
-
-See each plugin's README for configuration details:
-- [Kokoro ONNX TTS](https://github.com/modelship-ai/modelship/blob/main/plugins/kokoroonnx/README.md)
-- [Orpheus TTS](https://github.com/modelship-ai/modelship/blob/main/plugins/orpheus/README.md)
-
-whisper.cpp STT was previously a plugin; it's now [`loader: whispercpp`](#whispercpp-loader) above.
-
-For writing your own plugin, see [Plugin Development](plugins.md).
-
 ## Scaling a Deployment
 
 A model `name` maps to exactly one deployment — two config entries sharing a
@@ -511,14 +490,11 @@ them automatically.
 ```yaml
 models:
   - name: "kokoro"
-    model: "hexgrad/Kokoro-82M"
+    model: "kokoro-en-v0_19"
     usecase: "tts"
-    loader: "custom"
-    plugin: "kokoroonnx"
-    num_gpus: 0.07
+    loader: "sherpa_onnx"
+    num_cpus: 2
     num_replicas: 2
-    plugin_config:
-      onnx_provider: "CUDAExecutionProvider"
 ```
 
 ## Autoscaling
@@ -561,7 +537,7 @@ deployment.
 | Variable | Description | Default |
 |---|---|---|
 | `HF_TOKEN` | HuggingFace access token | — |
-| `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace + plugins) | `/.cache` |
+| `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace, vLLM, sherpa_onnx, etc.) | `/.cache` |
 | `MSHIP_STATE_STORE` | State-store connection URI for the effective config, deploy coordinator + `/v1/responses` conversations (see [State store](#state-store-mship_state_store)) | `memory://` |
 | `MSHIP_GATEWAY_NAME` | Name for the API gateway app | `modelship api` |
 | `MSHIP_GATEWAY_REPLICAS` | Number of API gateway replicas (routing/ingress HA; replicas sync routing via the deploy coordinator) | `1` |

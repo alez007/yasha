@@ -43,8 +43,8 @@ class TestRejectUnsupportedDarwinLoader:
         with patch("modelship.infer.model_deployment.platform.system", return_value="Darwin"):
             _reject_unsupported_darwin_loader(config)  # no raise
 
-    def test_darwin_allows_custom(self):
-        config = MagicMock(loader=ModelLoader.custom, name="test-model")
+    def test_darwin_allows_whispercpp(self):
+        config = MagicMock(loader=ModelLoader.whispercpp, name="test-model")
         with patch("modelship.infer.model_deployment.platform.system", return_value="Darwin"):
             _reject_unsupported_darwin_loader(config)  # no raise
 

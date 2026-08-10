@@ -6,10 +6,6 @@ import time
 # Ray-free — safe to import ahead of the env-latch block below.
 from modelship.utils.cache import resolve_cache_root
 
-# Must precede `import ray`: this constant latches at ray's import time. Off, so
-# runtime_env.pip's per-job py_executable isn't overridden by uv's auto-injection.
-os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "false")
-
 # Must precede any huggingface_hub import — HF_HOME latches at its import time.
 # Workers get these via runtime_env.env_vars (actor_options.build_cache_env_vars).
 _BASE_CACHE = resolve_cache_root()
@@ -46,7 +42,6 @@ def main(argv: list[str] | None = None) -> None:
         default_config_path,
         load_raw_models,
         resolve_all_model_sources,
-        resolve_all_plugin_wheels,
     )
     from modelship.deploy.effective_config import (
         deployment_names,
@@ -217,8 +212,6 @@ def main(argv: list[str] | None = None) -> None:
     yml_conf = to_config(desired_raw)
     logger.debug("Deploying effective config (%s mode, %d model(s)): %s", mode, len(desired_raw), yml_conf)
 
-    plugin_wheels = resolve_all_plugin_wheels(yml_conf)
-
     # The detached coordinator holds the cross-operator deploy lock; the detached
     # replica coordinator holds the durable ownership registry (gateway self-heal).
     coordinator = get_or_create_coordinator()
@@ -291,7 +284,6 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Operator id=%s; coordinator acquired.", operator_id)
 
         ctx = DeployContext(
-            plugin_wheels=plugin_wheels,
             coordinator=coordinator,
             replica_coordinator=replica_coord,
             probe=probe,

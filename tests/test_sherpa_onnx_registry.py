@@ -42,6 +42,6 @@ class TestEntries:
             assert len(entry.voice_names) > 0, name
             assert len(entry.voice_names) == len(set(entry.voice_names)), name
 
-    def test_af_bella_present_for_plugin_parity(self):
+    def test_af_bella_present_in_every_entry(self):
         for name, entry in REGISTRY.items():
             assert "af_bella" in entry.voice_names, name

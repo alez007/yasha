@@ -1,8 +1,8 @@
 """
 OpenAI-compatible protocol models for request/response validation.
 
-Every backend (vllm, transformers, custom) and the API gateway import from
-here instead of reaching into framework internals directly.  These are
+Every backend and the API gateway import from here instead of reaching into
+framework internals directly.  These are
 standalone Pydantic models following the OpenAI API specification, with no
 dependency on vLLM or any other inference engine.
 
@@ -62,14 +62,6 @@ from modelship.openai.protocol.images import (
     ImageGenerationResponse,
     ImageObject,
     ImageVariationRequest,
-)
-from modelship.openai.protocol.raw import (
-    RawChatCompletion,
-    RawChatDelta,
-    RawSegment,
-    RawToolCall,
-    RawTranscription,
-    RawTranslation,
 )
 from modelship.openai.protocol.responses import (
     TERMINAL_EVENT_TYPES,
@@ -136,13 +128,7 @@ __all__ = [
     "McpListToolsTool",
     "OpenAIBaseModel",
     "PromptTokenUsageInfo",
-    "RawChatCompletion",
-    "RawChatDelta",
-    "RawSegment",
     "RawSpeechResponse",
-    "RawToolCall",
-    "RawTranscription",
-    "RawTranslation",
     "ResponseFunctionToolCall",
     "ResponseInputItem",
     "ResponseInputTokensDetails",

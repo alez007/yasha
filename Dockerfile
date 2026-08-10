@@ -139,7 +139,6 @@ ENV MSHIP_LOG_LEVEL=INFO
 ENV MSHIP_LOG_FORMAT=text
 ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv/python
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
-ENV MSHIP_PLUGIN_WHEEL_DIR=/opt/modelship/plugin-wheels
 
 # Pinned llama.cpp build for the llama_server loader (see the llama-server
 # stages above). llama-server additionally needs libgomp1 (ggml CPU backends)
@@ -147,7 +146,7 @@ ENV MSHIP_PLUGIN_WHEEL_DIR=/opt/modelship/plugin-wheels
 COPY --from=llama-server /opt/llama.cpp /opt/llama.cpp
 ENV MSHIP_LLAMA_SERVER_BIN=/opt/llama.cpp/llama-server.sh
 
-# onnxruntime-gpu (pulled in by the kokoroonnx plugin) dlopen()s
+# onnxruntime-gpu (a direct dependency of the cuda/metal extras) dlopen()s
 # libonnxruntime_providers_cuda.so which has plain DT_NEEDED entries for
 # libcublasLt.so.13 / libcudnn.so.9 / etc. Torch cu130 bundles these under
 # site-packages/nvidia/*/lib and resolves them via its own rpath once imported
@@ -158,8 +157,8 @@ ENV MSHIP_LLAMA_SERVER_BIN=/opt/llama.cpp/llama-server.sh
 # shell-evaluate.
 ENV LD_LIBRARY_PATH="/.venv/lib/python3.12/site-packages/nvidia/cu13/lib:/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/.venv/lib/python3.12/site-packages/nvidia/nccl/lib:/.venv/lib/python3.12/site-packages/nvidia/cusparselt/lib:/.venv/lib/python3.12/site-packages/nvidia/nvshmem/lib"
 
-RUN mkdir -p /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR /usr/local/uv/python && \
-    chown -R $UID:$GID /modelship /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR /usr/local/uv/python
+RUN mkdir -p /.cache /.venv /usr/local/uv/python && \
+    chown -R $UID:$GID /modelship /.cache /.venv /usr/local/uv/python
 
 # =============================================================================
 # builder — adds build toolchain (nvcc, build-essential, dev headers, git) and
@@ -167,9 +166,7 @@ RUN mkdir -p /.cache /.venv $MSHIP_PLUGIN_WHEEL_DIR /usr/local/uv/python && \
 # compile wheels from source (flashinfer, llama-cpp-python, etc.). All of this
 # stays in the builder stage and is NOT copied into prod.
 #
-# The venv is resolved with --extra $MSHIP_VARIANT only (no plugin extras).
-# Plugin wheels are built separately into $MSHIP_PLUGIN_WHEEL_DIR and shipped
-# to Ray workers per-deployment via runtime_env from mship_deploy.py.
+# The venv is resolved with --extra $MSHIP_VARIANT only.
 # =============================================================================
 FROM base AS builder
 
@@ -214,21 +211,14 @@ ADD --chown=$UID:$GID ./pyproject.toml pyproject.toml
 ADD --chown=$UID:$GID ./README.md README.md
 ADD --chown=$UID:$GID ./uv.lock uv.lock
 ADD --chown=$UID:$GID ./Makefile Makefile
-ADD --chown=$UID:$GID ./plugins plugins
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
     uv sync --locked --no-install-project --extra $MSHIP_VARIANT
 
-# Build plugin wheels into $MSHIP_PLUGIN_WHEEL_DIR. Plugins are NOT installed
-# into /.venv — they ship to Ray workers per-deployment via runtime_env, so the
-# prod venv stays lean.
-RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    make plugin-wheels
-
 # =============================================================================
-# dev — inherits builder (keeps toolchain) and adds dev extras PLUS plugin
-# extras so developers get editable installs for interactive REPL / pytest.
-# Prod does not inherit this stage.
+# dev — inherits builder (keeps toolchain) and adds dev extras so developers
+# get editable installs for interactive REPL / pytest. Prod does not inherit
+# this stage.
 # =============================================================================
 FROM builder AS dev
 
@@ -256,12 +246,10 @@ ARG GID
 
 COPY --from=builder --chown=$UID:$GID /usr/local/uv/python /usr/local/uv/python
 COPY --from=builder --chown=$UID:$GID /.venv /.venv
-COPY --from=builder --chown=$UID:$GID $MSHIP_PLUGIN_WHEEL_DIR $MSHIP_PLUGIN_WHEEL_DIR
 
 ADD --chown=$UID:$GID ./pyproject.toml pyproject.toml
 ADD --chown=$UID:$GID ./README.md README.md
 ADD --chown=$UID:$GID ./uv.lock uv.lock
-ADD --chown=$UID:$GID ./plugins plugins
 ADD --chown=$UID:$GID ./mship_deploy.py mship_deploy.py
 ADD --chown=$UID:$GID ./modelship modelship
 ADD --chown=$UID:$GID ./scripts scripts

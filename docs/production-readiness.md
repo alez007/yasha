@@ -10,7 +10,6 @@ Future development priorities for making Modelship production-ready, organized b
 - [ ] **Rate limiting** — per-user/IP/model throttling to prevent GPU resource monopolization
 - [x] **Input size limits** — coarse payload size limit at the gateway (`MSHIP_MAX_REQUEST_BODY_BYTES`, default 50 MB); per-model `max_context_length` validation in every loader before inference
 - [ ] **Lock down CORS** — replace wildcard `*` origins with environment-specific allowed origins
-- [ ] **Plugin sandboxing** — plugins run with full server privileges; add signature verification or sandboxing
 
 ### Health & Readiness
 
@@ -23,7 +22,6 @@ Future development priorities for making Modelship production-ready, organized b
 - [x] **API endpoint tests** — HTTP-level tests for all `/v1/` endpoints (via `tests/test_integration.py`)
 - [x] **Integration tests** — actual model loading and inference (using Qwen-0.5B/0.6B)
 - [x] **Streaming tests** — SSE streaming correctness and error handling
-- [x] **Plugin loading tests** — verify plugin lifecycle
 - [ ] **Error recovery tests** — simulate failures and verify behavior
 
 ---

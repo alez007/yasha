@@ -51,8 +51,7 @@ def _reject_unsupported_darwin_loader(config: ModelshipModelConfig) -> None:
     if config.loader in _DARWIN_UNSUPPORTED_LOADERS:
         raise RuntimeError(
             f"loader={config.loader.value} is not supported on macOS/Apple Silicon (model '{config.name}'). "
-            "Use loader: llama_server for GGUF models on Metal, or loader: custom for a plugin that "
-            "handles its own backend."
+            "Use loader: llama_server for GGUF models on Metal."
         )
 
 
@@ -202,10 +201,6 @@ class ModelDeployment:
                 from modelship.infer.sherpa_onnx.sherpa_onnx_infer import SherpaOnnxInfer
 
                 self.infer = SherpaOnnxInfer(config)
-            else:
-                from modelship.infer.custom.custom_infer import CustomInfer
-
-                self.infer = CustomInfer(config)
 
             await self.infer.start()
             await self.infer.warmup()

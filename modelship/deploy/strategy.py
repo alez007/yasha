@@ -1,6 +1,5 @@
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import ray
@@ -98,7 +97,6 @@ def compute_deploy_plan(
 
 @dataclass
 class DeployContext:
-    plugin_wheels: dict[str, Path]
     coordinator: Any
     replica_coordinator: Any
     probe: Any
@@ -112,8 +110,7 @@ def try_reserve_and_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> 
     """One attempt at deploying *config*. Returns (status, detail) where status is:
     "skipped" (no progress, retry), "deployed", "transient" (deploy raised; retry),
     "fatal" (deployment reported a permanent error; skip permanently)."""
-    wheel = ctx.plugin_wheels.get(config.plugin) if config.plugin else None
-    deploy_opts = build_deployment_options(config, plugin_wheel=wheel)
+    deploy_opts = build_deployment_options(config)
     deployment_name = config.deployment_name(ctx.gateway_name)
 
     reserved, _reason = ray.get(

@@ -458,9 +458,7 @@ def _sysctl_str(name: str) -> str | None:
 def run_preflight(config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
     """Look up the loader's estimator and run it. Returns `{}` if no estimator
     is registered or the estimator declines (no resolved path, missing config,
-    etc.). For `loader='custom'`, dispatches to the plugin's
-    `ModelPlugin.preflight()` classmethod via a registered adapter.
-    Never raises — preflight failures must not block a deploy."""
+    etc.). Never raises — preflight failures must not block a deploy."""
     if os.environ.get("MSHIP_PREFLIGHT", "true").lower() == "false":
         logger.info(
             "preflight disabled via MSHIP_PREFLIGHT=false for '%s'; using loader defaults + user config",
@@ -503,27 +501,7 @@ def merge_with_user_overrides(
     return {**recommendation, **user_overrides}
 
 
-class _CustomPluginPreflight:
-    """Dispatch adapter for `loader='custom'`. Imports `config.plugin` and
-    delegates to its `ModelPlugin.preflight()` classmethod. The outer
-    `run_preflight()` already swallows exceptions, so import or attribute
-    errors propagate up to be logged there."""
-
-    def recommend(self, config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
-        if config.plugin is None:
-            return {}
-        import importlib
-
-        module = importlib.import_module(config.plugin)
-        plugin_cls = getattr(module, "ModelPlugin", None)
-        if plugin_cls is None:
-            return {}
-        return plugin_cls.preflight(config, hw) or {}
-
-
 def _ensure_registered() -> None:
-    if ModelLoader.custom not in _REGISTRY:
-        register(ModelLoader.custom, _CustomPluginPreflight())
     if ModelLoader.llama_server not in _REGISTRY:
         try:
             from modelship.preflight.llama_cpp import LlamaServerPreflight

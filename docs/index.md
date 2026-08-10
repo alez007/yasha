@@ -32,8 +32,8 @@ with no per-token bill.
 - **GPU memory control** — allocate exact GPU fractions per model (e.g. 70%
   for the LLM, 5% for TTS) so a full stack fits on hardware you already own.
 - **Mix and match backends** — vLLM for high-throughput GPU or CPU inference,
-  llama.cpp for efficient quantized GGUF models, Diffusers for images, and a
-  plugin system for custom backends — in the same deployment.
+  llama.cpp for efficient quantized GGUF models, Diffusers for images,
+  sherpa-onnx for TTS, and whisper.cpp for STT — in the same deployment.
 
 ## Architecture
 
@@ -48,7 +48,8 @@ deployment with its own lifecycle, health checks, and resource budget.
 | **vLLM** | High-throughput chat, embeddings, transcription | No — installs on GPU or CPU |
 | **llama.cpp** (`llama_server`) | High-efficiency quantized GGUF models (chat, embeddings, vision) | No |
 | **Diffusers** | Image generation | Yes |
-| **Custom (plugins)** | TTS backends (Kokoro ONNX, Orpheus), STT backends (whisper.cpp) | No |
+| **sherpa-onnx** | TTS (Kokoro) | No |
+| **whisper.cpp** | STT | No |
 
 Models can be deployed across multiple GPUs or run on CPU-only. A model name
 maps to one deployment, which scales horizontally with `num_replicas`

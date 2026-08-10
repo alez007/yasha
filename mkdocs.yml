@@ -67,7 +67,6 @@ nav:
   - Guides:
       - Production Readiness: production-readiness.md
       - Multi-node without Kubernetes: multi-node-docker.md
-      - Plugin Development: plugins.md
       - Development Setup: development.md
   - Integrations:
       - Overview: integrations/index.md

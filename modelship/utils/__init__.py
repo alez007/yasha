@@ -155,9 +155,3 @@ def cache_dir() -> str:
     path = resolve_cache_root()
     os.makedirs(path, exist_ok=True)
     return path
-
-
-def plugins_dir() -> str:
-    path = f"{cache_dir()}/plugins"
-    os.makedirs(path, exist_ok=True)
-    return path

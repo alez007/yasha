@@ -14,10 +14,10 @@ from modelship.deploy.capabilities import (
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase
 
 
-def _config(loader: ModelLoader, *, plugin: str | None = None) -> ModelshipModelConfig:
+def _config(loader: ModelLoader) -> ModelshipModelConfig:
     image_loaders = (ModelLoader.diffusers, ModelLoader.stable_diffusion_cpp)
     usecase = ModelUsecase.image if loader in image_loaders else ModelUsecase.generate
-    return ModelshipModelConfig(name="m", model="org/m", usecase=usecase, loader=loader, plugin=plugin)
+    return ModelshipModelConfig(name="m", model="org/m", usecase=usecase, loader=loader)
 
 
 class TestNodeCapabilityResources:
@@ -133,13 +133,9 @@ class TestDeploymentCapabilityResources:
         "loader",
         [ModelLoader.vllm, ModelLoader.diffusers, ModelLoader.llama_server, ModelLoader.stable_diffusion_cpp],
     )
-    def test_non_custom_loader_requests_its_capability(self, loader):
+    def test_loader_requests_its_capability(self, loader):
         resources = deployment_capability_resources(_config(loader))
         assert resources == {f"mship_{loader}": 0.001}
-
-    def test_custom_loader_requests_nothing(self):
-        resources = deployment_capability_resources(_config(ModelLoader.custom, plugin="some_plugin"))
-        assert resources == {}
 
 
 class TestCapabilitiesModuleIsRayFree:

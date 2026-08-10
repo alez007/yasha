@@ -52,8 +52,6 @@ JSON format example:
 | `modelship.infer.vllm` | vLLM inference backend |
 | `modelship.infer.diffusers` | Diffusers inference backend |
 | `modelship.infer.diffusers.image` | Diffusers image generation |
-| `modelship.infer.custom` | Custom/plugin inference backend |
-| `modelship.plugin.<name>` | Individual plugins (kokoroonnx, orpheus) |
 
 ### Syslog
 

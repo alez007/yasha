@@ -21,7 +21,7 @@ Modelship runs the AI stack your agents call — chat, the **Responses API** wit
 - **Everything an agent app calls, one endpoint** — chat, embeddings for RAG, speech-to-text, text-to-speech, and image generation, all behind a single OpenAI-compatible `/v1` surface. No juggling separate services for each modality.
 - **Drop-in OpenAI, on your hardware** — any OpenAI SDK client works out of the box. Point it at Modelship instead of the OpenAI API and your agent code doesn't change — it just runs privately, on infrastructure you control.
 - **GPU memory control** — allocate exact GPU fractions per model (e.g. 70% for the LLM, 5% for TTS) so a full stack fits on hardware you already own
-- **Mix and match backends** — vLLM for high-throughput GPU or CPU inference, llama.cpp for efficient quantized GGUF models, Diffusers for images, and a plugin system for custom backends — in the same deployment
+- **Mix and match backends** — vLLM for high-throughput GPU or CPU inference, llama.cpp for efficient quantized GGUF models, Diffusers for images, sherpa-onnx for TTS, and whisper.cpp for STT — in the same deployment
 
 ## Architecture
 
@@ -31,14 +31,15 @@ Modelship runs the AI stack your agents call — chat, the **Responses API** wit
   <img alt="Modelship architecture: an agent app calls the Modelship gateway's OpenAI-compatible API, which exposes chat, embeddings, audio, and image endpoints plus a Responses API backed by a shared conversation-state store, routing round-robin to Ray Serve deployments across GPU and CPU cluster nodes." src="docs/assets/architecture-light.svg">
 </picture>
 
-Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Four inference backends are available:
+Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Several inference backends are available:
 
 | Backend | Best for | GPU required |
 |---|---|---|
 | **vLLM** | High-throughput chat, embeddings, transcription | No — installs on GPU or CPU |
 | **llama.cpp** (`llama_server`) | High-efficiency quantized GGUF models (chat, embeddings, vision) | No |
 | **Diffusers** | Image generation | Yes |
-| **Custom (plugins)** | TTS backends (Kokoro ONNX, Orpheus), STT backends (whisper.cpp) | No |
+| **sherpa-onnx** | TTS (Kokoro) | No |
+| **whisper.cpp** | STT | No |
 
 Models can be deployed across multiple GPUs, run on CPU-only, or both — multiple deployments of the same model (e.g. one on GPU via vLLM, one on CPU via vLLM or llama.cpp) are load-balanced with round-robin routing. Each deployment can also scale horizontally with `num_replicas`.
 
@@ -53,14 +54,13 @@ Models can be deployed across multiple GPUs, run on CPU-only, or both — multip
 
 - **Multi-model, multi-GPU** — run chat, embedding, STT, TTS, and image generation models simultaneously across one or more GPUs with tunable per-model GPU memory allocation
 - **CPU-only support** — run models without a GPU using the vLLM or llama.cpp (`llama_server`) backends (chat, embeddings, transcription, vision). Useful for development, testing, or small models that don't need GPU acceleration
-- **Multiple inference backends** — vLLM for high-throughput GPU or CPU inference, llama.cpp for efficient quantized GGUF models on CPU or GPU, Diffusers for image generation, and a plugin system for custom backends
+- **Multiple inference backends** — vLLM for high-throughput GPU or CPU inference, llama.cpp for efficient quantized GGUF models on CPU or GPU, Diffusers for image generation, sherpa-onnx for TTS, and whisper.cpp for STT
 - **Zero-downtime hot-reloads** — modify your `models.yaml` and run a cluster reconcile; changes are applied incrementally without interrupting the API gateway or unchanged models
 - **Advanced agentic capabilities** — native support for DeepSeek-style reasoning (`<think>` blocks parsed into `reasoning_content`) and universal tool/function calling across the vLLM and GGUF (`llama_server`) backends
 - **Server-side MCP tool execution** — point `/v1/responses` at any self-hosted MCP server (`tools: [{"type": "mcp", ...}]`) and the gateway discovers its tools, calls them, and loops — with an approval flow (`require_approval`) client-driven tool calling doesn't have
 - **Per-model isolated deployments** — each model runs in its own Ray Serve deployment with independent lifecycle, health checks, failure isolation, and configurable replica count
 - **OpenAI-compatible API** — drop-in replacement for any OpenAI SDK client
 - **Streaming** — SSE streaming for chat completions and TTS audio
-- **Plugin system** — opt-in TTS and STT backends installed as isolated uv workspace packages
 - **Multi-GPU & hybrid routing** — assign models to specific GPUs or run them on CPU-only; deploy the same model on both GPU and CPU and requests are load-balanced via round-robin; full tensor parallelism support for large models spanning multiple GPUs
 - **Client disconnect detection** — cancels in-flight inference when the client disconnects, freeing GPU resources immediately
 - **Security** — gateway API-key authentication (`MSHIP_API_KEYS`), Ray cluster token auth (`--ray-auth=token`), and configurable request payload/concurrency limits
@@ -151,25 +151,6 @@ docker run --rm --shm-size=8g --gpus all \
 
 Hitting an error? Check [docs/troubleshooting.md](docs/troubleshooting.md).
 
-## Plugin Support
-
-Modelship's TTS system is built around a plugin architecture — each backend is an opt-in package with its own isolated dependencies. Plugins ship inside this repo (`plugins/`) or can be installed from PyPI.
-
-Built-in plugins:
-
-- [Kokoro ONNX](plugins/kokoroonnx/README.md) — lightweight TTS via ONNX Runtime (CPU or GPU)
-- [Orpheus](plugins/orpheus/README.md) — expressive TTS
-
-To enable plugins for local development, pass them as extras at sync time:
-
-```bash
-uv sync --extra kokoroonnx
-```
-
-For deployment, plugins are automatically loaded from standalone Python wheels via Ray's `runtime_env` when referenced in `models.yaml`. This ensures that complex backend dependencies don't pollute the main API gateway or other deployments.
-
-For a full guide on writing your own plugin, see [Plugin Development](docs/plugins.md).
-
 ## Documentation
 
 Full docs are hosted at **[docs.model-ship.ai](https://docs.model-ship.ai/)**. The same source files are also browsable directly in this repo:
@@ -177,8 +158,7 @@ Full docs are hosted at **[docs.model-ship.ai](https://docs.model-ship.ai/)**. T
 - [Development](docs/development.md) — dev environment setup, building, and running locally
 - [Model Configuration](docs/model-configuration.md) — full `models.yaml` reference, GPU pinning, environment variables
 - [Multi-node without Kubernetes](docs/multi-node-docker.md) — join VMs into one Ray cluster with plain `docker run`, no orchestrator
-- [Architecture](docs/architecture.md) — system design, request lifecycle, plugin loading
-- [Plugin Development](docs/plugins.md) — writing custom TTS/STT backends
+- [Architecture](docs/architecture.md) — system design, request lifecycle, loaders
 - [Monitoring & Logging](docs/monitoring.md) — Prometheus metrics, Grafana dashboard, structured logging, health checks
 - [Troubleshooting](docs/troubleshooting.md) — common first-run errors and fixes
 
