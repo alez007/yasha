@@ -23,7 +23,8 @@ logger = get_logger("infer.sherpa_onnx")
 
 
 class SherpaOnnxInfer(BaseInfer):
-    """In-process sherpa-onnx TTS loader. v1 scope: kokoro family only, CPU/CoreML only."""
+    """In-process sherpa-onnx TTS loader, generic across `OfflineTtsConfig`
+    families. v1 scope: the registry only curates kokoro, CPU/CoreML only."""
 
     def __init__(self, model_config: ModelshipModelConfig):
         super().__init__(model_config)
@@ -50,12 +51,13 @@ class SherpaOnnxInfer(BaseInfer):
             raise ModelDownloadError(f"Failed to resolve sherpa_onnx bundle for '{self.model_config.name}': {e}") from e
 
         cfg = sherpa_onnx.OfflineTtsConfig()
+        family_cfg = getattr(cfg.model, entry.family)
         for slot, rel_path in entry.files.items():
-            setattr(cfg.model.kokoro, slot, os.path.join(bundle_dir, rel_path))
+            setattr(family_cfg, slot, os.path.join(bundle_dir, rel_path))
         for slot, rel_path in entry.dirs.items():
-            setattr(cfg.model.kokoro, slot, os.path.join(bundle_dir, rel_path))
+            setattr(family_cfg, slot, os.path.join(bundle_dir, rel_path))
         if entry.lexicon:
-            cfg.model.kokoro.lexicon = ",".join(os.path.join(bundle_dir, rel_path) for rel_path in entry.lexicon)
+            family_cfg.lexicon = ",".join(os.path.join(bundle_dir, rel_path) for rel_path in entry.lexicon)
         # Never take provider from config: an unsupported/typo'd value silently
         # falls back to CPU inside sherpa's C++ instead of raising.
         cfg.model.provider = "coreml" if platform.system() == "Darwin" else "cpu"
@@ -118,7 +120,7 @@ class SherpaOnnxInfer(BaseInfer):
                 yield event
 
     async def _generate_chunks(self, text: str, sid: int, speed: float) -> AsyncGenerator[tuple[bytes, int], None]:
-        """callback fires once per sentence group (kokoro isn't autoregressive).
+        """callback fires once per sentence group (offline models aren't autoregressive).
         Return 0 to abort, nonzero to continue — inverted from the bundled docstring."""
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[Any] = asyncio.Queue()
