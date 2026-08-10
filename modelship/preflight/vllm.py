@@ -287,84 +287,9 @@ class VllmPreflight:
         if mamba is not None:
             kv_per_token = _correct_kv_for_hybrid(kv_per_token, mamba)
 
-        gmu = config.vllm_engine_kwargs.gpu_memory_utilization
-        if gmu is not None:
-            return self._recommend_cpu_pinned_gmu(
-                config, hw, kv_per_token, weight_bytes, weight_overhead, ctx_cap, denom_ram, gmu, mamba
-            )
         return self._recommend_cpu_auto_gmu(
             config, hw, kv_per_token, weight_bytes, weight_overhead, ctx_cap, denom_ram, mamba
         )
-
-    def _recommend_cpu_pinned_gmu(
-        self,
-        config: ModelshipModelConfig,
-        hw: HardwareProfile,
-        kv_per_token: float,
-        weight_bytes: int,
-        weight_overhead: float,
-        ctx_cap: int,
-        denom_ram: int,
-        gmu: float,
-        mamba: MambaStateInfo | None,
-    ) -> dict[str, Any]:
-        """The user explicitly set gpu_memory_utilization: vLLM's CPU worker
-        reserves exactly `gmu * denom_ram` for the KV cache regardless of what
-        we'd otherwise pick, so size max_model_len against that instead of our
-        own utilization target. We can't change gmu here, only warn if the
-        combined footprint won't fit."""
-        kv_budget = gmu * denom_ram
-        # Mamba state is allocated *within* the gmu*RAM pool, so it's already
-        # covered by kv_budget here — don't add it again.
-        total_footprint = kv_budget + weight_bytes + weight_overhead + _CPU_OVERHEAD_FIXED_BYTES
-        if total_footprint > hw.sizing_ram_bytes:
-            logger.warning(
-                "preflight '%s': user-pinned gpu_memory_utilization=%.3f reserves %.2f GiB for "
-                "the KV cache; combined with an estimated %.2f GiB of weights this exceeds the "
-                "%.2f GiB of RAM available — vLLM's CPU worker will likely hard-raise at startup. "
-                "Lower gpu_memory_utilization or free up RAM.",
-                config.name,
-                gmu,
-                kv_budget / 1024**3,
-                (weight_bytes + weight_overhead) / 1024**3,
-                hw.sizing_ram_bytes / 1024**3,
-            )
-
-        if mamba is not None:
-            target_len = config.vllm_engine_kwargs.max_model_len or ctx_cap
-            return _apply_hybrid_fit(
-                config.name,
-                kv_budget,
-                mamba.per_seq_state_bytes,
-                kv_per_token,
-                target_len,
-                config.vllm_engine_kwargs.max_num_seqs,
-                mamba.default_max_num_seqs,
-            )
-
-        max_tokens = int(kv_budget // kv_per_token)
-        suggested = min((max_tokens // _DEFAULT_BLOCK_SIZE) * _DEFAULT_BLOCK_SIZE, ctx_cap)
-        if suggested < _DEFAULT_BLOCK_SIZE:
-            logger.warning(
-                "preflight '%s': user-pinned gpu_memory_utilization=%.3f yields max_model_len=%d "
-                "(< block_size); skipping recommendation",
-                config.name,
-                gmu,
-                suggested,
-            )
-            return {}
-
-        logger.info(
-            "preflight vllm cpu '%s': user-pinned util=%.3f denom_ram=%.2f GiB kv_budget=%.2f GiB "
-            "kv/token=%d B → suggested max_model_len=%d",
-            config.name,
-            gmu,
-            denom_ram / 1024**3,
-            kv_budget / 1024**3,
-            int(kv_per_token),
-            suggested,
-        )
-        return {"max_model_len": suggested}
 
     def _recommend_cpu_auto_gmu(
         self,

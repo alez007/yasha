@@ -202,7 +202,7 @@ The `vllm` loader supports chat/generation, embeddings, transcription, and trans
 | `dtype` | string | `auto` | Model dtype (`auto`, `float16`, `bfloat16`) |
 | `tokenizer` | string | model default | Custom tokenizer path |
 | `trust_remote_code` | bool | `false` | Allow remote code execution |
-| `gpu_memory_utilization` | float | `0.9` (`0.4` on CPU deploys) | VRAM fraction on GPU; on CPU it means *host RAM* fraction reserved for the KV cache instead (see [CPU (no GPU required)](#cpu-no-gpu-required) below). Overridden by `num_gpus` when `num_gpus < 1`, including `num_gpus: 0`; on a `num_gpus: 0` deploy, preflight may also recommend a tighter value than the `0.4` fallback — an explicit value always wins over both. |
+| `gpu_memory_utilization` | float | `0.9` (`0.4` on CPU deploys) | Not user-settable — always derived, from `num_gpus` for a fractional share, or a preflight recommendation / the loader default otherwise. VRAM fraction on GPU; on CPU it means *host RAM* fraction reserved for the KV cache instead (see [CPU (no GPU required)](#cpu-no-gpu-required) below). |
 | `quantization` | string | — | Quantization method (e.g. `awq`, `gptq`) |
 | `enable_auto_tool_choice` | bool | — | Enable automatic tool/function calling |
 | `tool_call_parser` | string | — | Tool call parser (e.g. `llama3_json`, `hermes`) |
@@ -229,9 +229,10 @@ reserve 90% of node RAM and fail at worker init on a real machine. Preflight goe
 further: it reads the actual RAM available on the actor's node and the model's weight
 footprint, and recommends both `max_model_len` and a tighter `gpu_memory_utilization` than
 the `0.4` fallback whenever it can (the fallback only applies when preflight declines —
-e.g. an unreadable `config.json`). Set either explicitly and it always wins over both the
-preflight recommendation and the fallback. For finer control than a RAM fraction, vLLM
-also reads `VLLM_CPU_KVCACHE_SPACE` (a fixed GiB budget) and `VLLM_CPU_OMP_THREADS_BIND`
+e.g. an unreadable `config.json`). `gpu_memory_utilization` isn't user-settable, so this
+recommendation always applies; set `max_model_len` explicitly if you need finer control.
+For finer control than a RAM fraction, vLLM also reads `VLLM_CPU_KVCACHE_SPACE` (a fixed
+GiB budget) and `VLLM_CPU_OMP_THREADS_BIND`
 (CPU thread pinning) directly from the process environment; these are vLLM-native env
 vars, not modelship config.
 

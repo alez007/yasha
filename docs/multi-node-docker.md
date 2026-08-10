@@ -190,9 +190,9 @@ docker run -d --network=host --gpus device=0 \
 
 Ray does not arbitrate VRAM across independent clusters — that budget is
 yours to manage, the same way you'd size two co-resident models on one GPU
-within a single cluster (fractional `num_gpus`, `gpu_memory_utilization`, or
-`llama_server`'s `n_gpu_layers`) so both sides' footprints actually fit
-together on the card.
+within a single cluster (fractional `num_gpus`, which sizes vLLM's
+`gpu_memory_utilization` for you, or `llama_server`'s `n_gpu_layers`) so both
+sides' footprints actually fit together on the card.
 
 ## See also
 
