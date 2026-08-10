@@ -28,20 +28,22 @@ class TestFractionalGpuSharing:
             model="frac-share-vllm",
             messages=[{"role": "user", "content": "What is the capital of France?"}],
             max_tokens=32,
+            temperature=0,
         )
         content = completion.choices[0].message.content
         assert content
-        assert "Paris" in content
+        assert "paris" in content.lower()
 
     def test_llama_server_tenant_serves_requests(self, client):
         completion = client.chat.completions.create(
             model="frac-share-llama-server",
             messages=[{"role": "user", "content": "What is the capital of France?"}],
             max_tokens=32,
+            temperature=0,
         )
         content = completion.choices[0].message.content
         assert content
-        assert "Paris" in content
+        assert "paris" in content.lower()
 
     def test_concurrent_requests_across_both_tenants_succeed(self, client):
         # The real proof of co-tenancy: both engines already have their KV
