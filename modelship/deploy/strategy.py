@@ -1,3 +1,4 @@
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -49,17 +50,18 @@ def compute_deploy_plan(
     dropped are. An empty prev-effective set (migration / fresh install) therefore
     removes nothing."""
 
-    # Schedule larger world-size models first so they claim whole GPU units before
-    # fractional models consume the pool. World size = tp * pp.
-    sorted_models = sorted(
-        desired_conf.models,
-        key=lambda c: (
+    # Schedule larger GPU footprints first so they claim whole GPU units before
+    # fractional models consume the pool. World size = tp * pp (vllm multi-slot);
+    # non-vllm loaders have no tp/pp, so num_gpus (rounded up) stands in for it.
+    def _gpu_footprint(c: ModelshipModelConfig) -> int:
+        world_size = (
             c.vllm_engine_kwargs.tensor_parallel_size * c.vllm_engine_kwargs.pipeline_parallel_size
             if c.vllm_engine_kwargs
             else 1
-        ),
-        reverse=True,
-    )
+        )
+        return max(world_size, math.ceil(c.num_gpus))
+
+    sorted_models = sorted(desired_conf.models, key=_gpu_footprint, reverse=True)
 
     desired_names = {c.deployment_name(gateway_name) for c in sorted_models}
 

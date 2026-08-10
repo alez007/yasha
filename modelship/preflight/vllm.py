@@ -145,18 +145,19 @@ class VllmPreflight:
             text_cfg, model_cfg, config, effective_mnbt, tp_size, pp_size
         )
 
-        # vLLM requires homogeneous GPUs for TP; take the smallest free-memory
-        # GPU to be safe. `available_bytes` is free VRAM at preflight time
-        # (not device total), so the budget reflects what vLLM will actually
-        # see when it measures KV cache headroom.
-        gpu_available = min(g.available_bytes for g in hw.gpus)
-        # gpu_memory_utilization already reflects a fractional num_gpus: it's
-        # resolved at config normalization, so we read the effective value here.
-        # An unset field (whole-GPU deploy, no user override) falls back to
-        # vLLM's own default.
+        # vLLM requires homogeneous GPUs for TP; take the smallest GPU. Fractional
+        # num_gpus shares the device, so its budget is sized from total capacity
+        # (matches what the engine itself allocates: total_memory * gmu) rather
+        # than free VRAM, which a whole-GPU deploy still uses (it owns the device).
+        fractional = 0 < config.num_gpus < 1
+        gpu_basis = (
+            min(g.sizing_total_bytes for g in hw.gpus) if fractional else min(g.available_bytes for g in hw.gpus)
+        )
+        # gpu_util already equals the fraction for a fractional deploy (set at
+        # config normalization) — don't scale gpu_basis by it again here.
         gpu_util = config.vllm_engine_kwargs.gpu_memory_utilization or default_gpu_memory_utilization(config)
         budget = (
-            gpu_available * gpu_util
+            gpu_basis * gpu_util
             - weight_bytes_per_gpu
             - _OVERHEAD_WEIGHT_FRACTION * weight_bytes_per_gpu
             - cudagraph_bytes_per_gpu
@@ -164,10 +165,11 @@ class VllmPreflight:
         if budget <= 0:
             logger.warning(
                 "preflight: '%s' has no KV-cache budget on the assigned GPU "
-                "(free=%.2f GiB, util=%.2f, est. weights/GPU=%.2f GiB, "
+                "(%s=%.2f GiB, util=%.2f, est. weights/GPU=%.2f GiB, "
                 "cudagraph/GPU=%.2f GiB). Model likely won't fit; deploy will be attempted anyway.",
                 config.name,
-                gpu_available / 1024**3,
+                "share basis (total)" if fractional else "free",
+                gpu_basis / 1024**3,
                 gpu_util,
                 weight_bytes_per_gpu / 1024**3,
                 cudagraph_bytes_per_gpu / 1024**3,
@@ -205,10 +207,11 @@ class VllmPreflight:
             rec = {"max_model_len": suggested}
 
         logger.info(
-            "preflight vllm '%s': gpu_free=%.2f GiB util=%.2f tp=%d pp=%d "
+            "preflight vllm '%s': gpu_%s=%.2f GiB util=%.2f tp=%d pp=%d "
             "weights/GPU≈%.2f GiB cudagraph/GPU≈%.2f GiB kv/token=%d B%s → %s",
             config.name,
-            gpu_available / 1024**3,
+            "share" if fractional else "free",
+            gpu_basis / 1024**3,
             gpu_util,
             tp_size,
             pp_size,

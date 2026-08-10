@@ -179,6 +179,19 @@ class TestComputeDeployPlan:
         assert plan.registry_only_drop == [_dep("c")]
 
 
+class TestComputeDeployPlanGpuOrdering:
+    """Larger GPU footprints deploy first so they claim whole GPU units before
+    fractional models consume the pool — applies beyond vllm's tp*pp now that
+    non-vllm loaders can request a fractional num_gpus too."""
+
+    def test_whole_gpu_llama_server_sorts_before_fractional(self):
+        from modelship.deploy.strategy import compute_deploy_plan
+
+        desired = to_config([_model("frac", num_gpus=0.5), _model("whole", num_gpus=2)])
+        plan = compute_deploy_plan(desired, set(), set(), "g")
+        assert [c.name for c in plan.models_to_add] == ["whole", "frac"]
+
+
 class TestCase2AdditiveAccumulation:
     """The bug this design fixes: additive deploys accumulate beyond the last
     input, and that accumulation must survive in the effective config."""

@@ -6,7 +6,7 @@ from typing import Any
 
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.logging import get_logger
-from modelship.preflight.base import HardwareProfile
+from modelship.preflight.base import HardwareProfile, gpu_share_bytes
 
 logger = get_logger("preflight.llama_cpp")
 
@@ -173,7 +173,8 @@ class LlamaServerPreflight:
             )
             return {}
 
-        num_gpus = int(config.num_gpus)
+        fractional = 0 < config.num_gpus < 1
+        num_gpus = 1 if fractional else int(config.num_gpus)
         # llama.cpp's default --split-mode layer splits proportionally to free
         # memory, so summed free VRAM across the assigned GPUs is the real
         # capacity. Take the num_gpus smallest-free GPUs from the node-level
@@ -193,9 +194,14 @@ class LlamaServerPreflight:
         layer_bytes = weight_bytes * (1 + _GGUF_WEIGHT_OVERHEAD_FRACTION) / total_layers
         kv_per_layer = kv_per_token / meta.block_count
         ctx_cap = meta.context_length or _UNKNOWN_CONTEXT_LENGTH_CAP
-        vram_budget = (
-            sum(g.available_bytes for g in picked) * _VRAM_UTILIZATION - len(picked) * _GPU_OVERHEAD_FIXED_BYTES
-        )
+        # Fractional deploys share the device: budget from the declared share of
+        # total capacity, not free VRAM, so sizing is stable regardless of tenants.
+        if fractional:
+            vram_budget = gpu_share_bytes(config, picked[0]) * _VRAM_UTILIZATION - _GPU_OVERHEAD_FIXED_BYTES
+        else:
+            vram_budget = (
+                sum(g.available_bytes for g in picked) * _VRAM_UTILIZATION - len(picked) * _GPU_OVERHEAD_FIXED_BYTES
+            )
 
         ctx_full = int((vram_budget - layer_bytes * total_layers) // kv_per_token)
         if ctx_full >= _MIN_NCTX:

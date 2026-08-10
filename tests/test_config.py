@@ -70,9 +70,13 @@ class TestLlamaServerConfig:
         config = self._num_gpus_model(0)
         assert config.num_gpus == 0
 
-    def test_num_gpus_fractional_rejected(self):
+    def test_num_gpus_fractional_allowed(self):
+        config = self._num_gpus_model(0.5)
+        assert config.num_gpus == 0.5
+
+    def test_num_gpus_non_integer_at_or_above_one_rejected(self):
         with pytest.raises(ValidationError, match="not allowed for the llama_server loader"):
-            self._num_gpus_model(0.5)
+            self._num_gpus_model(1.5)
 
     def test_llama_server_model_config(self):
         config = ModelshipModelConfig(
@@ -85,6 +89,40 @@ class TestLlamaServerConfig:
         assert config.loader == ModelLoader.llama_server
         assert config.llama_server_config is not None
         assert config.llama_server_config.parallel == 4
+
+
+class TestWholeGpuOnlyLoadersNumGpus:
+    def test_whispercpp_fractional_allowed(self):
+        config = ModelshipModelConfig(
+            name="test-stt",
+            model="some-model",
+            usecase=ModelUsecase.transcription,
+            loader=ModelLoader.whispercpp,
+            num_gpus=0.5,
+        )
+        assert config.num_gpus == 0.5
+
+    def test_whispercpp_non_integer_at_or_above_one_rejected(self):
+        with pytest.raises(ValidationError, match="not allowed for the whispercpp loader"):
+            ModelshipModelConfig(
+                name="test-stt",
+                model="some-model",
+                usecase=ModelUsecase.transcription,
+                loader=ModelLoader.whispercpp,
+                num_gpus=1.5,
+            )
+
+    def test_sherpa_onnx_fractional_accepted(self):
+        # sherpa_onnx never touches CUDA (actor_options forces num_gpus to 0), so
+        # it's exempt from the whole-GPU-only validator entirely.
+        config = ModelshipModelConfig(
+            name="tts",
+            model="kokoro-en-v0_19",
+            usecase=ModelUsecase.tts,
+            loader=ModelLoader.sherpa_onnx,
+            num_gpus=0.5,
+        )
+        assert config.num_gpus == 0.5
 
 
 class TestModelshipModelConfig:

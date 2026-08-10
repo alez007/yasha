@@ -293,13 +293,14 @@ class ModelshipModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_whole_gpu_only_loaders_num_gpus(self):
-        # None of these backends has a VRAM-fraction knob — require whole GPUs (or 0).
-        whole_gpu_loaders = (ModelLoader.llama_server, ModelLoader.whispercpp, ModelLoader.sherpa_onnx)
-        if self.loader in whole_gpu_loaders and self.num_gpus != int(self.num_gpus):
+        # sherpa_onnx never touches CUDA (see actor_options' force-zero handling)
+        # so it's exempt rather than whole-GPU-only. The rest accept a fraction
+        # < 1 to share one GPU, but still require an integer for values >= 1.
+        whole_gpu_loaders = (ModelLoader.llama_server, ModelLoader.whispercpp)
+        if self.loader in whole_gpu_loaders and self.num_gpus >= 1 and self.num_gpus != int(self.num_gpus):
             raise ValueError(
                 f"num_gpus={self.num_gpus!r} is not allowed for the {self.loader.value} loader: "
-                f"use an integer number of whole GPUs, or 0 for CPU. Fractional GPU "
-                f"sharing isn't supported (no GPU-memory fraction control for this loader)."
+                f"use a fraction < 1 to share one GPU, or a whole integer number of GPUs."
             )
         return self
 

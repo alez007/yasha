@@ -21,6 +21,8 @@ from modelship.preflight.base import (
     detect_gpus,
     detect_ram_bytes,
     discover_hardware,
+    gpu_share_bytes,
+    gpu_share_fraction,
     merge_with_user_overrides,
     run_preflight,
 )
@@ -33,6 +35,8 @@ __all__ = [
     "detect_gpus",
     "detect_ram_bytes",
     "discover_hardware",
+    "gpu_share_bytes",
+    "gpu_share_fraction",
     "merge_with_user_overrides",
     "run_preflight",
 ]

@@ -71,14 +71,14 @@ class TestGpuDiscoveryUuid:
         mock_pynvml = MagicMock()
         mock_pynvml.nvmlDeviceGetCount.return_value = 1
         mock_pynvml.nvmlDeviceGetHandleByIndex.return_value = object()
-        mock_pynvml.nvmlDeviceGetMemoryInfo.return_value = SimpleNamespace(free=1024)
+        mock_pynvml.nvmlDeviceGetMemoryInfo.return_value = SimpleNamespace(free=1024, total=2048)
         mock_pynvml.nvmlDeviceGetName.return_value = "Test GPU"
         mock_pynvml.nvmlDeviceGetUUID.return_value = "GPU-abc123"
 
         with patch.dict(sys.modules, {"pynvml": mock_pynvml}):
             gpus = preflight_base._pynvml_node_discover()
 
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid="GPU-abc123")]
+        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid="GPU-abc123", total_bytes=2048)]
 
     def test_pynvml_probe_decodes_bytes_uuid(self):
         # Some pynvml builds return bytes for name/UUID rather than str.
@@ -87,14 +87,14 @@ class TestGpuDiscoveryUuid:
         mock_pynvml = MagicMock()
         mock_pynvml.nvmlDeviceGetCount.return_value = 1
         mock_pynvml.nvmlDeviceGetHandleByIndex.return_value = object()
-        mock_pynvml.nvmlDeviceGetMemoryInfo.return_value = SimpleNamespace(free=1024)
+        mock_pynvml.nvmlDeviceGetMemoryInfo.return_value = SimpleNamespace(free=1024, total=2048)
         mock_pynvml.nvmlDeviceGetName.return_value = b"Test GPU"
         mock_pynvml.nvmlDeviceGetUUID.return_value = b"GPU-abc123"
 
         with patch.dict(sys.modules, {"pynvml": mock_pynvml}):
             gpus = preflight_base._pynvml_node_discover()
 
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid="GPU-abc123")]
+        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid="GPU-abc123", total_bytes=2048)]
 
     def test_torch_probe_reads_uuid(self):
         from modelship.preflight import base as preflight_base
@@ -112,7 +112,7 @@ class TestGpuDiscoveryUuid:
 
         # torch's uuid has no "GPU-" prefix (unlike pynvml's); the probe adds it so both
         # sources agree with nvidia-smi's own "GPU-<uuid>" format.
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid="GPU-abc123")]
+        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid="GPU-abc123", total_bytes=2048)]
 
     def test_torch_probe_uuid_none_when_attr_missing(self):
         # Older torch builds predate the `uuid` device-properties field.
@@ -129,7 +129,7 @@ class TestGpuDiscoveryUuid:
         with patch.dict(sys.modules, {"torch": mock_torch}):
             gpus = preflight_base._torch_cuda_discover()
 
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid=None)]
+        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid=None, total_bytes=2048)]
 
     def test_torch_probe_derives_rocm_kind_from_hip_version(self):
         """ROCm PyTorch maps torch.cuda onto HIP; torch.version.hip is the only
@@ -147,7 +147,7 @@ class TestGpuDiscoveryUuid:
         with patch.dict(sys.modules, {"torch": mock_torch}):
             gpus = preflight_base._torch_cuda_discover()
 
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="MI300X", uuid=None, kind="rocm")]
+        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="MI300X", uuid=None, kind="rocm", total_bytes=2048)]
 
     def test_torch_probe_defaults_to_cuda_kind_when_hip_unset(self):
         from modelship.preflight import base as preflight_base
@@ -195,7 +195,7 @@ class TestRocmSmiDiscovery:
         ):
             gpus = preflight_base._rocm_smi_node_discover()
 
-        assert gpus == [GPUInfo(index=0, available_bytes=600, name="MI300X", uuid=None, kind="rocm")]
+        assert gpus == [GPUInfo(index=0, available_bytes=600, name="MI300X", uuid=None, kind="rocm", total_bytes=1000)]
 
     def test_binary_failure_returns_empty(self):
         from modelship.preflight import base as preflight_base
@@ -666,6 +666,36 @@ class TestVllmPreflight:
         rec_fp8 = VllmPreflight().recommend(cfg_fp8, hw)
         # fp8 stores KV in half the bytes, so the suggested context roughly doubles.
         assert rec_fp8["max_model_len"] >= rec_fp16["max_model_len"]
+
+
+class TestVllmPreflightFractionalGpu:
+    """0 < num_gpus < 1 shares one physical GPU; budget derives from total
+    capacity * gpu_memory_utilization (which already equals the fraction),
+    matching what the engine itself allocates — not from free VRAM."""
+
+    def test_budget_derives_from_total_not_available(self, tmp_path):
+        snapshot = _write_model_snapshot(
+            tmp_path,
+            config_json={
+                "num_hidden_layers": 32,
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "hidden_size": 4096,
+                "head_dim": 128,
+                "torch_dtype": "bfloat16",
+                "max_position_embeddings": 8192,
+            },
+            weight_bytes=4 * 1024**3,
+        )
+        cfg = _make_config(resolved_path=str(snapshot), num_gpus=0.5)
+        hw_roomy_free = HardwareProfile(gpus=[GPUInfo(0, 79 * 1024**3, "test", total_bytes=80 * 1024**3)])
+        hw_tight_free = HardwareProfile(gpus=[GPUInfo(0, 1 * 1024**3, "test", total_bytes=80 * 1024**3)])
+
+        rec_roomy = VllmPreflight().recommend(cfg, hw_roomy_free)
+        rec_tight = VllmPreflight().recommend(cfg, hw_tight_free)
+
+        assert rec_roomy == rec_tight
+        assert rec_roomy["max_model_len"] == 8192
 
 
 class TestVllmPreflightCpu:

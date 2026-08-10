@@ -378,6 +378,44 @@ class TestBuildDeploymentOptions:
         opts = build_deployment_options(config)
         assert opts["ray_actor_options"]["num_gpus"] == 0
 
+    def test_llama_server_honors_fractional_num_gpus(self):
+        config = ModelshipModelConfig(
+            name="test-model",
+            model="some-model",
+            usecase=ModelUsecase.generate,
+            loader=ModelLoader.llama_server,
+            num_gpus=0.5,
+        )
+        opts = build_deployment_options(config)
+        assert opts["ray_actor_options"]["num_gpus"] == 0.5
+
+    def test_sherpa_onnx_num_gpus_forced_to_zero(self):
+        # sherpa_onnx never touches CUDA (CPU/CoreML only); a nonzero num_gpus
+        # here would just reserve GPU capacity the loader never uses.
+        config = ModelshipModelConfig(
+            name="test-model",
+            model="kokoro-en-v0_19",
+            usecase=ModelUsecase.tts,
+            loader=ModelLoader.sherpa_onnx,
+            num_gpus=1,
+        )
+        opts = build_deployment_options(config)
+        assert opts["ray_actor_options"]["num_gpus"] == 0
+
+    def test_sherpa_onnx_num_gpus_forced_to_zero_on_darwin_too(self):
+        # Unlike the ggml loaders' Metal carve-out, sherpa_onnx has no CUDA path
+        # on any platform, so the force-zero applies unconditionally.
+        config = ModelshipModelConfig(
+            name="test-model",
+            model="kokoro-en-v0_19",
+            usecase=ModelUsecase.tts,
+            loader=ModelLoader.sherpa_onnx,
+            num_gpus=1,
+        )
+        with patch("modelship.deploy.actor_options.platform.system", return_value="Darwin"):
+            opts = build_deployment_options(config)
+        assert opts["ray_actor_options"]["num_gpus"] == 0
+
     def test_stable_diffusion_cpp_force_cpu_off_darwin(self):
         config = ModelshipModelConfig(
             name="test-model",
