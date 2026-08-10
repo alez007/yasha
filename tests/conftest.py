@@ -144,6 +144,28 @@ MODEL_CONFIGS: dict[str, dict] = {
         "num_gpus": 1,
         "num_cpus": 1,
     },
+    "frac-share-vllm": {
+        "name": "frac-share-vllm",
+        # Paired with frac-share-llama-server (0.6 + 0.3 = 0.9) to prove two
+        # different loaders can share one physical GPU via Ray's fractional
+        # scheduling. No vllm_engine_kwargs — preflight sizes max_model_len
+        # itself from this deploy's declared share, which is the thing under
+        # test. Same model as chat-capable.
+        "model": "Qwen/Qwen2.5-0.5B-Instruct",
+        "usecase": "generate",
+        "loader": "vllm",
+        "num_gpus": 0.6,
+    },
+    "frac-share-llama-server": {
+        "name": "frac-share-llama-server",
+        # Paired with frac-share-vllm. Same GGUF as chat-llama-server-gpu, at a
+        # fraction instead of a whole GPU — preflight sizes n_ctx/n_gpu_layers
+        # to this declared share rather than free VRAM.
+        "model": "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf",
+        "usecase": "generate",
+        "loader": "llama_server",
+        "num_gpus": 0.3,
+    },
     "embed-model-llama-server": {
         "name": "embed-model-llama-server",
         # Real embeddings through a live llama-server subprocess (`--embedding`)
@@ -342,8 +364,14 @@ def mship_cluster(tmp_path_factory):
             "false",
         ],
         # Non-blocking if absent, so safe to enable session-wide; lets tests
-        # simulate distinct identities via extra_headers.
-        env={**os.environ, "MSHIP_TRUSTED_IDENTITY_HEADER": "X-Mship-Test-Identity"},
+        # simulate distinct identities via extra_headers. MSHIP_RAY_DASHBOARD
+        # binds the dashboard to 0.0.0.0 (default 127.0.0.1) so it's reachable
+        # from outside the test runner, not just localhost, for live debugging.
+        env={
+            **os.environ,
+            "MSHIP_TRUSTED_IDENTITY_HEADER": "X-Mship-Test-Identity",
+            "MSHIP_RAY_DASHBOARD": "0.0.0.0",
+        },
         stdout=log_file,
         stderr=subprocess.STDOUT,
         text=True,
