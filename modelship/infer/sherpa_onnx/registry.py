@@ -12,9 +12,7 @@ class SherpaOnnxRegistryEntry(NamedTuple):
     """`files`/`dirs` keys are sherpa's own `OfflineTtsKokoroModelConfig`
     attribute names, values are paths relative to the bundle root. `lexicon`
     is the list form of sherpa's single comma-joined field. `voice_names[i]`
-    is the OpenAI voice name for sid i. `sha256` pins the tarball itself —
-    bundle contents are checked for presence only, not size/hash, since a
-    corrupt/truncated download is already caught before extraction."""
+    is the OpenAI voice name for sid i."""
 
     tarball_url: str
     sha256: str

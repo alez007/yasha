@@ -38,11 +38,8 @@ def resolve_bundle_dir(model: str) -> tuple[str, SherpaOnnxRegistryEntry]:
 
 
 def validate_bundle(bundle_dir: str, entry: SherpaOnnxRegistryEntry) -> None:
-    """Raises ValueError with an actionable message if a declared file/dir is
-    missing. Used both right after a tarball extraction and directly against a
-    user-supplied local directory — same check either way. Existence only:
-    the tarball's own sha256 (checked before extraction) already catches a
-    corrupt/truncated download."""
+    """Raises ValueError if a declared file/dir is missing. Existence only —
+    the tarball's own sha256 already covers content integrity."""
     if not os.path.isdir(bundle_dir):
         raise ValueError(f"sherpa_onnx bundle directory not found: {bundle_dir!r}")
 
