@@ -99,22 +99,13 @@ def fetch_and_extract_archive(
     keep_archive: bool = False,
 ) -> None:
     """Download `url` to `archive_path`, verify its sha256, and extract into
-    `extract_dir`.
+    `extract_dir` via a private tmp dir + atomic `os.replace` (safe against
+    concurrent extractors and partial reads). A sha256 mismatch deletes the
+    archive so a retry doesn't re-verify the same bytes.
 
-    Extraction happens in a private tmp dir first and is moved into place with
-    `os.replace`, so no reader ever sees a partial extraction and concurrent
-    callers (e.g. multiple replicas on one node) can't corrupt each other — a
-    losing replica's `os.replace` onto an already-populated `extract_dir` is
-    swallowed. A sha256 mismatch deletes the archive so a retry doesn't
-    re-verify the same corrupt bytes.
-
-    `flatten=True` extracts every member to its basename directly under
-    `extract_dir`, discarding the archive's own directory structure.
-    `flatten=False` (default) preserves it, stripping one leading path
-    component when every member shares a single top-level directory (the
-    common release-tarball convention) so `extract_dir` ends up holding that
-    directory's contents directly.
-    """
+    `flatten=True` extracts every member to its basename; otherwise a single
+    shared top-level directory is stripped so `extract_dir` holds its
+    contents directly."""
     os.makedirs(os.path.dirname(archive_path) or ".", exist_ok=True)
     os.makedirs(os.path.dirname(extract_dir) or ".", exist_ok=True)
 
