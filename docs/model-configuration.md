@@ -95,7 +95,7 @@ If `MSHIP_TRUSTED_IDENTITY_HEADER` is unset (the default), modelship falls back 
 | `name` | string | Model identifier used in API requests |
 | `model` | string | HuggingFace repo ID, local path, or `repo:filename` (see [Model source](#model-source)). Required for built-in loaders; optional for `loader: custom` |
 | `usecase` | string | `generate`, `embed`, `transcription`, `translation`, `tts`, or `image` |
-| `loader` | string | `vllm`, `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, or `custom` |
+| `loader` | string | `vllm`, `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx`, or `custom` |
 | `plugin` | string | Plugin module name (required when `loader: custom`); automatically loaded from wheels when referenced |
 | `num_gpus` | float \| int | GPU allocation. Fractional `< 1` shares one GPU (also sets vLLM `gpu_memory_utilization`); integer `≥ 1` requests that many whole GPUs (for `vllm`, this auto-sets `tensor_parallel_size = num_gpus` unless tp/pp is already specified). |
 | `num_cpus` | float | CPU units to allocate (default `0.1`) |
@@ -464,6 +464,30 @@ models:
 ```
 
 See `config/examples/whispercpp.yaml` for every `model:` form and a Metal example.
+
+## sherpa_onnx Loader
+
+The `sherpa_onnx` loader runs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) in-process via its Python bindings. Current scope: TTS only, kokoro family only, CPU (and CoreML on macOS) only — no CUDA wheel wired up yet. `num_gpus` must be `0` or a whole integer; on Linux this means `0` in practice.
+
+`model:` is not an HF repo or path — it's a name from a curated, built-in registry (or a local directory whose basename matches one). Each name maps to a GitHub release tarball with a pinned sha256, downloaded and cached under `<cache_root>/sherpa_onnx/<name>/` on first use. There is no `sherpa_onnx_config` — `provider` (`cpu`/`coreml`) and thread count are derived from `num_gpus`/`num_cpus`, never user-supplied, since an invalid provider string silently falls back to CPU inside sherpa's own C++.
+
+Supported `model:` names:
+
+| Name | Speakers | Notes |
+|---|---|---|
+| `kokoro-en-v0_19` | 11 | English only. Includes `af_bella`. |
+| `kokoro-multi-lang-v1_0` | 53 | English, Mandarin, Japanese, and more. Includes `af_bella` and `af_heart`. |
+
+```yaml
+models:
+  - name: "kokoro"
+    model: "kokoro-en-v0_19"
+    usecase: "tts"
+    loader: "sherpa_onnx"
+    num_cpus: 2
+```
+
+See `config/examples/sherpa-onnx.yaml` for the local-directory form.
 
 ## Custom Loader (Plugins)
 

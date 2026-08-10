@@ -27,6 +27,7 @@ LOADER_MODULES = {
     "diffusers": "diffusers",
     "stable_diffusion_cpp": "stable_diffusion_cpp",
     "whispercpp": "pywhispercpp",
+    "sherpa_onnx": "sherpa_onnx",
 }
 
 _LLAMA_SERVER_LOADER = "llama_server"

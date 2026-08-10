@@ -75,6 +75,28 @@ def _is_whispercpp_builtin_ref(model: str) -> bool:
     return "/" not in model and not os.path.exists(model)
 
 
+def _resolve_sherpa_onnx_source(cfg) -> None:
+    """Not an HF repo, so no `check_model_source`. A local-directory `model:` is
+    validated here at driver preflight; a bare registry name has nothing to pin
+    since the tarball fetch happens in the actor."""
+    from modelship.infer.sherpa_onnx.bundle import validate_bundle
+    from modelship.infer.sherpa_onnx.registry import REGISTRY
+
+    model = cfg.model
+    assert model is not None  # validator guarantees this for built-in loaders
+    if model.startswith(("/", "./", "~")):
+        path = os.path.expanduser(model)
+        name = os.path.basename(path.rstrip("/"))
+        entry = REGISTRY[name]  # config validation already guarantees this key exists
+        logger.info("Checking sherpa_onnx bundle for '%s': %s", cfg.name, path)
+        validate_bundle(path, entry)
+        logger.info("Checked '%s' (local bundle, no download)", cfg.name)
+    else:
+        logger.info(
+            "Skipping source check for '%s': sherpa_onnx registry model %r is fetched by the actor", cfg.name, model
+        )
+
+
 def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
     """Pre-flight: check every built-in-loader model's source, without
     downloading any weight bytes.
@@ -97,6 +119,9 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
         if cfg.loader == ModelLoader.whispercpp and cfg.model and _is_whispercpp_builtin_ref(cfg.model):
             # pywhispercpp resolves/downloads its own built-in models; nothing to pin here.
             logger.info("Skipping source check for '%s': pywhispercpp built-in model %r", cfg.name, cfg.model)
+            continue
+        if cfg.loader == ModelLoader.sherpa_onnx:
+            _resolve_sherpa_onnx_source(cfg)
             continue
         assert cfg.model is not None  # validator guarantees this for built-in loaders
         trust_remote_code = bool(cfg.vllm_engine_kwargs and cfg.vllm_engine_kwargs.trust_remote_code)
