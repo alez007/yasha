@@ -194,8 +194,7 @@ class LlamaServerPreflight:
         layer_bytes = weight_bytes * (1 + _GGUF_WEIGHT_OVERHEAD_FRACTION) / total_layers
         kv_per_layer = kv_per_token / meta.block_count
         ctx_cap = meta.context_length or _UNKNOWN_CONTEXT_LENGTH_CAP
-        # Fractional deploys share the device: budget from the declared share of
-        # total capacity, not free VRAM, so sizing is stable regardless of tenants.
+        # Fractional: budget from declared share of total capacity, not free VRAM.
         if fractional:
             vram_budget = gpu_share_bytes(config, picked[0]) * _VRAM_UTILIZATION - _GPU_OVERHEAD_FIXED_BYTES
         else:

@@ -146,15 +146,13 @@ class VllmPreflight:
         )
 
         # vLLM requires homogeneous GPUs for TP; take the smallest GPU. Fractional
-        # num_gpus shares the device, so its budget is sized from total capacity
-        # (matches what the engine itself allocates: total_memory * gmu) rather
-        # than free VRAM, which a whole-GPU deploy still uses (it owns the device).
+        # deploys size from total capacity, matching total_memory * gmu; whole-GPU
+        # deploys size from free (they own the device).
         fractional = 0 < config.num_gpus < 1
         gpu_basis = (
             min(g.sizing_total_bytes for g in hw.gpus) if fractional else min(g.available_bytes for g in hw.gpus)
         )
-        # gpu_util already equals the fraction for a fractional deploy (set at
-        # config normalization) — don't scale gpu_basis by it again here.
+        # gpu_util already carries the fraction (set at config normalization).
         gpu_util = config.vllm_engine_kwargs.gpu_memory_utilization or default_gpu_memory_utilization(config)
         budget = (
             gpu_basis * gpu_util

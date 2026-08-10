@@ -120,7 +120,7 @@ Each GPU-capable loader sizes and enforces its share differently:
 | `whispercpp` | None (Metal only) — `num_gpus > 0` is a plain on/off switch for Metal offload, no VRAM knob to size |
 | `sherpa_onnx`, `stable_diffusion_cpp` (off-Darwin) | N/A — never touch CUDA; `num_gpus` is ignored |
 
-Preflight sizes a fractional deploy from its **declared share of the GPU's total capacity**, not from free VRAM at that moment — this is what makes sizing deterministic across replica restarts and boot order, regardless of what a co-tenant is doing. If free VRAM ever falls short of what a deploy declared (a co-tenant over its own share, or something outside Ray using the card), preflight logs a warning naming both numbers, since Ray's own scheduling has no way to catch that failure mode itself.
+Preflight sizes a fractional deploy from its **declared share of the GPU's total capacity**, not from free VRAM at that moment. If free VRAM falls short of the declared share, preflight logs a warning naming both numbers.
 
 Sharp edges:
 - No SM/compute isolation between co-tenants — they time-slice the GPU's compute the same as any two CUDA processes sharing a device (fine for one large + one small model; not a substitute for MIG/MPS if both are large).

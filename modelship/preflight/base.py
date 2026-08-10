@@ -493,8 +493,7 @@ def gpu_share_bytes(config: ModelshipModelConfig, gpu: GPUInfo) -> float:
 
 
 def _warn_if_share_overcommitted(config: ModelshipModelConfig, hw: HardwareProfile) -> None:
-    # Declared share may exceed currently-free VRAM (an over-budget co-tenant,
-    # or a non-Ray process). Ray can't explain this failure mode itself.
+    # Declared share may exceed currently-free VRAM (over-budget co-tenant, or a non-Ray process).
     if not (0 < config.num_gpus < 1):
         return
     for gpu in hw.gpus:
