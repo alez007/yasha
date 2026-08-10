@@ -4,9 +4,9 @@ modelship/launcher.py for llama.cpp's binary tarball)."""
 
 import os
 
-from modelship.infer.sherpa_onnx.registry import REGISTRY, RegistryDir, RegistryFile, SherpaOnnxRegistryEntry
+from modelship.infer.sherpa_onnx.registry import REGISTRY, SherpaOnnxRegistryEntry
 from modelship.logging import get_logger
-from modelship.utils import cache_dir, fetch_and_extract_archive, verify_sha256
+from modelship.utils import cache_dir, fetch_and_extract_archive
 
 logger = get_logger("infer.sherpa_onnx.bundle")
 
@@ -38,41 +38,22 @@ def resolve_bundle_dir(model: str) -> tuple[str, SherpaOnnxRegistryEntry]:
 
 
 def validate_bundle(bundle_dir: str, entry: SherpaOnnxRegistryEntry) -> None:
-    """Raises ValueError with an actionable message on any mismatch. Used both
-    right after a tarball extraction and directly against a user-supplied
-    local directory — same check either way."""
+    """Raises ValueError with an actionable message if a declared file/dir is
+    missing. Used both right after a tarball extraction and directly against a
+    user-supplied local directory — same check either way. Existence only:
+    the tarball's own sha256 (checked before extraction) already catches a
+    corrupt/truncated download."""
     if not os.path.isdir(bundle_dir):
         raise ValueError(f"sherpa_onnx bundle directory not found: {bundle_dir!r}")
 
-    for slot, file in entry.files.items():
-        _check_file(bundle_dir, file, f"files[{slot!r}]")
-    for i, file in enumerate(entry.lexicon):
-        _check_file(bundle_dir, file, f"lexicon[{i}]")
-    for slot, d in entry.dirs.items():
-        _check_dir(bundle_dir, d, f"dirs[{slot!r}]")
+    for slot, path in entry.files.items():
+        _check_exists(bundle_dir, path, os.path.isfile, f"files[{slot!r}]")
+    for i, path in enumerate(entry.lexicon):
+        _check_exists(bundle_dir, path, os.path.isfile, f"lexicon[{i}]")
+    for slot, path in entry.dirs.items():
+        _check_exists(bundle_dir, path, os.path.isdir, f"dirs[{slot!r}]")
 
 
-def _check_file(bundle_dir: str, file: RegistryFile, context: str) -> None:
-    path = os.path.join(bundle_dir, file.path)
-    if not os.path.isfile(path):
-        raise ValueError(f"sherpa_onnx bundle {bundle_dir!r}: missing {context} file {file.path!r}")
-    actual_size = os.path.getsize(path)
-    if actual_size != file.size:
-        raise ValueError(
-            f"sherpa_onnx bundle {bundle_dir!r}: {context} file {file.path!r} is {actual_size} bytes, "
-            f"expected {file.size} (a truncated download or a `git clone` without LFS often looks like this)"
-        )
-    if file.sha256 is not None:
-        verify_sha256(path, file.sha256)
-
-
-def _check_dir(bundle_dir: str, d: RegistryDir, context: str) -> None:
-    path = os.path.join(bundle_dir, d.path)
-    if not os.path.isdir(path):
-        raise ValueError(f"sherpa_onnx bundle {bundle_dir!r}: missing {context} directory {d.path!r}")
-    actual_count = sum(len(files) for _root, _dirs, files in os.walk(path))
-    if actual_count != d.file_count:
-        raise ValueError(
-            f"sherpa_onnx bundle {bundle_dir!r}: {context} directory {d.path!r} has {actual_count} files, "
-            f"expected {d.file_count} (a half-extracted archive often looks like this)"
-        )
+def _check_exists(bundle_dir: str, rel_path: str, check, context: str) -> None:
+    if not check(os.path.join(bundle_dir, rel_path)):
+        raise ValueError(f"sherpa_onnx bundle {bundle_dir!r}: missing {context} {rel_path!r}")

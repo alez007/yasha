@@ -50,12 +50,12 @@ class SherpaOnnxInfer(BaseInfer):
             raise ModelDownloadError(f"Failed to resolve sherpa_onnx bundle for '{self.model_config.name}': {e}") from e
 
         cfg = sherpa_onnx.OfflineTtsConfig()
-        for slot, file in entry.files.items():
-            setattr(cfg.model.kokoro, slot, os.path.join(bundle_dir, file.path))
-        for slot, d in entry.dirs.items():
-            setattr(cfg.model.kokoro, slot, os.path.join(bundle_dir, d.path))
+        for slot, rel_path in entry.files.items():
+            setattr(cfg.model.kokoro, slot, os.path.join(bundle_dir, rel_path))
+        for slot, rel_path in entry.dirs.items():
+            setattr(cfg.model.kokoro, slot, os.path.join(bundle_dir, rel_path))
         if entry.lexicon:
-            cfg.model.kokoro.lexicon = ",".join(os.path.join(bundle_dir, f.path) for f in entry.lexicon)
+            cfg.model.kokoro.lexicon = ",".join(os.path.join(bundle_dir, rel_path) for rel_path in entry.lexicon)
         # Never take provider from config: an unsupported/typo'd value silently
         # falls back to CPU inside sherpa's C++ instead of raising.
         cfg.model.provider = "coreml" if platform.system() == "Darwin" else "cpu"

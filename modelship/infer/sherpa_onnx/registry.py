@@ -8,34 +8,21 @@ wheel installed, same as capabilities.py's LOADER_MODULES.
 from typing import NamedTuple
 
 
-class RegistryFile(NamedTuple):
-    """A file inside the extracted bundle, relative to its root. `sha256` is
-    None for files too large to hash on every deploy."""
-
-    path: str
-    size: int
-    sha256: str | None = None
-
-
-class RegistryDir(NamedTuple):
-    """A directory inside the extracted bundle, relative to its root."""
-
-    path: str
-    file_count: int
-
-
 class SherpaOnnxRegistryEntry(NamedTuple):
     """`files`/`dirs` keys are sherpa's own `OfflineTtsKokoroModelConfig`
-    attribute names. `lexicon` is the list form of sherpa's single comma-joined
-    field. `voice_names[i]` is the OpenAI voice name for sid i."""
+    attribute names, values are paths relative to the bundle root. `lexicon`
+    is the list form of sherpa's single comma-joined field. `voice_names[i]`
+    is the OpenAI voice name for sid i. `sha256` pins the tarball itself —
+    bundle contents are checked for presence only, not size/hash, since a
+    corrupt/truncated download is already caught before extraction."""
 
     tarball_url: str
     sha256: str
     family: str
     usecase: str
-    files: dict[str, RegistryFile]
-    dirs: dict[str, RegistryDir]
-    lexicon: tuple[RegistryFile, ...]
+    files: dict[str, str]
+    dirs: dict[str, str]
+    lexicon: tuple[str, ...]
     voice_names: tuple[str, ...]
 
 
@@ -48,16 +35,12 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry] = {
         family="kokoro",
         usecase="tts",
         files={
-            "model": RegistryFile("model.onnx", 345_555_491),
-            "tokens": RegistryFile(
-                "tokens.txt", 1_078, "4f31c71282d14af4e926cd12462078fe9d20d00c589e63fe2750a8f56d6d7f7b"
-            ),
-            "voices": RegistryFile(
-                "voices.bin", 5_755_904, "a372c67b056ef0b695c375d39b99630d23fb07ad4c8d87aa32a19a62fca523ad"
-            ),
+            "model": "model.onnx",
+            "tokens": "tokens.txt",
+            "voices": "voices.bin",
         },
         dirs={
-            "data_dir": RegistryDir("espeak-ng-data", 355),
+            "data_dir": "espeak-ng-data",
         },
         lexicon=(),
         voice_names=(
@@ -83,20 +66,16 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry] = {
         family="kokoro",
         usecase="tts",
         files={
-            "model": RegistryFile("model.onnx", 325_630_829),
-            "tokens": RegistryFile(
-                "tokens.txt", 687, "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425"
-            ),
-            "voices": RegistryFile(
-                "voices.bin", 27_678_720, "8a77c0d397026208d22211f37670b5b3b11e03f190756b25a1d24041fced82a9"
-            ),
+            "model": "model.onnx",
+            "tokens": "tokens.txt",
+            "voices": "voices.bin",
         },
         dirs={
-            "data_dir": RegistryDir("espeak-ng-data", 355),
+            "data_dir": "espeak-ng-data",
         },
         lexicon=(
-            RegistryFile("lexicon-us-en.txt", 5_956_885),
-            RegistryFile("lexicon-zh.txt", 2_364_621),
+            "lexicon-us-en.txt",
+            "lexicon-zh.txt",
         ),
         voice_names=(
             "af_alloy",

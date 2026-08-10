@@ -1,6 +1,6 @@
 """Every curated sherpa_onnx registry entry must be internally consistent:
-well-formed paths/sizes, a speaker count matching voice_names, and a
-provenance URL under the k2-fsa org."""
+well-formed paths, a speaker count matching voice_names, and a provenance URL
+under the k2-fsa org."""
 
 from modelship.infer.sherpa_onnx.registry import REGISTRY, registry_names
 
@@ -23,17 +23,14 @@ class TestEntries:
             assert len(entry.sha256) == 64, name
             int(entry.sha256, 16)  # raises ValueError if not hex
 
-    def test_files_and_dirs_have_positive_sizes(self):
+    def test_files_and_dirs_have_nonempty_paths(self):
         for name, entry in REGISTRY.items():
-            for slot, file in entry.files.items():
-                assert file.path, f"{name}.files[{slot}]"
-                assert file.size > 0, f"{name}.files[{slot}]"
-            for slot, d in entry.dirs.items():
-                assert d.path, f"{name}.dirs[{slot}]"
-                assert d.file_count > 0, f"{name}.dirs[{slot}]"
-            for i, file in enumerate(entry.lexicon):
-                assert file.path, f"{name}.lexicon[{i}]"
-                assert file.size > 0, f"{name}.lexicon[{i}]"
+            for slot, path in entry.files.items():
+                assert path, f"{name}.files[{slot}]"
+            for slot, path in entry.dirs.items():
+                assert path, f"{name}.dirs[{slot}]"
+            for i, path in enumerate(entry.lexicon):
+                assert path, f"{name}.lexicon[{i}]"
 
     def test_required_kokoro_slots_present(self):
         for name, entry in REGISTRY.items():
@@ -48,10 +45,3 @@ class TestEntries:
     def test_af_bella_present_for_plugin_parity(self):
         for name, entry in REGISTRY.items():
             assert "af_bella" in entry.voice_names, name
-
-    def test_small_files_carry_a_sha256_pin(self):
-        # model.onnx is too large to hash per deploy; tokens/voices aren't.
-        for name, entry in REGISTRY.items():
-            assert entry.files["tokens"].sha256 is not None, name
-            assert entry.files["voices"].sha256 is not None, name
-            assert entry.files["model"].sha256 is None, name
