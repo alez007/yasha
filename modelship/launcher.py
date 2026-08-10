@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import platform
+import shutil
 import stat
 import sys
 
@@ -119,6 +120,8 @@ def _resolve_llama_server_bin() -> str:
 
     binary = os.path.join(extract_dir, "llama-server")
     if not os.path.isfile(binary):
+        if os.path.isdir(extract_dir):
+            shutil.rmtree(extract_dir, ignore_errors=True)
         fetch_and_extract_archive(
             _LLAMA_CPP_METAL_ASSET_URL,
             _LLAMA_CPP_METAL_SHA256,
