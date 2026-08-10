@@ -23,8 +23,7 @@ logger = get_logger("infer.sherpa_onnx")
 
 
 class SherpaOnnxInfer(BaseInfer):
-    """In-process sherpa-onnx TTS loader. v1 scope: kokoro family only, CPU/CoreML
-    only (no CUDA wheel wired)."""
+    """In-process sherpa-onnx TTS loader. v1 scope: kokoro family only, CPU/CoreML only."""
 
     def __init__(self, model_config: ModelshipModelConfig):
         super().__init__(model_config)
