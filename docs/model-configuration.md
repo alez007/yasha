@@ -95,7 +95,7 @@ If `MSHIP_TRUSTED_IDENTITY_HEADER` is unset (the default), modelship falls back 
 | `model` | string | HuggingFace repo ID, local path, or `repo:filename` (see [Model source](#model-source)) |
 | `usecase` | string | `generate`, `embed`, `transcription`, `translation`, `tts`, or `image` |
 | `loader` | string | `vllm`, `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, or `sherpa_onnx` |
-| `num_gpus` | float \| int | GPU allocation. Fractional `< 1` shares one GPU (also sets vLLM `gpu_memory_utilization`); integer `≥ 1` requests that many whole GPUs (for `vllm`, this auto-sets `tensor_parallel_size = num_gpus` unless tp/pp is already specified). |
+| `num_gpus` | float \| int | GPU allocation. Fractional `< 1` shares one GPU with another deploy — supported by `vllm`, `diffusers`, `llama_server`, and (Metal-only) `whispercpp`; ignored by `sherpa_onnx` and off-Darwin `stable_diffusion_cpp`/`whispercpp`. Integer `≥ 1` requests that many whole GPUs (for `vllm`, this auto-sets `tensor_parallel_size = num_gpus` unless tp/pp is already specified). See [Sharing one GPU](#sharing-one-gpu). |
 | `num_cpus` | float | CPU units to allocate (default `0.1`) |
 | `num_replicas` | int | Fixed number of identical Ray Serve replicas for this deployment (default `1`). Mutually exclusive with `autoscaling_config`. |
 | `autoscaling_config` | object | Autoscale replicas with load instead of a fixed `num_replicas` (see [Autoscaling](#autoscaling)). Mutually exclusive with `num_replicas`. |
@@ -105,6 +105,27 @@ If `MSHIP_TRUSTED_IDENTITY_HEADER` is unset (the default), modelship falls back 
 | `llama_server_config` | object | llama-server loader options (see below) |
 | `stable_diffusion_cpp_config` | object | stable-diffusion.cpp loader options (see below) |
 | `chat_template_kwargs` | object | Extra variables forwarded into the chat-template render on text loaders (`vllm`) — e.g. `enable_thinking: false` for Qwen3. Only has an effect if the model's template branches on the key. A per-request `chat_template_kwargs` overrides the model default on `vllm`. |
+
+## Sharing one GPU
+
+A fractional `num_gpus` (`0 < n < 1`) lets two or more deploys share one physical GPU via Ray's own fractional scheduling — e.g. a `vllm` model at `num_gpus: 0.7` and a `llama_server` model at `0.3` on the same card. Keep fractions on one GPU summing to **at most 0.9**: the remaining headroom covers each engine's fixed pre-allocation overhead (CUDA context, etc.) that sits outside the declared share.
+
+Each GPU-capable loader sizes and enforces its share differently:
+
+| Loader | Enforcement |
+|---|---|
+| `vllm` | Hard — the engine allocates `total VRAM × gpu_memory_utilization` (which a fractional `num_gpus` sets directly) and fails at startup if that doesn't fit |
+| `diffusers` | Hard — `torch.cuda.set_per_process_memory_fraction` caps the process at its share; allocating past it raises an OOM |
+| `llama_server` | Static — preflight sizes `n_ctx`/`n_gpu_layers` to fit the declared share; llama.cpp allocates that amount upfront and never grows |
+| `whispercpp` | None (Metal only) — `num_gpus > 0` is a plain on/off switch for Metal offload, no VRAM knob to size |
+| `sherpa_onnx`, `stable_diffusion_cpp` (off-Darwin) | N/A — never touch CUDA; `num_gpus` is ignored |
+
+Preflight sizes a fractional deploy from its **declared share of the GPU's total capacity**, not from free VRAM at that moment — this is what makes sizing deterministic across replica restarts and boot order, regardless of what a co-tenant is doing. If free VRAM ever falls short of what a deploy declared (a co-tenant over its own share, or something outside Ray using the card), preflight logs a warning naming both numbers, since Ray's own scheduling has no way to catch that failure mode itself.
+
+Sharp edges:
+- No SM/compute isolation between co-tenants — they time-slice the GPU's compute the same as any two CUDA processes sharing a device (fine for one large + one small model; not a substitute for MIG/MPS if both are large).
+- On a multi-GPU node you can't pin which physical GPU a fractional deploy lands on — Ray picks.
+- If a co-tenant *frees* VRAM while vLLM is mid-startup (profiling its own memory footprint), vLLM's internal consistency check can abort; Ray Serve's replica restart recovers automatically.
 
 ## Model source
 
@@ -334,13 +355,13 @@ models:
 
 The `llama_server` loader runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/llama.cpp) subprocess and proxying its native OpenAI-compatible HTTP API. Chat templating, tool-call parsing, and reasoning parsing are all llama-server's own (`--jinja --reasoning-format auto`), not modelship's. `--parallel` request slots let concurrent requests actually overlap instead of serializing behind a single lock. It requires the `llama-server` binary to be discoverable via `MSHIP_LLAMA_SERVER_BIN` (see [development.md](development.md#llama-server-binary-llama_server-loader)); the Docker images ship a pinned build at `/opt/llama.cpp`.
 
-`num_gpus` must be `0` (CPU-only) or a whole integer number of GPUs — fractional is rejected at config time, since llama.cpp has no VRAM-fraction knob.
+`num_gpus` accepts `0` (CPU-only), a fraction `< 1` (shares one physical GPU with another deploy), or a whole integer number of GPUs — see [Sharing one GPU](#sharing-one-gpu) below for what the fraction sizes against.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `n_ctx` | int | auto (preflight); `2048` when preflight declines | Per-slot context length. The launch command multiplies this by `parallel` for llama-server's total `-c` (it splits one context budget across slots). Preflight sizes it from GGUF metadata and the actor's hardware: RAM on `num_gpus: 0`, VRAM (and RAM for any CPU-resident layers) on `num_gpus >= 1` |
+| `n_ctx` | int | auto (preflight); `2048` when preflight declines | Per-slot context length. The launch command multiplies this by `parallel` for llama-server's total `-c` (it splits one context budget across slots). Preflight sizes it from GGUF metadata and the actor's hardware: RAM on `num_gpus: 0`, VRAM on `num_gpus > 0` (and RAM for any CPU-resident layers) |
 | `n_batch` | int | `512` | Batch size for prompt processing |
-| `n_gpu_layers` | int | auto (preflight); `-1` when preflight declines | Layers to offload to GPU when `num_gpus >= 1`; forced to `0` when `num_gpus` is `0`. Preflight always recommends a concrete count (full or partial offload, sized to free VRAM) when GGUF metadata is readable. The `-1` fallback hits llama-server's own auto-fit-to-free-memory behavior (any negative value does — verified against b9859, unconfirmed on the current b10200 pin) |
+| `n_gpu_layers` | int | auto (preflight); `-1` when preflight declines | Layers to offload to GPU when `num_gpus > 0`; forced to `0` when `num_gpus` is `0`. Preflight always recommends a concrete count (full or partial offload, sized to the deploy's VRAM budget) when GGUF metadata is readable. The `-1` fallback hits llama-server's own auto-fit-to-free-memory behavior (any negative value does — verified against b9859, unconfirmed on the current b10200 pin) |
 | `threads` | int | `None` (llama-server's own default: all cores) | Compute thread count (`--threads`). Preflight recommends `num_cpus` when the deploy reserves one or more whole CPUs, so the subprocess doesn't grab every core on a shared node |
 | `parallel` | int | `1` | Concurrent request slots (`--parallel`). When `max_ongoing_requests` isn't set explicitly, it defaults to this value so overflow queues in Ray Serve rather than inside llama-server |
 | `chat_template` | string | — | Built-in template name (e.g. `chatml`) or a path to a Jinja file. Omit to use the GGUF's embedded chat template |
@@ -433,7 +454,7 @@ models:
 
 ## whispercpp Loader
 
-The `whispercpp` loader runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) speech-to-text in-process via [`pywhispercpp`](https://github.com/absadiki/pywhispercpp) bindings — no subprocess, unlike `llama_server`. It's CPU-only on Linux; on Apple Silicon (`num_gpus: 1`) it also gets Metal offload via the same wheel. `num_gpus` must be `0` or a whole integer — fractional is rejected, same as `llama_server`.
+The `whispercpp` loader runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) speech-to-text in-process via [`pywhispercpp`](https://github.com/absadiki/pywhispercpp) bindings — no subprocess, unlike `llama_server`. It's CPU-only on Linux, where any `num_gpus` is ignored (forced to `0`). On Apple Silicon `num_gpus > 0` (including a fraction, to share the GPU with another deploy) enables Metal offload — there's no separate VRAM knob to size, it's a plain on/off switch, so the model's own footprint is what actually determines whether it fits in its share.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -458,7 +479,7 @@ See `config/examples/whispercpp.yaml` for every `model:` form and a Metal exampl
 
 ## sherpa_onnx Loader
 
-The `sherpa_onnx` loader runs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) in-process via its Python bindings. Current scope: TTS only, kokoro family only, CPU (and CoreML on macOS) only. `num_gpus` must be `0` or a whole integer; on Linux this means `0` in practice.
+The `sherpa_onnx` loader runs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) in-process via its Python bindings. Current scope: TTS only, kokoro family only, CPU (and CoreML on macOS) only — it never touches CUDA, so `num_gpus` is ignored entirely (any value is accepted at config time but forced to `0` at deploy time, with a warning if nonzero) and doesn't reserve GPU capacity another deploy could use.
 
 `model:` is not an HF repo or path — it's a name from a curated, built-in registry (or a local directory whose basename matches one). Each name maps to a GitHub release tarball with a pinned sha256, downloaded and cached under `<cache_root>/sherpa_onnx/<name>/` on first use. There is no `sherpa_onnx_config` — `provider` (`cpu`/`coreml`) and thread count are derived from `num_gpus`/`num_cpus`, never user-supplied, since an invalid provider string silently falls back to CPU inside sherpa's own C++.
 
