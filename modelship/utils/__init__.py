@@ -1,8 +1,10 @@
+import contextlib
 import hashlib
 import logging
 import os
 import random
 import re
+import shutil
 import string
 import tarfile
 from collections.abc import Iterable
@@ -53,6 +55,12 @@ def rand_suffix(length: int = 5) -> str:
     return "".join(random.choices(_RAND_CHARS, k=length))
 
 
+def is_pathy(s: str) -> bool:
+    """A local-path-shaped string (`/...`, `./...`, `~...`), as opposed to an
+    HF repo id, registry name, or other bare identifier."""
+    return s.startswith(("/", "./", "~"))
+
+
 def download(url: str, file_path: str, overwrite: bool = False):
     """Download ``url`` to ``file_path``, skipping if it already exists.
 
@@ -87,18 +95,60 @@ def verify_sha256(path: str, expected: str) -> None:
         raise ValueError(f"{path} failed sha256 verification: expected {expected}, got {actual}")
 
 
-def extract_tar(archive_path: str, extract_dir: str) -> None:
-    """Extract every member of a .tar.gz into extract_dir, flattened to its
-    basename — drops whatever containing directory the archive was packaged
-    with, so callers don't need to know that layout up front."""
-    os.makedirs(extract_dir, exist_ok=True)
-    with tarfile.open(archive_path) as tar:
-        for member in tar.getmembers():
-            name = os.path.basename(member.name)
-            if not name:
-                continue
-            member.name = name
-            tar.extract(member, path=extract_dir, filter="data")
+def fetch_and_extract_archive(
+    url: str,
+    sha256: str,
+    archive_path: str,
+    extract_dir: str,
+    *,
+    flatten: bool = False,
+    keep_archive: bool = False,
+) -> None:
+    """Download `url` to `archive_path`, verify its sha256, and extract into
+    `extract_dir` via a private tmp dir + atomic `os.replace` (safe against
+    concurrent extractors and partial reads). A sha256 mismatch deletes the
+    archive so a retry doesn't re-verify the same bytes.
+
+    `flatten=True` extracts every member to its basename; otherwise a single
+    shared top-level directory is stripped so `extract_dir` holds its
+    contents directly."""
+    os.makedirs(os.path.dirname(archive_path) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(extract_dir) or ".", exist_ok=True)
+
+    download(url, archive_path)
+    try:
+        verify_sha256(archive_path, sha256)
+    except ValueError:
+        os.remove(archive_path)  # don't let a retry re-verify the same corrupt bytes
+        raise
+
+    tmp_dir = f"{extract_dir}.{random_uuid()}.tmp"
+    os.makedirs(tmp_dir, exist_ok=True)
+    try:
+        with tarfile.open(archive_path) as tar:
+            if flatten:
+                for member in tar.getmembers():
+                    name = os.path.basename(member.name)
+                    if not name:
+                        continue
+                    member.name = name
+                    tar.extract(member, path=tmp_dir, filter="data")
+            else:
+                tar.extractall(tmp_dir, filter="data")
+
+        root = tmp_dir
+        if not flatten:
+            entries = os.listdir(tmp_dir)
+            if len(entries) == 1 and os.path.isdir(os.path.join(tmp_dir, entries[0])):
+                root = os.path.join(tmp_dir, entries[0])
+
+        with contextlib.suppress(OSError):  # a concurrent extractor already won
+            os.replace(root, extract_dir)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    if not keep_archive:
+        os.remove(archive_path)
 
 
 def cache_dir() -> str:

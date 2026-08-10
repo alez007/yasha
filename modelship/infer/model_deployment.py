@@ -39,7 +39,8 @@ from modelship.openai.protocol import (
 
 logger = get_logger("infer.deployment")
 
-# llama_server, stable_diffusion_cpp, and whispercpp all have Metal backends; vllm/diffusers don't.
+# llama_server, stable_diffusion_cpp, and whispercpp all have Metal backends; sherpa_onnx has
+# CoreML; vllm/diffusers don't.
 _DARWIN_UNSUPPORTED_LOADERS = {ModelLoader.vllm, ModelLoader.diffusers}
 
 
@@ -197,6 +198,10 @@ class ModelDeployment:
                 from modelship.infer.whispercpp.whispercpp_infer import WhispercppInfer
 
                 self.infer = WhispercppInfer(config)
+            elif config.loader == ModelLoader.sherpa_onnx:
+                from modelship.infer.sherpa_onnx.sherpa_onnx_infer import SherpaOnnxInfer
+
+                self.infer = SherpaOnnxInfer(config)
             else:
                 from modelship.infer.custom.custom_infer import CustomInfer
 

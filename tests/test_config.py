@@ -392,9 +392,16 @@ class TestModelshipModelConfig:
     def test_all_loaders_valid(self):
         image_only = (ModelLoader.diffusers, ModelLoader.stable_diffusion_cpp)
         for loader in ModelLoader:
-            # diffusers / stable_diffusion_cpp are image-only; the rest support generate.
-            usecase = ModelUsecase.image if loader in image_only else ModelUsecase.generate
-            kwargs = {"name": "test", "model": "some-model", "usecase": usecase}
+            # diffusers / stable_diffusion_cpp are image-only; sherpa_onnx is tts-only
+            # (and needs a registry name, not an arbitrary model string); the rest
+            # support generate.
+            if loader is ModelLoader.sherpa_onnx:
+                usecase, model = ModelUsecase.tts, "kokoro-en-v0_19"
+            elif loader in image_only:
+                usecase, model = ModelUsecase.image, "some-model"
+            else:
+                usecase, model = ModelUsecase.generate, "some-model"
+            kwargs = {"name": "test", "model": model, "usecase": usecase}
             if loader == ModelLoader.custom:
                 kwargs["plugin"] = "test-plugin"
             config = ModelshipModelConfig(loader=loader, **kwargs)

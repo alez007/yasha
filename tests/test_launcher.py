@@ -137,7 +137,7 @@ class TestResolveLlamaServerBin:
             patch.object(launcher.platform, "system", return_value="Darwin"),
             patch.object(launcher, "resolve_cache_root", return_value=cache_root),
             patch.object(launcher, "_LLAMA_CPP_METAL_SHA256", digest),
-            patch.object(launcher, "download", side_effect=fake_download) as mock_download,
+            patch("modelship.utils.download", side_effect=fake_download) as mock_download,
         ):
             wrapper = launcher._resolve_llama_server_bin()
 
@@ -146,6 +146,32 @@ class TestResolveLlamaServerBin:
         assert "llama-server.sh" in wrapper
         extracted_bin = os.path.join(os.path.dirname(wrapper), "extracted", "llama-server")
         assert os.path.isfile(extracted_bin)
+
+    def test_stale_extract_dir_is_cleared_and_refetched(self, tmp_path):
+        archive, digest = _make_archive(tmp_path)
+        cache_root = str(tmp_path / "cache")
+
+        def fake_download(url, dest):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(archive, "rb") as src, open(dest, "wb") as dst:
+                dst.write(src.read())
+
+        extract_dir = os.path.join(cache_root, "llama.cpp", launcher._LLAMA_CPP_TAG, "extracted")
+        os.makedirs(extract_dir)
+        with open(os.path.join(extract_dir, "leftover_junk.txt"), "wb") as f:
+            f.write(b"junk")
+
+        with (
+            patch.object(launcher.platform, "system", return_value="Darwin"),
+            patch.object(launcher, "resolve_cache_root", return_value=cache_root),
+            patch.object(launcher, "_LLAMA_CPP_METAL_SHA256", digest),
+            patch("modelship.utils.download", side_effect=fake_download),
+        ):
+            wrapper = launcher._resolve_llama_server_bin()
+
+        assert os.path.isfile(wrapper)
+        assert os.path.isfile(os.path.join(extract_dir, "llama-server"))
+        assert not os.path.exists(os.path.join(extract_dir, "leftover_junk.txt"))
 
     def test_digest_mismatch_raises(self, tmp_path):
         archive, _real_digest = _make_archive(tmp_path)
@@ -160,7 +186,7 @@ class TestResolveLlamaServerBin:
             patch.object(launcher.platform, "system", return_value="Darwin"),
             patch.object(launcher, "resolve_cache_root", return_value=cache_root),
             patch.object(launcher, "_LLAMA_CPP_METAL_SHA256", "0" * 64),
-            patch.object(launcher, "download", side_effect=fake_download),
+            patch("modelship.utils.download", side_effect=fake_download),
             pytest.raises(ValueError, match="sha256 verification"),
         ):
             launcher._resolve_llama_server_bin()

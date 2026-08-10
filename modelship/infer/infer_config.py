@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import os
 import time
 from collections.abc import Callable
 from enum import StrEnum
@@ -13,6 +14,7 @@ from starlette.datastructures import Headers, State
 
 from modelship.infer.model_resolver import PinnedSource
 from modelship.logging import get_logger
+from modelship.utils import is_pathy
 
 _logger = get_logger("config")
 
@@ -54,6 +56,7 @@ class ModelLoader(StrEnum):
     llama_server = "llama_server"
     stable_diffusion_cpp = "stable_diffusion_cpp"
     whispercpp = "whispercpp"
+    sherpa_onnx = "sherpa_onnx"
     custom = "custom"
 
 
@@ -293,8 +296,8 @@ class ModelshipModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_whole_gpu_only_loaders_num_gpus(self):
-        # Neither backend has a VRAM-fraction knob — require whole GPUs (or 0).
-        whole_gpu_loaders = (ModelLoader.llama_server, ModelLoader.whispercpp)
+        # None of these backends has a VRAM-fraction knob — require whole GPUs (or 0).
+        whole_gpu_loaders = (ModelLoader.llama_server, ModelLoader.whispercpp, ModelLoader.sherpa_onnx)
         if self.loader in whole_gpu_loaders and self.num_gpus != int(self.num_gpus):
             raise ValueError(
                 f"num_gpus={self.num_gpus!r} is not allowed for the {self.loader.value} loader: "
@@ -313,6 +316,26 @@ class ModelshipModelConfig(BaseModel):
             self.usecase is not ModelUsecase.image
         ):
             raise ValueError(f"loader={self.loader.value!r} only supports usecase='image', got {self.usecase!r}")
+        return self
+
+    @model_validator(mode="after")
+    def check_sherpa_onnx_model_and_usecase(self):
+        # `model:` must be a curated registry name (or a local dir named for one),
+        # not an arbitrary HF repo/URL.
+        if self.loader != ModelLoader.sherpa_onnx:
+            return self
+        from modelship.infer.sherpa_onnx.registry import registry_names
+
+        assert self.model is not None  # enforced by check_custom_requires_plugin above
+        name = os.path.basename(self.model.rstrip("/")) if is_pathy(self.model) else self.model
+        names = registry_names()
+        if name not in names:
+            raise ValueError(
+                f"model '{self.name}': sherpa_onnx model {self.model!r} is not a supported registry name "
+                f"(or a local directory whose basename matches one). Supported names: {', '.join(names)}"
+            )
+        if self.usecase is not ModelUsecase.tts:
+            raise ValueError(f"loader='sherpa_onnx' only supports usecase='tts' (v1 scope), got {self.usecase!r}")
         return self
 
     @model_validator(mode="after")

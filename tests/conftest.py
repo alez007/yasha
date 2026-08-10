@@ -192,12 +192,10 @@ MODEL_CONFIGS: dict[str, dict] = {
     },
     "tts-model": {
         "name": "tts-model",
-        "model": "hexgrad/Kokoro-82M",
+        "model": "kokoro-en-v0_19",
         "usecase": "tts",
-        "loader": "custom",
-        "plugin": "kokoroonnx",
+        "loader": "sherpa_onnx",
         "num_cpus": 1,
-        "plugin_config": {"onnx_provider": "CPUExecutionProvider"},
     },
     "image-model": {
         "name": "image-model",

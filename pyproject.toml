@@ -48,6 +48,8 @@ metal = [
     "onnxruntime>=1.28.0",
     "stable-diffusion-cpp-python>=0.4.7",
     "pywhispercpp>=1.5.0",
+    "sherpa-onnx>=1.13.4",
+    "sherpa-onnx-core==1.13.4",
 ]
 cuda = [
     "torch>=2.10.0",
@@ -66,6 +68,8 @@ cuda = [
     "scipy>=1.16.1",
     "soundfile>=0.13.0",
     "pywhispercpp>=1.5.0",
+    "sherpa-onnx>=1.13.4",
+    "sherpa-onnx-core==1.13.4",
 ]
 cpu = [
     "torch>=2.10.0",
@@ -80,6 +84,8 @@ cpu = [
     "scipy>=1.16.1",
     "soundfile>=0.13.0",
     "pywhispercpp>=1.5.0",
+    "sherpa-onnx>=1.13.4",
+    "sherpa-onnx-core==1.13.4",
 ]
 kokoroonnx = ["kokoroonnx"]
 orpheus = ["orpheus"]
@@ -197,6 +203,7 @@ markers = [
     "diffusers: integration tests that exercise the diffusers loader",
     "stable_diffusion_cpp: integration tests that exercise the stable_diffusion_cpp loader",
     "whispercpp: integration tests that exercise the whispercpp loader",
+    "sherpa_onnx: integration tests that exercise the sherpa_onnx loader",
     "autoscaling: integration test that exercises Ray Serve autoscaling (scale out/in under load)",
     "gateway_ha: integration test that exercises multi-replica gateway routing consistency",
     "blue_green: integration test that exercises the blue_green replace-strategy cutover",
