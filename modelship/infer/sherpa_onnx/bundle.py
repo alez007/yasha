@@ -1,16 +1,12 @@
 """Fetch, verify, and extract sherpa_onnx's curated model bundles into the
-shared cache dir. Mirrors modelship/launcher.py's llama.cpp tarball
-provisioning (download -> verify_sha256 -> extract), except extraction keeps
-the tarball's directory structure instead of flattening to basenames."""
+shared cache dir, via modelship.utils.fetch_and_extract_archive (also used by
+modelship/launcher.py for llama.cpp's binary tarball)."""
 
-import contextlib
 import os
-import shutil
-import tarfile
 
 from modelship.infer.sherpa_onnx.registry import REGISTRY, RegistryDir, RegistryFile, SherpaOnnxRegistryEntry
 from modelship.logging import get_logger
-from modelship.utils import cache_dir, download, random_uuid, verify_sha256
+from modelship.utils import cache_dir, fetch_and_extract_archive, verify_sha256
 
 logger = get_logger("infer.sherpa_onnx.bundle")
 
@@ -35,39 +31,10 @@ def resolve_bundle_dir(model: str) -> tuple[str, SherpaOnnxRegistryEntry]:
         except ValueError:
             logger.warning("cached sherpa_onnx bundle %r failed validation, re-fetching", model)
 
-    _fetch_and_extract(model, entry, bundle_dir)
+    archive_path = os.path.join(cache_dir(), "sherpa_onnx", f".{model}.tar.bz2")
+    fetch_and_extract_archive(entry.tarball_url, entry.sha256, archive_path, bundle_dir)
     validate_bundle(bundle_dir, entry)
     return bundle_dir, entry
-
-
-def _fetch_and_extract(name: str, entry: SherpaOnnxRegistryEntry, bundle_dir: str) -> None:
-    root = os.path.join(cache_dir(), "sherpa_onnx")
-    os.makedirs(root, exist_ok=True)
-    archive_path = os.path.join(root, f".{name}.tar.bz2")
-
-    download(entry.tarball_url, archive_path)
-    try:
-        verify_sha256(archive_path, entry.sha256)
-    except ValueError:
-        os.remove(archive_path)  # don't let a retry re-verify the same corrupt bytes
-        raise
-
-    tmp_dir = os.path.join(root, f".{name}-{random_uuid()}.tmp")
-    os.makedirs(tmp_dir, exist_ok=True)
-    try:
-        with tarfile.open(archive_path) as tar:
-            tar.extractall(tmp_dir, filter="data")
-        extracted_root = os.path.join(tmp_dir, name)
-        if not os.path.isdir(extracted_root):
-            raise ValueError(
-                f"sherpa_onnx bundle {name!r}: extracted tarball has no top-level {name!r} directory "
-                f"(found: {os.listdir(tmp_dir)})"
-            )
-        with contextlib.suppress(OSError):  # another replica on this node already extracted a valid bundle
-            os.replace(extracted_root, bundle_dir)
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-    os.remove(archive_path)
 
 
 def validate_bundle(bundle_dir: str, entry: SherpaOnnxRegistryEntry) -> None:

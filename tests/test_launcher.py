@@ -137,7 +137,7 @@ class TestResolveLlamaServerBin:
             patch.object(launcher.platform, "system", return_value="Darwin"),
             patch.object(launcher, "resolve_cache_root", return_value=cache_root),
             patch.object(launcher, "_LLAMA_CPP_METAL_SHA256", digest),
-            patch.object(launcher, "download", side_effect=fake_download) as mock_download,
+            patch("modelship.utils.download", side_effect=fake_download) as mock_download,
         ):
             wrapper = launcher._resolve_llama_server_bin()
 
@@ -160,7 +160,7 @@ class TestResolveLlamaServerBin:
             patch.object(launcher.platform, "system", return_value="Darwin"),
             patch.object(launcher, "resolve_cache_root", return_value=cache_root),
             patch.object(launcher, "_LLAMA_CPP_METAL_SHA256", "0" * 64),
-            patch.object(launcher, "download", side_effect=fake_download),
+            patch("modelship.utils.download", side_effect=fake_download),
             pytest.raises(ValueError, match="sha256 verification"),
         ):
             launcher._resolve_llama_server_bin()

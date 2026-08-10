@@ -12,7 +12,7 @@ import stat
 import sys
 
 from modelship.deploy.capabilities import LOADER_MODULES
-from modelship.utils import download, extract_tar, verify_sha256
+from modelship.utils import fetch_and_extract_archive
 from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.cache import resolve_cache_root
 
@@ -117,13 +117,16 @@ def _resolve_llama_server_bin() -> str:
     extract_dir = os.path.join(tag_dir, "extracted")
     wrapper_path = os.path.join(tag_dir, "llama-server.sh")
 
-    os.makedirs(tag_dir, exist_ok=True)
-    download(_LLAMA_CPP_METAL_ASSET_URL, archive_path)
-    verify_sha256(archive_path, _LLAMA_CPP_METAL_SHA256)
-
-    if not os.path.isfile(os.path.join(extract_dir, "llama-server")):
-        extract_tar(archive_path, extract_dir)
-        binary = os.path.join(extract_dir, "llama-server")
+    binary = os.path.join(extract_dir, "llama-server")
+    if not os.path.isfile(binary):
+        fetch_and_extract_archive(
+            _LLAMA_CPP_METAL_ASSET_URL,
+            _LLAMA_CPP_METAL_SHA256,
+            archive_path,
+            extract_dir,
+            flatten=True,
+            keep_archive=True,
+        )
         os.chmod(binary, os.stat(binary).st_mode | stat.S_IEXEC)
 
     _write_wrapper(wrapper_path, extract_dir)
