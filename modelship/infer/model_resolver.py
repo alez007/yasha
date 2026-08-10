@@ -6,6 +6,7 @@ from typing import NamedTuple
 from huggingface_hub import hf_hub_download, model_info, snapshot_download
 
 from modelship.logging import get_logger
+from modelship.utils import is_pathy
 
 logger = get_logger("startup")
 
@@ -25,14 +26,10 @@ class ResolvedSource(NamedTuple):
     is_local: bool
 
 
-def _is_pathy(s: str) -> bool:
-    return s.startswith("/") or s.startswith("./") or s.startswith("~")
-
-
 def _expand(s: str) -> str:
     """expanduser only for pathy strings — Path.resolve() never expands `~`,
     so this must happen here or a valid `~/...` ref 404s downstream."""
-    return os.path.expanduser(s) if _is_pathy(s) else s
+    return os.path.expanduser(s) if is_pathy(s) else s
 
 
 def parse_model_ref(model: str) -> ResolvedSource:
@@ -46,14 +43,14 @@ def parse_model_ref(model: str) -> ResolvedSource:
     whether it exists, so a missing path fails clearly downstream instead of
     being misread as an HF repo id. `~` is expanded in the returned source."""
     expanded = _expand(model)
-    if _is_pathy(model) and Path(expanded).exists():
+    if is_pathy(model) and Path(expanded).exists():
         return ResolvedSource(source=expanded, selector=None, is_local=True)
 
     if ":" in model:
         source, selector = model.split(":", 1)
-        return ResolvedSource(source=_expand(source), selector=selector, is_local=_is_pathy(source))
+        return ResolvedSource(source=_expand(source), selector=selector, is_local=is_pathy(source))
 
-    return ResolvedSource(source=expanded, selector=None, is_local=_is_pathy(model))
+    return ResolvedSource(source=expanded, selector=None, is_local=is_pathy(model))
 
 
 def _select_patterns(repo_files: list[str], trust_remote_code: bool = False) -> list[str] | None:

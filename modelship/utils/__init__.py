@@ -55,6 +55,12 @@ def rand_suffix(length: int = 5) -> str:
     return "".join(random.choices(_RAND_CHARS, k=length))
 
 
+def is_pathy(s: str) -> bool:
+    """A local-path-shaped string (`/...`, `./...`, `~...`), as opposed to an
+    HF repo id, registry name, or other bare identifier."""
+    return s.startswith(("/", "./", "~"))
+
+
 def download(url: str, file_path: str, overwrite: bool = False):
     """Download ``url`` to ``file_path``, skipping if it already exists.
 

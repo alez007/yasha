@@ -8,6 +8,7 @@ from modelship.deploy.actor_options import resolve_plugin_wheel
 from modelship.infer.infer_config import ModelLoader, ModelshipConfig
 from modelship.infer.model_resolver import check_model_source
 from modelship.logging import get_logger
+from modelship.utils import is_pathy
 
 logger = get_logger("startup")
 
@@ -84,7 +85,7 @@ def _resolve_sherpa_onnx_source(cfg) -> None:
 
     model = cfg.model
     assert model is not None  # validator guarantees this for built-in loaders
-    if model.startswith(("/", "./", "~")):
+    if is_pathy(model):
         path = os.path.expanduser(model)
         name = os.path.basename(path.rstrip("/"))
         entry = REGISTRY[name]  # config validation already guarantees this key exists

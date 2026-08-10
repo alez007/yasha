@@ -14,6 +14,7 @@ from starlette.datastructures import Headers, State
 
 from modelship.infer.model_resolver import PinnedSource
 from modelship.logging import get_logger
+from modelship.utils import is_pathy
 
 _logger = get_logger("config")
 
@@ -326,8 +327,7 @@ class ModelshipModelConfig(BaseModel):
         from modelship.infer.sherpa_onnx.registry import registry_names
 
         assert self.model is not None  # enforced by check_custom_requires_plugin above
-        is_pathy = self.model.startswith(("/", "./", "~"))
-        name = os.path.basename(self.model.rstrip("/")) if is_pathy else self.model
+        name = os.path.basename(self.model.rstrip("/")) if is_pathy(self.model) else self.model
         names = registry_names()
         if name not in names:
             raise ValueError(

@@ -7,7 +7,7 @@ import shutil
 
 from modelship.infer.sherpa_onnx.registry import REGISTRY, SherpaOnnxRegistryEntry
 from modelship.logging import get_logger
-from modelship.utils import cache_dir, fetch_and_extract_archive
+from modelship.utils import cache_dir, fetch_and_extract_archive, is_pathy
 
 logger = get_logger("infer.sherpa_onnx.bundle")
 
@@ -16,7 +16,7 @@ def resolve_bundle_dir(model: str) -> tuple[str, SherpaOnnxRegistryEntry]:
     """`model` is a registry name (fetched into the shared cache) or a local
     directory path (used in place, basename must match a registry name —
     config validation already guarantees this)."""
-    if model.startswith(("/", "./", "~")):
+    if is_pathy(model):
         path = os.path.expanduser(model)
         name = os.path.basename(path.rstrip("/"))
         entry = REGISTRY[name]
