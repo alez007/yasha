@@ -13,16 +13,9 @@ logger = get_logger("startup")
 
 
 class _DownloadProgressLogger(tqdm_asyncio):
-    """`tqdm_class` for `hf_hub_download`/`snapshot_download`: logs progress at
-    most once a minute instead of redrawing a bar in place. Ray forwards actor
-    stdout line-by-line with no real terminal behind it, so a normal tqdm bar's
-    carriage-return redraw turns into one log line per tick. Deliberately not a
-    subclass of huggingface_hub's own `tqdm` wrapper, so `_create_progress_bar`
-    hands it kwargs directly instead of routing it through HF's TTY/log-level
-    disable checks — those would otherwise silence it under Ray's non-tty pipe.
-    Subclasses `tqdm_asyncio` (not plain `tqdm.tqdm`) only to satisfy
-    huggingface_hub's `tqdm_class` type stub; async iteration is unused here.
-    """
+    """`tqdm_class` for `hf_hub_download`/`snapshot_download`. Throttles progress
+    logging to once a minute; not a subclass of HF's own tqdm wrapper, so its
+    TTY/log-level disable checks don't apply."""
 
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("mininterval", 60)
