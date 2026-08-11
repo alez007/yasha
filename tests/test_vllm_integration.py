@@ -1,0 +1,494 @@
+"""End-to-end coverage for the vllm loader: chat, streaming, tool calling,
+structured output, identity-scoped prefix caching, reasoning, vision, and
+embeddings, all through a real vLLM engine."""
+
+import json
+
+import httpx
+import pytest
+
+OPENAI_API_BASE = "http://localhost:8000/v1"
+
+
+def _collect_streaming_tool_call(stream) -> dict:
+    """Drain an OpenAI streaming response and rebuild the assistant message.
+
+    Returns a dict with: ``content`` (concatenated content deltas),
+    ``tool_calls`` (per-index dict of ``{id, name, arguments}`` — arguments
+    concatenated across all fragments), ``finish_reason``, ``name_deltas``
+    and ``args_deltas`` (counts, used to assert that streaming was actually
+    incremental rather than a single buffered emission).
+    """
+    content_parts: list[str] = []
+    tool_calls: dict[int, dict] = {}
+    finish_reason: str | None = None
+    name_deltas = 0
+    args_deltas = 0
+    chunks_with_tool_calls = 0
+
+    for chunk in stream:
+        choice = chunk.choices[0]
+        delta = choice.delta
+        if delta.content:
+            content_parts.append(delta.content)
+        if delta.tool_calls:
+            chunks_with_tool_calls += 1
+            for tc in delta.tool_calls:
+                slot = tool_calls.setdefault(tc.index, {"id": None, "name": None, "arguments": ""})
+                if tc.id is not None:
+                    slot["id"] = tc.id
+                if tc.function and tc.function.name:
+                    slot["name"] = tc.function.name
+                    name_deltas += 1
+                if tc.function and tc.function.arguments:
+                    slot["arguments"] += tc.function.arguments
+                    args_deltas += 1
+        if choice.finish_reason is not None:
+            finish_reason = choice.finish_reason
+
+    return {
+        "content": "".join(content_parts),
+        "tool_calls": tool_calls,
+        "finish_reason": finish_reason,
+        "name_deltas": name_deltas,
+        "args_deltas": args_deltas,
+        "chunks_with_tool_calls": chunks_with_tool_calls,
+    }
+
+
+_WEATHER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get weather for a city",
+        "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
+    },
+}
+
+
+@pytest.mark.integration
+@pytest.mark.vllm
+class TestChatCapable:
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        model_deployer.deploy("chat-capable")
+
+    def test_list_models(self, client):
+        # With per-model deploys we only assert the currently-deployed model
+        # appears in /v1/models, not the full original 7-model set.
+        model_ids = [m.id for m in client.models.list().data]
+        assert "chat-capable" in model_ids
+
+    def test_chat_completion(self, client):
+        completion = client.chat.completions.create(
+            model="chat-capable", messages=[{"role": "user", "content": "Hello!"}], max_tokens=10
+        )
+        assert completion.choices[0].message.content
+        assert completion.model == "chat-capable"
+
+    def test_chat_streaming(self, client):
+        stream = client.chat.completions.create(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "Tell me a short story."}],
+            max_tokens=20,
+            stream=True,
+        )
+        chunks = []
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                chunks.append(chunk.choices[0].delta.content)
+        assert len(chunks) > 0
+
+    def test_tool_calling_success(self, client):
+        completion = client.chat.completions.create(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "What is the weather in Paris?"}],
+            tools=[_WEATHER_TOOL],
+            tool_choice="required",
+        )
+        assert completion.choices[0].message.tool_calls
+        assert completion.choices[0].message.tool_calls[0].function.name == "get_weather"
+
+    def test_tool_calling_streaming_vllm_loader(self, client):
+        """Smoke-test that vLLM streaming + tool calling still works through
+        the gateway. vLLM emits its own per-token deltas; we only verify that
+        the gateway forwards them and that the final assistant message rebuilds
+        correctly.
+        """
+        stream = client.chat.completions.create(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "What is the weather in Paris?"}],
+            tools=[_WEATHER_TOOL],
+            tool_choice="required",
+            stream=True,
+        )
+
+        collected = _collect_streaming_tool_call(stream)
+
+        assert collected["tool_calls"], "vLLM should have streamed at least one tool call"
+        call_0 = collected["tool_calls"][0]
+        assert call_0["name"] == "get_weather"
+        parsed_args = json.loads(call_0["arguments"])
+        assert "Paris" in parsed_args.get("city", "")
+        assert collected["finish_reason"] == "tool_calls"
+
+    def test_response_format_json_object_constrains_unprompted_output(self, client):
+        """Prompt asks a natural-language question with no JSON hint. A
+        passing test means the grammar constraint — not the prompt — produced
+        a JSON object instead of prose.
+        """
+        completion = client.chat.completions.create(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "What is the capital of France?"}],
+            response_format={"type": "json_object"},
+            max_tokens=64,
+        )
+        content = completion.choices[0].message.content
+        assert content
+        parsed = json.loads(content)
+        assert isinstance(parsed, dict)
+
+    def test_response_format_json_schema_constrains_unprompted_output(self, client):
+        """Same intent for json_schema: prompt is natural-language, success
+        proves the schema constraint is doing the work.
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"},
+                "country": {"type": "string"},
+            },
+            "required": ["city", "country"],
+            "additionalProperties": False,
+        }
+        completion = client.chat.completions.create(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "Where is the Eiffel Tower located?"}],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "location", "schema": schema, "strict": True},
+            },
+            max_tokens=64,
+        )
+        content = completion.choices[0].message.content
+        assert content
+        parsed = json.loads(content)
+        assert set(parsed.keys()) == {"city", "country"}
+        assert isinstance(parsed["city"], str) and parsed["city"]
+        assert isinstance(parsed["country"], str) and parsed["country"]
+
+    def test_response_format_json_schema_streaming_constrains_unprompted_output(self, client):
+        """Same as above but over the streaming path."""
+        schema = {
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+            "required": ["answer"],
+            "additionalProperties": False,
+        }
+        stream = client.chat.completions.create(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "What is the capital of France?"}],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "answer", "schema": schema, "strict": True},
+            },
+            max_tokens=64,
+            stream=True,
+        )
+        chunks = []
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                chunks.append(chunk.choices[0].delta.content)
+        content = "".join(chunks)
+        assert content
+        parsed = json.loads(content)
+        assert set(parsed.keys()) == {"answer"}
+        assert isinstance(parsed["answer"], str) and parsed["answer"]
+
+    def test_response_format_coexists_with_tool_choice_none(self, client):
+        """OpenAI allows response_format alongside tool definitions; with
+        tool_choice="none" the model must produce schema-constrained text
+        instead of calling the tool. vLLM honors both natively.
+        """
+        schema = {
+            "type": "object",
+            "properties": {"city": {"type": "string"}, "country": {"type": "string"}},
+            "required": ["city", "country"],
+            "additionalProperties": False,
+        }
+        completion = client.chat.completions.create(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "Where is the Eiffel Tower located?"}],
+            tools=[_WEATHER_TOOL],
+            tool_choice="none",
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "location", "schema": schema, "strict": True},
+            },
+            max_tokens=64,
+        )
+        assert not completion.choices[0].message.tool_calls
+        content = completion.choices[0].message.content
+        assert content
+        parsed = json.loads(content)
+        assert set(parsed.keys()) == {"city", "country"}
+
+    def test_n_greater_than_one_returns_independent_choices(self, client):
+        """n>1 needs its own parser instance per choice (see
+        engine_ops.make_parsers) — a shared instance would corrupt state
+        across choices. Sampling is non-greedy by default so choices should
+        actually differ; this also guards against a regression that
+        silently collapses every choice onto the same output.
+        """
+        completion = client.chat.completions.create(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "Say one random word."}],
+            max_tokens=10,
+            n=3,
+        )
+        assert len(completion.choices) == 3
+        assert [c.index for c in completion.choices] == [0, 1, 2]
+        assert all(c.message.content for c in completion.choices)
+
+    def test_logprobs_returns_choice_logprobs(self, client):
+        """logprobs must be built from the engine's own RequestOutput.logprobs
+        (engine_ops.build_chat_logprobs), not silently dropped by the
+        non-stream rewire."""
+        completion = client.chat.completions.create(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "Say hello."}],
+            max_tokens=10,
+            logprobs=True,
+            top_logprobs=3,
+        )
+        logprobs = completion.choices[0].logprobs
+        assert logprobs is not None and logprobs.content
+        first = logprobs.content[0]
+        assert isinstance(first.token, str) and first.token
+        assert isinstance(first.logprob, float)
+        assert 0 < len(first.top_logprobs) <= 3
+        assert all(isinstance(tl.token, str) and isinstance(tl.logprob, float) for tl in first.top_logprobs)
+
+    def test_streaming_n_greater_than_one_returns_independent_choices(self, client):
+        """Streaming counterpart of the n>1 test above — each choice needs its
+        own `Parser` instance (`engine_ops.stream_chat_completion`'s per-choice
+        `make_parsers` call), or every choice after the first corrupts onto a
+        shared stream state."""
+        stream = client.chat.completions.create(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "Say one random word."}],
+            max_tokens=10,
+            n=3,
+            stream=True,
+        )
+        content_by_index: dict[int, str] = {0: "", 1: "", 2: ""}
+        finish_reasons: dict[int, str | None] = {}
+        for chunk in stream:
+            for choice in chunk.choices:
+                if choice.delta.content:
+                    content_by_index[choice.index] += choice.delta.content
+                if choice.finish_reason:
+                    finish_reasons[choice.index] = choice.finish_reason
+        assert set(finish_reasons) == {0, 1, 2}
+        assert all(content_by_index[i] for i in range(3))
+
+    def test_streaming_logprobs_returns_choice_logprobs(self, client):
+        """Streaming counterpart of the logprobs test above — logprobs must be
+        built per-delta from `RequestOutput.logprobs`, not just on the final
+        non-streamed response."""
+        stream = client.chat.completions.create(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "Say hello."}],
+            max_tokens=10,
+            logprobs=True,
+            top_logprobs=3,
+            stream=True,
+        )
+        seen_logprobs = []
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].logprobs and chunk.choices[0].logprobs.content:
+                seen_logprobs.extend(chunk.choices[0].logprobs.content)
+        assert seen_logprobs
+        first = seen_logprobs[0]
+        assert isinstance(first.token, str) and first.token
+        assert isinstance(first.logprob, float)
+        assert 0 < len(first.top_logprobs) <= 3
+
+
+@pytest.mark.integration
+@pytest.mark.vllm
+class TestIdentityScopedPrefixCache:
+    """cache_salt must scope vLLM prefix-cache hits to one identity; a
+    different identity sending an identical prompt must never see a hit."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        model_deployer.deploy("chat-capable")
+
+    # Long enough to span multiple KV-cache blocks (16 tokens each) for an unambiguous hit.
+    _PROMPT = "Summarize in one word: " + "Ray Serve is a scalable model serving library built on Ray. " * 8
+
+    def test_prefix_cache_hit_scoped_to_identity(self, client):
+        def _cached_tokens(identity: str) -> int:
+            completion = client.chat.completions.create(
+                model="chat-capable",
+                messages=[{"role": "user", "content": self._PROMPT}],
+                max_tokens=8,
+                extra_headers={"X-Mship-Test-Identity": identity},
+            )
+            details = completion.usage.prompt_tokens_details
+            return details.cached_tokens if details and details.cached_tokens else 0
+
+        _cached_tokens("cache-test-identity-a")  # cold — populates identity A's own cache entry
+        assert _cached_tokens("cache-test-identity-a") > 0, "same identity repeating a prompt should hit the cache"
+        assert _cached_tokens("cache-test-identity-b") == 0, (
+            "a different identity sending an identical prompt must never see a cache hit "
+            "from identity A's entry — that would be the cross-identity timing leak"
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.vllm
+class TestChatReasoning:
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        model_deployer.deploy("chat-reasoning")
+
+    def test_reasoning_completion(self):
+        """Non-streaming: vLLM's deepseek_r1 reasoning parser routes the
+        `<think>...</think>` block to `message.reasoning` and leaves the
+        final answer in `message.content`. Verifies end-to-end wiring of
+        `reasoning_parser` through the modelship gateway.
+        """
+        # Use httpx so we read the raw `reasoning` field — the OpenAI Python
+        # SDK doesn't always surface it as a typed attribute.
+        response = httpx.post(
+            f"{OPENAI_API_BASE}/chat/completions",
+            json={
+                "model": "chat-reasoning",
+                "messages": [{"role": "user", "content": "Briefly: what is 7 times 8?"}],
+                "max_tokens": 512,
+            },
+            timeout=120,
+        )
+        assert response.status_code == 200, response.text
+        message = response.json()["choices"][0]["message"]
+        assert message.get("reasoning"), f"expected reasoning content, got {message!r}"
+        # `<think>` markers must be stripped from both fields.
+        assert "<think>" not in (message.get("content") or "")
+        assert "<think>" not in message["reasoning"]
+
+    def test_reasoning_streaming(self):
+        """Streaming: at least one delta carries `reasoning` and the
+        concatenated reasoning text is non-empty when the stream ends.
+        Markers must not leak into either field.
+        """
+        with httpx.stream(
+            "POST",
+            f"{OPENAI_API_BASE}/chat/completions",
+            json={
+                "model": "chat-reasoning",
+                "messages": [{"role": "user", "content": "Briefly: what is 7 times 8?"}],
+                "max_tokens": 512,
+                "stream": True,
+            },
+            timeout=120,
+        ) as response:
+            assert response.status_code == 200
+            reasoning_parts: list[str] = []
+            content_parts: list[str] = []
+            reasoning_deltas = 0
+            for line in response.iter_lines():
+                if not line.startswith("data: "):
+                    continue
+                payload = line[len("data: ") :]
+                if payload == "[DONE]":
+                    break
+                chunk = json.loads(payload)
+                delta = chunk["choices"][0].get("delta") or {}
+                if delta.get("reasoning"):
+                    reasoning_parts.append(delta["reasoning"])
+                    reasoning_deltas += 1
+                if delta.get("content"):
+                    content_parts.append(delta["content"])
+
+        assert reasoning_deltas >= 1, "expected at least one reasoning delta"
+        assert "".join(reasoning_parts).strip(), "expected non-empty reasoning content"
+        # Reasoning markers must not leak into either stream.
+        assert "<think>" not in "".join(reasoning_parts)
+        assert "<think>" not in "".join(content_parts)
+
+
+# 1x1 red pixel PNG
+_RED_PIXEL_DATA_URI = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+)
+
+
+@pytest.mark.integration
+@pytest.mark.vllm
+class TestChatVlm:
+    """End-to-end vision: a real Qwen3-VL-2B deployment receiving an
+    ``image_url`` content part through the modelship gateway."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        model_deployer.deploy("chat-vlm")
+
+    def test_chat_with_image_url_returns_response(self, client):
+        completion = client.chat.completions.create(
+            model="chat-vlm",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What color is this image? Answer in one word."},
+                        {"type": "image_url", "image_url": {"url": _RED_PIXEL_DATA_URI}},
+                    ],
+                }
+            ],
+            max_tokens=16,
+        )
+        assert completion.choices[0].message.content
+        assert completion.choices[0].finish_reason in {"stop", "length"}
+        assert completion.model == "chat-vlm"
+
+    def test_text_only_request_still_works_on_vlm(self, client):
+        completion = client.chat.completions.create(
+            model="chat-vlm",
+            messages=[{"role": "user", "content": "Say hi."}],
+            max_tokens=8,
+        )
+        assert completion.choices[0].message.content
+
+    def test_image_url_streaming(self, client):
+        """Streaming + image input through the gateway end-to-end."""
+        stream = client.chat.completions.create(
+            model="chat-vlm",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Describe the image briefly."},
+                        {"type": "image_url", "image_url": {"url": _RED_PIXEL_DATA_URI}},
+                    ],
+                }
+            ],
+            max_tokens=16,
+            stream=True,
+        )
+        chunks = [c.choices[0].delta.content for c in stream if c.choices[0].delta.content]
+        assert len(chunks) > 0
+
+
+@pytest.mark.integration
+def test_embeddings(client, model_deployer):
+    model_deployer.deploy("embed-model")
+    response = client.embeddings.create(model="embed-model", input=["Hello world", "Modelship is great"])
+    assert len(response.data) == 2
+    assert len(response.data[0].embedding) > 0

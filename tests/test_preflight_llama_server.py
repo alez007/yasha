@@ -297,6 +297,42 @@ class TestLlamaServerPreflightUnifiedMemory:
         assert 0 < rec["n_gpu_layers"] < 33
 
 
+class TestLlamaServerPreflightFractionalGpu:
+    """0 < num_gpus < 1 shares one physical GPU; budget is sized from the
+    declared share of total capacity, not free VRAM (regression coverage for
+    the int(num_gpus) floor that used to silently drop fractional deploys)."""
+
+    def test_fractional_num_gpus_not_floored_to_zero(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=0.3)
+        hw = HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test", total_bytes=80 * 1024**3)], ram_bytes=64 * 1024**3)
+
+        with (
+            patch("modelship.preflight.llama_cpp._read_gguf_metadata", return_value=_LLAMA_META),
+            patch("modelship.preflight.llama_cpp._weight_bytes", return_value=4 * 1024**3),
+        ):
+            rec = LlamaServerPreflight().recommend(cfg, hw)
+
+        assert rec["n_gpu_layers"] == 33
+
+    def test_budget_derives_from_total_not_available(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=0.3)
+        hw_roomy_free = HardwareProfile(
+            gpus=[GPUInfo(0, 79 * 1024**3, "test", total_bytes=80 * 1024**3)], ram_bytes=64 * 1024**3
+        )
+        hw_tight_free = HardwareProfile(
+            gpus=[GPUInfo(0, 1 * 1024**3, "test", total_bytes=80 * 1024**3)], ram_bytes=64 * 1024**3
+        )
+
+        with (
+            patch("modelship.preflight.llama_cpp._read_gguf_metadata", return_value=_LLAMA_META),
+            patch("modelship.preflight.llama_cpp._weight_bytes", return_value=4 * 1024**3),
+        ):
+            rec_roomy = LlamaServerPreflight().recommend(cfg, hw_roomy_free)
+            rec_tight = LlamaServerPreflight().recommend(cfg, hw_tight_free)
+
+        assert rec_roomy == rec_tight
+
+
 class TestShardedGgufWeightBytes:
     def test_sums_sibling_shards(self, tmp_path):
         shard1 = tmp_path / "model-00001-of-00002.gguf"

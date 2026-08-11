@@ -116,13 +116,16 @@ def build_deployment_options(config: ModelshipModelConfig) -> dict:
 
     capability_resources = deployment_capability_resources(config)
 
-    if config.loader in (ModelLoader.stable_diffusion_cpp, ModelLoader.whispercpp) and platform.system() != "Darwin":
-        # Off Darwin both loaders' ggml backends are CPU-only; on Darwin ggml
-        # picks up Metal on its own, so forcing 0 there would just mislead Ray
-        # into co-scheduling another GPU actor onto the same device.
+    # sherpa_onnx never touches CUDA (CPU/CoreML only); ggml-backed loaders are
+    # CPU-only off Darwin, where forcing 0 would mislead Ray into co-scheduling
+    # another GPU actor onto the device Metal is actually using.
+    force_zero_gpu = config.loader == ModelLoader.sherpa_onnx or (
+        config.loader in (ModelLoader.stable_diffusion_cpp, ModelLoader.whispercpp) and platform.system() != "Darwin"
+    )
+    if force_zero_gpu:
         if config.num_gpus > 0:
             logger.warning(
-                "num_gpus=%s is ignored for model '%s': %s loader only supports GPU on Metal (Apple Silicon).",
+                "num_gpus=%s is ignored for model '%s': %s loader has no GPU backend here.",
                 config.num_gpus,
                 config.name,
                 config.loader.value,

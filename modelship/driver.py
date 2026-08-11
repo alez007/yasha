@@ -38,6 +38,7 @@ def main(argv: list[str] | None = None) -> None:
     import ray
     from ray.serve.schema import LoggingConfig
 
+    from modelship.deploy.actor_options import build_deployment_options, total_gpu_reservation
     from modelship.deploy.config import (
         default_config_path,
         load_raw_models,
@@ -211,6 +212,24 @@ def main(argv: list[str] | None = None) -> None:
         desired_raw = merge(effective_raw, input_raw, gateway_name, mode)
     yml_conf = to_config(desired_raw)
     logger.debug("Deploying effective config (%s mode, %d model(s)): %s", mode, len(desired_raw), yml_conf)
+
+    # Bin-packing-optimistic: fractions can sum within the cluster GPU total and
+    # still fail to schedule (three 0.6-GPU replicas don't fit two GPUs). Log-only —
+    # unsatisfiable deploys pend, same as an unmet mship_<loader> capability resource.
+    # Reservation comes from build_deployment_options(), the same function Ray Serve uses.
+    gpu_demand = sum(
+        (m.autoscaling_config.max_replicas if m.autoscaling_config else m.num_replicas)
+        * total_gpu_reservation(build_deployment_options(m))
+        for m in yml_conf.models
+    )
+    cluster_gpus = total_resources.get("GPU", 0)
+    if gpu_demand > cluster_gpus:
+        logger.warning(
+            "Configured models need at least %.2f GPU(s) at full scale; cluster has %.2f total. "
+            "Deploys exceeding available capacity will pend until more nodes join.",
+            gpu_demand,
+            cluster_gpus,
+        )
 
     # The detached coordinator holds the cross-operator deploy lock; the detached
     # replica coordinator holds the durable ownership registry (gateway self-heal).

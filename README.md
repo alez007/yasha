@@ -175,7 +175,7 @@ See [Monitoring & Logging](docs/monitoring.md) for full details.
 Modelship is actively used and designed for stability in multi-tenant setups. Key guarantees include:
 
 - **Mutex-backed deployments:** A cluster-wide deploy coordinator prevents VRAM exhaustion by ensuring models are never loaded concurrently if resources are tight.
-- **Comprehensive HTTP-level tests:** The `tests/test_integration.py` suite validates chat, reasoning, tool-calling, and streaming across all loaders using real (small) models.
+- **Comprehensive HTTP-level tests:** The `tests/test_*_integration.py` suites validate chat, reasoning, tool-calling, and streaming across all loaders using real (small) models.
 - **Security:** Gateway API-key auth, opt-in Ray cluster token auth, and payload/concurrency limits (`MSHIP_MAX_REQUEST_BODY_BYTES`) guard against unauthenticated or oversized requests.
 - **Observability:** Deep integration with Prometheus, OpenTelemetry, and structured logging, with a pre-built Grafana dashboard and Prometheus alerting rules included.
 

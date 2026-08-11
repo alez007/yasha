@@ -145,18 +145,17 @@ class VllmPreflight:
             text_cfg, model_cfg, config, effective_mnbt, tp_size, pp_size
         )
 
-        # vLLM requires homogeneous GPUs for TP; take the smallest free-memory
-        # GPU to be safe. `available_bytes` is free VRAM at preflight time
-        # (not device total), so the budget reflects what vLLM will actually
-        # see when it measures KV cache headroom.
-        gpu_available = min(g.available_bytes for g in hw.gpus)
-        # gpu_memory_utilization already reflects a fractional num_gpus: it's
-        # resolved at config normalization, so we read the effective value here.
-        # An unset field (whole-GPU deploy, no user override) falls back to
-        # vLLM's own default.
+        # vLLM requires homogeneous GPUs for TP; take the smallest GPU. Fractional
+        # deploys size from total capacity, matching total_memory * gmu; whole-GPU
+        # deploys size from free (they own the device).
+        fractional = 0 < config.num_gpus < 1
+        gpu_basis = (
+            min(g.sizing_total_bytes for g in hw.gpus) if fractional else min(g.available_bytes for g in hw.gpus)
+        )
+        # gpu_util already carries the fraction (set at config normalization).
         gpu_util = config.vllm_engine_kwargs.gpu_memory_utilization or default_gpu_memory_utilization(config)
         budget = (
-            gpu_available * gpu_util
+            gpu_basis * gpu_util
             - weight_bytes_per_gpu
             - _OVERHEAD_WEIGHT_FRACTION * weight_bytes_per_gpu
             - cudagraph_bytes_per_gpu
@@ -164,10 +163,11 @@ class VllmPreflight:
         if budget <= 0:
             logger.warning(
                 "preflight: '%s' has no KV-cache budget on the assigned GPU "
-                "(free=%.2f GiB, util=%.2f, est. weights/GPU=%.2f GiB, "
+                "(%s=%.2f GiB, util=%.2f, est. weights/GPU=%.2f GiB, "
                 "cudagraph/GPU=%.2f GiB). Model likely won't fit; deploy will be attempted anyway.",
                 config.name,
-                gpu_available / 1024**3,
+                "share basis (total)" if fractional else "free",
+                gpu_basis / 1024**3,
                 gpu_util,
                 weight_bytes_per_gpu / 1024**3,
                 cudagraph_bytes_per_gpu / 1024**3,
@@ -205,10 +205,11 @@ class VllmPreflight:
             rec = {"max_model_len": suggested}
 
         logger.info(
-            "preflight vllm '%s': gpu_free=%.2f GiB util=%.2f tp=%d pp=%d "
+            "preflight vllm '%s': gpu_%s=%.2f GiB util=%.2f tp=%d pp=%d "
             "weights/GPU≈%.2f GiB cudagraph/GPU≈%.2f GiB kv/token=%d B%s → %s",
             config.name,
-            gpu_available / 1024**3,
+            "share" if fractional else "free",
+            gpu_basis / 1024**3,
             gpu_util,
             tp_size,
             pp_size,
@@ -286,84 +287,9 @@ class VllmPreflight:
         if mamba is not None:
             kv_per_token = _correct_kv_for_hybrid(kv_per_token, mamba)
 
-        gmu = config.vllm_engine_kwargs.gpu_memory_utilization
-        if gmu is not None:
-            return self._recommend_cpu_pinned_gmu(
-                config, hw, kv_per_token, weight_bytes, weight_overhead, ctx_cap, denom_ram, gmu, mamba
-            )
         return self._recommend_cpu_auto_gmu(
             config, hw, kv_per_token, weight_bytes, weight_overhead, ctx_cap, denom_ram, mamba
         )
-
-    def _recommend_cpu_pinned_gmu(
-        self,
-        config: ModelshipModelConfig,
-        hw: HardwareProfile,
-        kv_per_token: float,
-        weight_bytes: int,
-        weight_overhead: float,
-        ctx_cap: int,
-        denom_ram: int,
-        gmu: float,
-        mamba: MambaStateInfo | None,
-    ) -> dict[str, Any]:
-        """The user explicitly set gpu_memory_utilization: vLLM's CPU worker
-        reserves exactly `gmu * denom_ram` for the KV cache regardless of what
-        we'd otherwise pick, so size max_model_len against that instead of our
-        own utilization target. We can't change gmu here, only warn if the
-        combined footprint won't fit."""
-        kv_budget = gmu * denom_ram
-        # Mamba state is allocated *within* the gmu*RAM pool, so it's already
-        # covered by kv_budget here — don't add it again.
-        total_footprint = kv_budget + weight_bytes + weight_overhead + _CPU_OVERHEAD_FIXED_BYTES
-        if total_footprint > hw.sizing_ram_bytes:
-            logger.warning(
-                "preflight '%s': user-pinned gpu_memory_utilization=%.3f reserves %.2f GiB for "
-                "the KV cache; combined with an estimated %.2f GiB of weights this exceeds the "
-                "%.2f GiB of RAM available — vLLM's CPU worker will likely hard-raise at startup. "
-                "Lower gpu_memory_utilization or free up RAM.",
-                config.name,
-                gmu,
-                kv_budget / 1024**3,
-                (weight_bytes + weight_overhead) / 1024**3,
-                hw.sizing_ram_bytes / 1024**3,
-            )
-
-        if mamba is not None:
-            target_len = config.vllm_engine_kwargs.max_model_len or ctx_cap
-            return _apply_hybrid_fit(
-                config.name,
-                kv_budget,
-                mamba.per_seq_state_bytes,
-                kv_per_token,
-                target_len,
-                config.vllm_engine_kwargs.max_num_seqs,
-                mamba.default_max_num_seqs,
-            )
-
-        max_tokens = int(kv_budget // kv_per_token)
-        suggested = min((max_tokens // _DEFAULT_BLOCK_SIZE) * _DEFAULT_BLOCK_SIZE, ctx_cap)
-        if suggested < _DEFAULT_BLOCK_SIZE:
-            logger.warning(
-                "preflight '%s': user-pinned gpu_memory_utilization=%.3f yields max_model_len=%d "
-                "(< block_size); skipping recommendation",
-                config.name,
-                gmu,
-                suggested,
-            )
-            return {}
-
-        logger.info(
-            "preflight vllm cpu '%s': user-pinned util=%.3f denom_ram=%.2f GiB kv_budget=%.2f GiB "
-            "kv/token=%d B → suggested max_model_len=%d",
-            config.name,
-            gmu,
-            denom_ram / 1024**3,
-            kv_budget / 1024**3,
-            int(kv_per_token),
-            suggested,
-        )
-        return {"max_model_len": suggested}
 
     def _recommend_cpu_auto_gmu(
         self,

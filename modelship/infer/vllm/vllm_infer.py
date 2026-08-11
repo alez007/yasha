@@ -270,11 +270,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
 
         # gpu_memory_utilization for a fractional num_gpus is resolved once at
         # config normalization (normalize_num_gpus_and_tp), so it's already in
-        # user_overrides here — no runtime override needed. Folding it in here
-        # instead would (a) be invisible to the preflight, which reads the config
-        # model, and (b) clobber an explicitly-declared value. (diffusers and
-        # transformers still derive a per-process torch fraction via
-        # _get_memory_fraction; they have no equivalent engine knob.)
+        # user_overrides here.
         self.vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
         logger.info("initialising vllm engine with args: %s", self.vllm_engine_kwargs.model_dump())
 

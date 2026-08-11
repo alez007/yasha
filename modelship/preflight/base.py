@@ -20,6 +20,12 @@ class GPUInfo:
     name: str
     uuid: str | None = None  # e.g. "GPU-<uuid>"; None when the probe can't read it (see per-probe notes)
     kind: str = "cuda"  # "cuda" | "rocm" | "xpu" | "mps" (Apple Silicon unified-memory GPU)
+    total_bytes: int = 0  # device capacity; 0 when the probe couldn't read it
+
+    @property
+    def sizing_total_bytes(self) -> int:
+        """Total capacity when known, else free."""
+        return self.total_bytes or self.available_bytes
 
 
 @dataclass(frozen=True)
@@ -301,7 +307,16 @@ def _torch_cuda_discover() -> list[GPUInfo]:
             # `uuid` on device properties was added in a torch 2.x release; guard for
             # older builds rather than raising out of a hardware-discovery probe.
             uuid = f"GPU-{props.uuid}" if getattr(props, "uuid", None) is not None else None
-            gpus.append(GPUInfo(index=i, available_bytes=available, name=props.name, uuid=uuid, kind=kind))
+            gpus.append(
+                GPUInfo(
+                    index=i,
+                    available_bytes=available,
+                    name=props.name,
+                    uuid=uuid,
+                    kind=kind,
+                    total_bytes=int(props.total_memory),
+                )
+            )
         return gpus
     except Exception:
         logger.debug("preflight: torch.cuda probe failed", exc_info=True)
@@ -337,7 +352,9 @@ def _pynvml_node_discover() -> list[GPUInfo]:
             uuid = pynvml.nvmlDeviceGetUUID(handle)
             if isinstance(uuid, bytes):
                 uuid = uuid.decode("utf-8", errors="replace")
-            gpus.append(GPUInfo(index=i, available_bytes=int(mem.free), name=name, uuid=uuid))
+            gpus.append(
+                GPUInfo(index=i, available_bytes=int(mem.free), name=name, uuid=uuid, total_bytes=int(mem.total))
+            )
         return gpus
     except Exception:
         logger.debug("preflight: pynvml node discovery failed", exc_info=True)
@@ -385,7 +402,16 @@ def _rocm_smi_node_discover() -> list[GPUInfo]:
         except (KeyError, ValueError, TypeError):
             continue
         name = info.get("Card series") or info.get("Card model") or card
-        gpus.append(GPUInfo(index=i, available_bytes=max(0, total - used), name=str(name), uuid=None, kind="rocm"))
+        gpus.append(
+            GPUInfo(
+                index=i,
+                available_bytes=max(0, total - used),
+                name=str(name),
+                uuid=None,
+                kind="rocm",
+                total_bytes=total,
+            )
+        )
     return gpus
 
 
@@ -433,7 +459,7 @@ def _apple_metal_discover() -> list[GPUInfo]:
 
         available_bytes = min(cap, available_ram)
         name = _sysctl_str("machdep.cpu.brand_string") or "Apple GPU"
-        return [GPUInfo(index=0, available_bytes=available_bytes, name=name, uuid=None, kind="mps")]
+        return [GPUInfo(index=0, available_bytes=available_bytes, name=name, uuid=None, kind="mps", total_bytes=cap)]
     except Exception:
         logger.debug("preflight: apple metal probe failed", exc_info=True)
         return []
@@ -455,6 +481,36 @@ def _sysctl_str(name: str) -> str | None:
         return None
 
 
+def gpu_share_fraction(config: ModelshipModelConfig) -> float:
+    """Declared fraction of one GPU for a fractional num_gpus, else 1.0."""
+    ng = config.num_gpus
+    return ng if 0 < ng < 1 else 1.0
+
+
+def gpu_share_bytes(config: ModelshipModelConfig, gpu: GPUInfo) -> float:
+    """This deploy's declared share of `gpu`'s total capacity, in bytes."""
+    return gpu_share_fraction(config) * gpu.sizing_total_bytes
+
+
+def _warn_if_share_overcommitted(config: ModelshipModelConfig, hw: HardwareProfile) -> None:
+    # Declared share may exceed currently-free VRAM (over-budget co-tenant, or a non-Ray process).
+    if not (0 < config.num_gpus < 1):
+        return
+    for gpu in hw.gpus:
+        share = gpu_share_bytes(config, gpu)
+        if gpu.available_bytes < share:
+            logger.warning(
+                "preflight '%s': declared GPU share (%.2f GiB, %.0f%% of GPU %d) exceeds currently free "
+                "VRAM (%.2f GiB) — a co-tenant may be over its own share, or another process is using "
+                "this GPU. The deploy may fail to allocate.",
+                config.name,
+                share / 1024**3,
+                gpu_share_fraction(config) * 100,
+                gpu.index,
+                gpu.available_bytes / 1024**3,
+            )
+
+
 def run_preflight(config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
     """Look up the loader's estimator and run it. Returns `{}` if no estimator
     is registered or the estimator declines (no resolved path, missing config,
@@ -465,6 +521,8 @@ def run_preflight(config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str
             config.name,
         )
         return {}
+
+    _warn_if_share_overcommitted(config, hw)
 
     # Register-on-first-call so importing this module doesn't pull in
     # backend-specific deps (vllm, transformers) when they're not installed.

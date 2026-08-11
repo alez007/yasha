@@ -19,7 +19,7 @@ Future development priorities for making Modelship production-ready, organized b
 
 ### Testing
 
-- [x] **API endpoint tests** — HTTP-level tests for all `/v1/` endpoints (via `tests/test_integration.py`)
+- [x] **API endpoint tests** — HTTP-level tests for all `/v1/` endpoints (via `tests/test_*_integration.py`)
 - [x] **Integration tests** — actual model loading and inference (using Qwen-0.5B/0.6B)
 - [x] **Streaming tests** — SSE streaming correctness and error handling
 - [ ] **Error recovery tests** — simulate failures and verify behavior
