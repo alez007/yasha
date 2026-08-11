@@ -95,14 +95,22 @@ mship deploy --config models.yaml
 
 For CPU vLLM (`loader: vllm`, `num_gpus: 0`), add the `vllm-cpu` extra with
 its non-PyPI indexes — plain `mship[cpu,vllm-cpu]` resolves CUDA torch/vllm
-from PyPI otherwise:
+from PyPI otherwise. Also install `libnuma1` and `openssl`, and pin `vllm`
+explicitly via `--with` — without it, `--index-strategy unsafe-best-match`
+can still resolve the CUDA build from PyPI instead of the `+cpu` wheel:
 
 ```bash
+sudo apt-get install -y libnuma1 openssl   # first-time only
 uv tool install "mship[cpu,vllm-cpu]" \
+  --with "vllm==0.26.0+cpu" \
   --index https://download.pytorch.org/whl/cpu \
   --index https://wheels.vllm.ai/0.26.0/cpu \
   --index-strategy unsafe-best-match
 ```
+
+The `vllm==0.26.0+cpu` pin's version must track the `vllm==0.26.0` pin in
+`pyproject.toml`'s `vllm-cpu` extra and its `wheels.vllm.ai/0.26.0/cpu`
+index URL — a future vLLM bump needs to update all three together.
 
 `mship[cuda]` is Docker-only — no GPU offload path exists for a native
 Linux install; use the `-cuda` image instead.
