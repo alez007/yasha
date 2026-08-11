@@ -215,14 +215,16 @@ class TestResponsesEndpoint:
         )
         assert response.status_code == 404, response.text
 
-    def test_hosted_tool_rejected_400(self):
+    def test_hosted_tool_dropped_not_rejected(self):
+        # web_search has no client-defined equivalent a self-hosted backend can
+        # fulfill; _tools_to_chat drops it and the request completes normally.
         response = httpx.post(
             f"{OPENAI_API_BASE}/responses",
             json={"model": "chat-capable", "input": "search the web", "tools": [{"type": "web_search"}]},
             timeout=60,
         )
-        assert response.status_code == 400, response.text
-        assert "hosted tool" in response.json()["error"]["message"]
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "completed"
 
 
 @pytest.mark.integration
