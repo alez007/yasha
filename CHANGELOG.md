@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.11] - 2026-08-11
+
+### Fixed
+- route whispercpp download progress through the pywhispercpp logger
+- stop whispercpp loader's native/download logs bleeding into console
+- trim comment verbosity in download-progress throttling change
+- throttle HF download progress logging instead of spamming a line per tick
+- drop CoreML support from sherpa_onnx loader, CPU only
+
 ## [0.7.10] - 2026-08-11
 
 ### Added
