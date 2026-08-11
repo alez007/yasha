@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import threading
 from collections.abc import AsyncGenerator
@@ -56,8 +57,21 @@ class WhispercppInfer(BaseInfer):
 
     def _load(self) -> Any:
         import _pywhispercpp as _pw
+        from pywhispercpp import utils as pywhispercpp_utils
         from pywhispercpp.constants import AVAILABLE_MODELS
         from pywhispercpp.model import Model
+        from tqdm import tqdm
+
+        class _ThrottledDownloadProgress(tqdm):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                kwargs.setdefault("mininterval", 60)
+                kwargs.setdefault(
+                    "bar_format", "{desc}: downloading {percentage:3.0f}% ({n_fmt}/{total_fmt}, {rate_fmt})"
+                )
+                super().__init__(*args, **kwargs)
+
+            def display(self, msg: str | None = None, pos: int | None = None) -> None:
+                logger.info("%s", self)
 
         use_gpu = self.model_config.num_gpus > 0
         context_params: dict[str, Any] = {"use_gpu": use_gpu}
@@ -86,7 +100,14 @@ class WhispercppInfer(BaseInfer):
                 kwargs["models_dir"] = models_dir
 
         logger.info("loading whisper.cpp model %r (gpu=%s) for '%s'", model_ref, use_gpu, self.model_config.name)
-        model: Any = Model(model_ref, **kwargs)
+        # raw stderr writes; redirecting into our own logger would deadlock (fd 2 -> our handlers' pipe)
+        kwargs["redirect_whispercpp_logs_to"] = False if logger.isEnabledFor(logging.DEBUG) else None
+        original_tqdm = pywhispercpp_utils.tqdm  # pyright: ignore[reportPrivateImportUsage]
+        pywhispercpp_utils.tqdm = _ThrottledDownloadProgress  # pyright: ignore[reportPrivateImportUsage]
+        try:
+            model: Any = Model(model_ref, **kwargs)
+        finally:
+            pywhispercpp_utils.tqdm = original_tqdm  # pyright: ignore[reportPrivateImportUsage]
         self._multilingual = bool(_pw.whisper_is_multilingual(model._ctx))
         return model
 
