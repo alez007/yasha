@@ -71,7 +71,7 @@ class WhispercppInfer(BaseInfer):
                 super().__init__(*args, **kwargs)
 
             def display(self, msg: str | None = None, pos: int | None = None) -> None:
-                logger.info("%s", self)
+                logging.getLogger("pywhispercpp.download").info("%s", self)
 
         use_gpu = self.model_config.num_gpus > 0
         context_params: dict[str, Any] = {"use_gpu": use_gpu}
