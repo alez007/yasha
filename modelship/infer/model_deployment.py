@@ -39,8 +39,8 @@ from modelship.openai.protocol import (
 
 logger = get_logger("infer.deployment")
 
-# llama_server, stable_diffusion_cpp, and whispercpp all have Metal backends; sherpa_onnx has
-# CoreML; vllm/diffusers don't.
+# llama_server, stable_diffusion_cpp, and whispercpp all have Metal backends; sherpa_onnx is
+# CPU-only; vllm/diffusers don't run on Darwin at all.
 _DARWIN_UNSUPPORTED_LOADERS = {ModelLoader.vllm, ModelLoader.diffusers}
 
 

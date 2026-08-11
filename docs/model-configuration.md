@@ -480,9 +480,9 @@ See `config/examples/whispercpp.yaml` for every `model:` form and a Metal exampl
 
 ## sherpa_onnx Loader
 
-The `sherpa_onnx` loader runs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) in-process via its Python bindings. Current scope: TTS only, kokoro family only, CPU (and CoreML on macOS) only — it never touches CUDA, so `num_gpus` is ignored entirely (any value is accepted at config time but forced to `0` at deploy time, with a warning if nonzero) and doesn't reserve GPU capacity another deploy could use.
+The `sherpa_onnx` loader runs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) in-process via its Python bindings. Current scope: TTS only, kokoro family only, CPU only — it never touches CUDA or CoreML, so `num_gpus` is ignored entirely (any value is accepted at config time but forced to `0` at deploy time, with a warning if nonzero) and doesn't reserve GPU capacity another deploy could use.
 
-`model:` is not an HF repo or path — it's a name from a curated, built-in registry (or a local directory whose basename matches one). Each name maps to a GitHub release tarball with a pinned sha256, downloaded and cached under `<cache_root>/sherpa_onnx/<name>/` on first use. There is no `sherpa_onnx_config` — `provider` (`cpu`/`coreml`) and thread count are derived from `num_gpus`/`num_cpus`, never user-supplied, since an invalid provider string silently falls back to CPU inside sherpa's own C++.
+`model:` is not an HF repo or path — it's a name from a curated, built-in registry (or a local directory whose basename matches one). Each name maps to a GitHub release tarball with a pinned sha256, downloaded and cached under `<cache_root>/sherpa_onnx/<name>/` on first use. There is no `sherpa_onnx_config` — `provider` is always `cpu`, thread count is derived from `num_cpus`, neither is user-supplied.
 
 Supported `model:` names:
 

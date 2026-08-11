@@ -116,7 +116,7 @@ def build_deployment_options(config: ModelshipModelConfig) -> dict:
 
     capability_resources = deployment_capability_resources(config)
 
-    # sherpa_onnx never touches CUDA (CPU/CoreML only); ggml-backed loaders are
+    # sherpa_onnx never touches CUDA or CoreML (CPU only); ggml-backed loaders are
     # CPU-only off Darwin, where forcing 0 would mislead Ray into co-scheduling
     # another GPU actor onto the device Metal is actually using.
     force_zero_gpu = config.loader == ModelLoader.sherpa_onnx or (

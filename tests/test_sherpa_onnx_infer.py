@@ -117,7 +117,6 @@ class TestLoad:
                 "modelship.infer.sherpa_onnx.sherpa_onnx_infer.resolve_bundle_dir",
                 return_value=("/bundle", _ENTRY),
             ),
-            patch("modelship.infer.sherpa_onnx.sherpa_onnx_infer.platform.system", return_value="Linux"),
         ):
             tts, entry = infer._load()
         assert entry is _ENTRY
@@ -128,26 +127,12 @@ class TestLoad:
         assert tts.cfg.model.kokoro.tokens == "/bundle/tokens.txt"
         assert tts.cfg.model.kokoro.data_dir == "/bundle/espeak-ng-data"
 
-    def test_darwin_uses_coreml(self, monkeypatch):
-        monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_sherpa_onnx_module(len(_ENTRY.voice_names)))
-        infer = SherpaOnnxInfer(_config())
-        with (
-            patch(
-                "modelship.infer.sherpa_onnx.sherpa_onnx_infer.resolve_bundle_dir",
-                return_value=("/bundle", _ENTRY),
-            ),
-            patch("modelship.infer.sherpa_onnx.sherpa_onnx_infer.platform.system", return_value="Darwin"),
-        ):
-            tts, _entry = infer._load()
-        assert tts.cfg.model.provider == "coreml"
-
     def test_lexicon_joined_with_commas(self, monkeypatch):
         entry = REGISTRY["kokoro-multi-lang-v1_0"]
         monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_sherpa_onnx_module(len(entry.voice_names)))
         infer = SherpaOnnxInfer(_config(model="kokoro-multi-lang-v1_0"))
         with (
             patch("modelship.infer.sherpa_onnx.sherpa_onnx_infer.resolve_bundle_dir", return_value=("/bundle", entry)),
-            patch("modelship.infer.sherpa_onnx.sherpa_onnx_infer.platform.system", return_value="Linux"),
         ):
             tts, _entry2 = infer._load()
         assert tts.cfg.model.kokoro.lexicon == "/bundle/lexicon-us-en.txt,/bundle/lexicon-zh.txt"
@@ -160,7 +145,6 @@ class TestLoad:
                 "modelship.infer.sherpa_onnx.sherpa_onnx_infer.resolve_bundle_dir",
                 return_value=("/bundle", _ENTRY),
             ),
-            patch("modelship.infer.sherpa_onnx.sherpa_onnx_infer.platform.system", return_value="Linux"),
             pytest.raises(ValueError, match="999"),
         ):
             infer._load()
