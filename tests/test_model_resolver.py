@@ -8,6 +8,7 @@ import pytest
 from modelship.infer.model_resolver import (
     ModelDownloadError,
     PinnedSource,
+    _DownloadProgressLogger,
     _select_patterns,
     check_model_source,
     download_model_source,
@@ -263,7 +264,9 @@ class TestResolveHfRepo:
             mock_dl.return_value = "/cache/model-Q4_K_M.gguf"
             result = resolve_model_source("org/repo:*Q4_K_M.gguf")
             assert result == "/cache/model-Q4_K_M.gguf"
-            mock_dl.assert_called_once_with("org/repo", "model-Q4_K_M.gguf", revision="deadbeef")
+            mock_dl.assert_called_once_with(
+                "org/repo", "model-Q4_K_M.gguf", revision="deadbeef", tqdm_class=_DownloadProgressLogger
+            )
 
     def test_selector_multiple_matches_returns_first_shard_path(self):
         # Sharded GGUF: download all shards via snapshot_download, then return
@@ -277,7 +280,9 @@ class TestResolveHfRepo:
             mock_snap.return_value = "/cache/snapshot"
             result = resolve_model_source("org/repo:*.gguf")
             assert result == "/cache/snapshot/model-00001-of-00002.gguf"
-            mock_snap.assert_called_once_with("org/repo", revision="deadbeef", allow_patterns=["*.gguf"])
+            mock_snap.assert_called_once_with(
+                "org/repo", revision="deadbeef", allow_patterns=["*.gguf"], tqdm_class=_DownloadProgressLogger
+            )
 
     def test_selector_no_match_raises(self):
         files = ["model-Q4_K_M.gguf"]
@@ -312,7 +317,9 @@ class TestResolveHfRepo:
             mock_dl.return_value = "/cache/model.gguf"
             result = resolve_model_source("org/single-gguf-repo")
             assert result == "/cache/model.gguf"
-            mock_dl.assert_called_once_with("org/single-gguf-repo", "model.gguf", revision="deadbeef")
+            mock_dl.assert_called_once_with(
+                "org/single-gguf-repo", "model.gguf", revision="deadbeef", tqdm_class=_DownloadProgressLogger
+            )
             mock_snap.assert_not_called()
 
     def test_model_info_failure_wrapped(self):

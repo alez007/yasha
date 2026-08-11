@@ -4,11 +4,26 @@ from pathlib import Path
 from typing import NamedTuple
 
 from huggingface_hub import hf_hub_download, model_info, snapshot_download
+from tqdm.asyncio import tqdm_asyncio
 
 from modelship.logging import get_logger
 from modelship.utils import is_pathy
 
 logger = get_logger("startup")
+
+
+class _DownloadProgressLogger(tqdm_asyncio):
+    """`tqdm_class` for `hf_hub_download`/`snapshot_download`. Throttles progress
+    logging to once a minute; not a subclass of HF's own tqdm wrapper, so its
+    TTY/log-level disable checks don't apply."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("mininterval", 60)
+        kwargs.setdefault("bar_format", "{desc}: downloading {percentage:3.0f}% ({n_fmt}/{total_fmt}, {rate_fmt})")
+        super().__init__(*args, **kwargs)
+
+    def display(self, msg=None, pos=None):
+        logger.info("%s", self)
 
 
 class ModelDownloadError(Exception):
@@ -234,10 +249,17 @@ def download_model_source(pinned: PinnedSource) -> str:
     assert pinned.repo is not None  # PinnedSource invariant: local xor repo
 
     if pinned.download_filename is not None:
-        return hf_hub_download(pinned.repo, pinned.download_filename, revision=pinned.revision)
+        return hf_hub_download(
+            pinned.repo, pinned.download_filename, revision=pinned.revision, tqdm_class=_DownloadProgressLogger
+        )
 
     assert pinned.download_patterns is not None
-    snapshot_dir = snapshot_download(pinned.repo, revision=pinned.revision, allow_patterns=pinned.download_patterns)
+    snapshot_dir = snapshot_download(
+        pinned.repo,
+        revision=pinned.revision,
+        allow_patterns=pinned.download_patterns,
+        tqdm_class=_DownloadProgressLogger,
+    )
     if pinned.first_shard is not None:
         return str(Path(snapshot_dir, pinned.first_shard).absolute())
     return snapshot_dir
