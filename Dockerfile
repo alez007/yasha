@@ -166,7 +166,7 @@ RUN mkdir -p /.cache /.venv /usr/local/uv/python && \
 # compile wheels from source (flashinfer, llama-cpp-python, etc.). All of this
 # stays in the builder stage and is NOT copied into prod.
 #
-# The venv is resolved with --extra $MSHIP_VARIANT only.
+# The venv is resolved with --extra $MSHIP_VARIANT, plus --extra vllm-cpu on cpu.
 # =============================================================================
 FROM base AS builder
 
@@ -213,7 +213,11 @@ ADD --chown=$UID:$GID ./uv.lock uv.lock
 ADD --chown=$UID:$GID ./Makefile Makefile
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --extra $MSHIP_VARIANT
+    if [ "$MSHIP_VARIANT" = "cpu" ]; then \
+        uv sync --locked --no-install-project --extra $MSHIP_VARIANT --extra vllm-cpu; \
+    else \
+        uv sync --locked --no-install-project --extra $MSHIP_VARIANT; \
+    fi
 
 # =============================================================================
 # dev — inherits builder (keeps toolchain) and adds dev extras so developers
@@ -229,7 +233,11 @@ ARG GID
 USER modelship
 
 RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
-    uv sync --locked --no-install-project --extra dev --extra $MSHIP_VARIANT
+    if [ "$MSHIP_VARIANT" = "cpu" ]; then \
+        uv sync --locked --no-install-project --extra dev --extra $MSHIP_VARIANT --extra vllm-cpu; \
+    else \
+        uv sync --locked --no-install-project --extra dev --extra $MSHIP_VARIANT; \
+    fi
 
 USER root
 
