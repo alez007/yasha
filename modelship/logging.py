@@ -72,6 +72,7 @@ _LIB_LOGGERS = (
     "diffusers",
     "flashinfer",
     "huggingface_hub",
+    "pywhispercpp",
 )
 
 # Env vars that libraries check internally when creating their own loggers.
