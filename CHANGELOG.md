@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.10] - 2026-08-11
+
+### Added
+- reject explicit vllm gpu_memory_utilization, derive it always
+- support fractional GPU sharing on llama_server and whispercpp
+
+### Fixed
+- update stale hosted-tool-rejection integration test to match drop behavior
+- compute real GPU demand/ordering from deployment options, not raw num_gpus
+
+### Changed
+- split test_integration.py into per-loader/per-concern files
+- pin temperature=0 and case-insensitive match in GPU-sharing test
+- trim over-long comment in _gpu_footprint sort key
+- strip chat-register justification from GPU-sharing comments/docs
+- add integration coverage for cross-loader fractional GPU sharing
+- document GPU-sharing semantics, drop stale fractional-GPU claims
+
 ## [0.7.9] - 2026-08-10
 
 ### Added
