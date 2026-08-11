@@ -132,9 +132,12 @@ def propagate_lib_log_env(level_name: str | None = None) -> None:
     # downside. setdefault so an explicit user value wins.
     os.environ.setdefault("VLLM_CONFIGURE_LOGGING", "0")
 
-    # tqdm disables per-file byte progress bars by default when not a real TTY
-    # (true for every modelship process). This forces them on.
-    os.environ.setdefault("TQDM_POSITION", "-1")
+    # NOTE: previously forced HF Hub's tqdm bars on via TQDM_POSITION=-1 for
+    # visibility under Ray's non-tty piped stdout, but that put bars into
+    # nested-position mode, which redraws with an explicit '\n' per tick —
+    # spamming one log line per tick. model_resolver.download_model_source
+    # now passes its own throttled tqdm_class instead, which bypasses this
+    # env var entirely (see _DownloadProgressLogger).
 
 
 def _parse_syslog_target(target: str) -> SysLogHandler:
