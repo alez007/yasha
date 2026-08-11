@@ -2,6 +2,7 @@ import hashlib
 import os
 import sys
 import tarfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -92,17 +93,17 @@ class TestIsOwnHeadDeploy:
             assert launcher._is_own_head_deploy() is True
 
 
-class TestProvisionMacosLlamaServer:
+class TestProvisionLlamaServer:
     def test_short_circuits_when_env_set(self):
         with patch.dict(os.environ, {"MSHIP_LLAMA_SERVER_BIN": "/existing/bin"}, clear=True):
-            assert launcher._provision_macos_llama_server() == "/existing/bin"
+            assert launcher._provision_llama_server() == "/existing/bin"
 
     def test_sets_env_on_success(self):
         with (
             patch.dict(os.environ, {}, clear=True),
             patch.object(launcher, "_resolve_llama_server_bin", return_value="/resolved/bin"),
         ):
-            path = launcher._provision_macos_llama_server()
+            path = launcher._provision_llama_server()
             assert path == "/resolved/bin"
             assert os.environ["MSHIP_LLAMA_SERVER_BIN"] == "/resolved/bin"
 
@@ -111,20 +112,29 @@ class TestProvisionMacosLlamaServer:
             patch.dict(os.environ, {}, clear=True),
             patch.object(launcher, "_resolve_llama_server_bin", side_effect=RuntimeError("boom")),
         ):
-            assert launcher._provision_macos_llama_server() is None
+            assert launcher._provision_llama_server() is None
             # Must stay inside the patch; outside it the ambient env is already restored.
             assert "MSHIP_LLAMA_SERVER_BIN" not in os.environ
 
 
+_PLATFORM_CASES = [
+    ("Darwin", "arm64", "DYLD_LIBRARY_PATH"),
+    ("Linux", "x86_64", "LD_LIBRARY_PATH"),
+    ("Linux", "aarch64", "LD_LIBRARY_PATH"),
+]
+
+
 class TestResolveLlamaServerBin:
-    def test_non_darwin_raises(self):
+    def test_unsupported_platform_raises(self):
         with (
-            patch.object(launcher.platform, "system", return_value="Linux"),
+            patch.object(launcher.platform, "system", return_value="Windows"),
+            patch.object(launcher.platform, "machine", return_value="AMD64"),
             pytest.raises(launcher.LlamaServerProvisionError, match="MSHIP_LLAMA_SERVER_BIN"),
         ):
             launcher._resolve_llama_server_bin()
 
-    def test_downloads_verifies_and_extracts(self, tmp_path):
+    @pytest.mark.parametrize(("system", "machine", "lib_env"), _PLATFORM_CASES)
+    def test_downloads_verifies_and_extracts(self, tmp_path, system, machine, lib_env):
         archive, digest = _make_archive(tmp_path)
         cache_root = str(tmp_path / "cache")
 
@@ -133,10 +143,12 @@ class TestResolveLlamaServerBin:
             with open(archive, "rb") as src, open(dest, "wb") as dst:
                 dst.write(src.read())
 
+        asset = launcher._LLAMA_CPP_ASSETS[(system, machine)]._replace(sha256=digest)
         with (
-            patch.object(launcher.platform, "system", return_value="Darwin"),
+            patch.object(launcher.platform, "system", return_value=system),
+            patch.object(launcher.platform, "machine", return_value=machine),
             patch.object(launcher, "resolve_cache_root", return_value=cache_root),
-            patch.object(launcher, "_LLAMA_CPP_METAL_SHA256", digest),
+            patch.dict(launcher._LLAMA_CPP_ASSETS, {(system, machine): asset}),
             patch("modelship.utils.download", side_effect=fake_download) as mock_download,
         ):
             wrapper = launcher._resolve_llama_server_bin()
@@ -144,6 +156,7 @@ class TestResolveLlamaServerBin:
         mock_download.assert_called_once()
         assert os.path.isfile(wrapper)
         assert "llama-server.sh" in wrapper
+        assert lib_env in Path(wrapper).read_text()
         extracted_bin = os.path.join(os.path.dirname(wrapper), "extracted", "llama-server")
         assert os.path.isfile(extracted_bin)
 
@@ -161,10 +174,12 @@ class TestResolveLlamaServerBin:
         with open(os.path.join(extract_dir, "leftover_junk.txt"), "wb") as f:
             f.write(b"junk")
 
+        asset = launcher._LLAMA_CPP_ASSETS[("Darwin", "arm64")]._replace(sha256=digest)
         with (
             patch.object(launcher.platform, "system", return_value="Darwin"),
+            patch.object(launcher.platform, "machine", return_value="arm64"),
             patch.object(launcher, "resolve_cache_root", return_value=cache_root),
-            patch.object(launcher, "_LLAMA_CPP_METAL_SHA256", digest),
+            patch.dict(launcher._LLAMA_CPP_ASSETS, {("Darwin", "arm64"): asset}),
             patch("modelship.utils.download", side_effect=fake_download),
         ):
             wrapper = launcher._resolve_llama_server_bin()
@@ -182,10 +197,12 @@ class TestResolveLlamaServerBin:
             with open(archive, "rb") as src, open(dest, "wb") as dst:
                 dst.write(src.read())
 
+        asset = launcher._LLAMA_CPP_ASSETS[("Darwin", "arm64")]._replace(sha256="0" * 64)
         with (
             patch.object(launcher.platform, "system", return_value="Darwin"),
+            patch.object(launcher.platform, "machine", return_value="arm64"),
             patch.object(launcher, "resolve_cache_root", return_value=cache_root),
-            patch.object(launcher, "_LLAMA_CPP_METAL_SHA256", "0" * 64),
+            patch.dict(launcher._LLAMA_CPP_ASSETS, {("Darwin", "arm64"): asset}),
             patch("modelship.utils.download", side_effect=fake_download),
             pytest.raises(ValueError, match="sha256 verification"),
         ):
@@ -209,12 +226,13 @@ class TestCmdDeploy:
         mock_gate.assert_called_once()
         mock_driver_main.assert_called_once_with(argv)
 
-    def test_metal_accelerator_triggers_provisioning(self):
+    def test_supported_platform_triggers_provisioning(self):
         with (
             patch.dict(os.environ, {}, clear=True),
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
-            patch.object(launcher, "detect_accelerator", return_value="metal"),
-            patch.object(launcher, "_provision_macos_llama_server") as mock_provision,
+            patch.object(launcher, "detect_accelerator", return_value="cpu"),
+            patch.object(launcher, "_has_llama_cpp_asset", return_value=True),
+            patch.object(launcher, "_provision_llama_server") as mock_provision,
             patch.object(launcher, "_check_loader_capabilities"),
             patch.object(launcher, "_guard_python_version"),
             patch("modelship.driver.main"),
@@ -222,12 +240,13 @@ class TestCmdDeploy:
             launcher._cmd_deploy([])
         mock_provision.assert_called_once()
 
-    def test_cpu_accelerator_skips_provisioning(self):
+    def test_unsupported_platform_skips_provisioning(self):
         with (
             patch.dict(os.environ, {}, clear=True),
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
             patch.object(launcher, "detect_accelerator", return_value="cpu"),
-            patch.object(launcher, "_provision_macos_llama_server") as mock_provision,
+            patch.object(launcher, "_has_llama_cpp_asset", return_value=False),
+            patch.object(launcher, "_provision_llama_server") as mock_provision,
             patch.object(launcher, "_check_loader_capabilities"),
             patch.object(launcher, "_guard_python_version"),
             patch("modelship.driver.main"),
@@ -321,6 +340,7 @@ class TestCmdInfo:
             patch.dict(os.environ, {}, clear=True),
             patch.object(launcher, "detect_accelerator", return_value="cpu"),
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
+            patch.object(launcher, "_has_llama_cpp_asset", return_value=False),
         ):
             launcher._cmd_info()
         out = capsys.readouterr().out
@@ -328,12 +348,13 @@ class TestCmdInfo:
         assert "cache: /tmp/cache" in out
         assert "llama-server: unset" in out
 
-    def test_prints_metal_provisioned_path(self, capsys):
+    def test_prints_provisioned_path(self, capsys):
         with (
             patch.dict(os.environ, {}, clear=True),
             patch.object(launcher, "detect_accelerator", return_value="metal"),
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
-            patch.object(launcher, "_provision_macos_llama_server", return_value="/tmp/cache/llama-server.sh"),
+            patch.object(launcher, "_has_llama_cpp_asset", return_value=True),
+            patch.object(launcher, "_provision_llama_server", return_value="/tmp/cache/llama-server.sh"),
         ):
             launcher._cmd_info()
         out = capsys.readouterr().out

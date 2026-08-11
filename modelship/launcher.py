@@ -11,6 +11,7 @@ import platform
 import shutil
 import stat
 import sys
+from typing import NamedTuple
 
 from modelship.deploy.capabilities import LOADER_MODULES
 from modelship.utils import fetch_and_extract_archive
@@ -19,12 +20,58 @@ from modelship.utils.cache import resolve_cache_root
 
 _REQUIRED_PYTHON = (3, 12, 10)
 
+# Own-CI Metal build; see .github/workflows/llama-cpp-metal.yml.
 _LLAMA_CPP_TAG = "b10200"
-_LLAMA_CPP_METAL_ASSET_URL = (
-    f"https://github.com/modelship-ai/llama-cpp-builds/releases/download/llamacpp-{_LLAMA_CPP_TAG}-metal/"
-    f"llama-server-{_LLAMA_CPP_TAG}-macos-arm64-metal.tar.gz"
-)
-_LLAMA_CPP_METAL_SHA256 = "8b0f7fb4343befee98d4247f4065cdf38adf142e26e3f10f4451dff3411c4deb"
+_LLAMA_CPP_BUILDS_REPO = "modelship-ai/llama-cpp-builds"
+
+# ggml-org never cut a GitHub Release for b10200 (only a GHCR image), so Linux
+# pulls straight from upstream Releases under a separate, newer tag until the
+# CI workflow is extended to `crane export` these from the same GHCR image
+# Docker uses and unify everything under one tag.
+_LLAMA_CPP_LINUX_TAG = "b10361"
+
+
+class _LlamaCppAsset(NamedTuple):
+    """`tag` names the cache subdirectory; `lib_env` is the loader-path env var
+    the wrapper script exports."""
+
+    tag: str
+    url: str
+    sha256: str
+    lib_env: str
+
+
+# CPU-only on Linux — upstream ships no Linux CUDA release binary; Docker's GPU
+# offload comes from LLAMA_CPP_IMAGE_CUDA instead.
+_LLAMA_CPP_ASSETS: dict[tuple[str, str], _LlamaCppAsset] = {
+    ("Darwin", "arm64"): _LlamaCppAsset(
+        tag=_LLAMA_CPP_TAG,
+        url=(
+            f"https://github.com/{_LLAMA_CPP_BUILDS_REPO}/releases/download/llamacpp-{_LLAMA_CPP_TAG}-metal/"
+            f"llama-server-{_LLAMA_CPP_TAG}-macos-arm64-metal.tar.gz"
+        ),
+        sha256="8b0f7fb4343befee98d4247f4065cdf38adf142e26e3f10f4451dff3411c4deb",
+        lib_env="DYLD_LIBRARY_PATH",
+    ),
+    ("Linux", "x86_64"): _LlamaCppAsset(
+        tag=_LLAMA_CPP_LINUX_TAG,
+        url=(
+            f"https://github.com/ggml-org/llama.cpp/releases/download/{_LLAMA_CPP_LINUX_TAG}/"
+            f"llama-{_LLAMA_CPP_LINUX_TAG}-bin-ubuntu-x64.tar.gz"
+        ),
+        sha256="7809d66f8f48ca1887036b3ff10689b990462153a6fc5ada0246bd3dccfad5ac",
+        lib_env="LD_LIBRARY_PATH",
+    ),
+    ("Linux", "aarch64"): _LlamaCppAsset(
+        tag=_LLAMA_CPP_LINUX_TAG,
+        url=(
+            f"https://github.com/ggml-org/llama.cpp/releases/download/{_LLAMA_CPP_LINUX_TAG}/"
+            f"llama-{_LLAMA_CPP_LINUX_TAG}-bin-ubuntu-arm64.tar.gz"
+        ),
+        sha256="10b01972cce4a67b6152354e6e556d1ab7e355f234664d780bebf4d41d912edc",
+        lib_env="LD_LIBRARY_PATH",
+    ),
+}
 
 
 class LlamaServerProvisionError(RuntimeError):
@@ -52,8 +99,8 @@ def _cmd_deploy(argv: list[str]) -> None:
     os.environ.setdefault("MSHIP_CACHE_DIR", resolve_cache_root())
     _guard_python_version()
 
-    if detect_accelerator() == "metal":
-        _provision_macos_llama_server()
+    if _has_llama_cpp_asset():
+        _provision_llama_server()
 
     if _is_own_head_deploy():
         _check_loader_capabilities(args.config)
@@ -75,8 +122,8 @@ def _cmd_info() -> None:
     except Exception:
         print("ray: not installed")
 
-    if accelerator == "metal":
-        path = _provision_macos_llama_server()
+    if _has_llama_cpp_asset():
+        path = _provision_llama_server()
         print(f"llama-server: {path or 'not provisioned'}")
     else:
         print(f"llama-server: {os.environ.get('MSHIP_LLAMA_SERVER_BIN') or 'unset'}")
@@ -89,7 +136,15 @@ def _guard_python_version() -> None:
         sys.exit(1)
 
 
-def _provision_macos_llama_server() -> str | None:
+def _current_llama_cpp_asset() -> _LlamaCppAsset | None:
+    return _LLAMA_CPP_ASSETS.get((platform.system(), platform.machine()))
+
+
+def _has_llama_cpp_asset() -> bool:
+    return _current_llama_cpp_asset() is not None
+
+
+def _provision_llama_server() -> str | None:
     if explicit := os.environ.get("MSHIP_LLAMA_SERVER_BIN"):
         return explicit
     try:
@@ -102,18 +157,18 @@ def _provision_macos_llama_server() -> str | None:
 
 
 def _resolve_llama_server_bin() -> str:
-    """Downloads, sha256-verifies, and extracts the pinned llama.cpp Metal build,
-    caching it under resolve_cache_root()/llama.cpp/<tag>/. Mirrors how the Docker
-    images bake a prebuilt llama-server binary at build time (Dockerfile's
-    LLAMA_CPP_IMAGE_CUDA/CPU) — this is the native-install equivalent, since pip/uv
-    have no post-install hook to do it ahead of time."""
-    if platform.system() != "Darwin":
+    """Downloads, sha256-verifies, and extracts the pinned llama.cpp build for this
+    (system, machine), caching under resolve_cache_root()/llama.cpp/<tag>/. Native-install
+    equivalent of the Docker images baking a prebuilt binary at build time."""
+    asset = _current_llama_cpp_asset()
+    if asset is None:
         raise LlamaServerProvisionError(
             "loader: llama_server needs MSHIP_LLAMA_SERVER_BIN set to a llama-server binary "
-            "(auto-provisioning only runs on macOS). See https://github.com/ggml-org/llama.cpp/releases."
+            f"(no prebuilt asset for {platform.system()}/{platform.machine()}). "
+            "See https://github.com/ggml-org/llama.cpp/releases."
         )
 
-    tag_dir = os.path.join(resolve_cache_root(), "llama.cpp", _LLAMA_CPP_TAG)
+    tag_dir = os.path.join(resolve_cache_root(), "llama.cpp", asset.tag)
     archive_path = os.path.join(tag_dir, "archive.tar.gz")
     extract_dir = os.path.join(tag_dir, "extracted")
     wrapper_path = os.path.join(tag_dir, "llama-server.sh")
@@ -123,8 +178,8 @@ def _resolve_llama_server_bin() -> str:
         if os.path.isdir(extract_dir):
             shutil.rmtree(extract_dir, ignore_errors=True)
         fetch_and_extract_archive(
-            _LLAMA_CPP_METAL_ASSET_URL,
-            _LLAMA_CPP_METAL_SHA256,
+            asset.url,
+            asset.sha256,
             archive_path,
             extract_dir,
             flatten=True,
@@ -132,14 +187,14 @@ def _resolve_llama_server_bin() -> str:
         )
         os.chmod(binary, os.stat(binary).st_mode | stat.S_IEXEC)
 
-    _write_wrapper(wrapper_path, extract_dir)
+    _write_wrapper(wrapper_path, extract_dir, asset.lib_env)
     return wrapper_path
 
 
-def _write_wrapper(wrapper_path: str, extract_dir: str) -> None:
+def _write_wrapper(wrapper_path: str, extract_dir: str, lib_env: str) -> None:
     content = (
         "#!/bin/sh\n"
-        f'export DYLD_LIBRARY_PATH="{extract_dir}${{DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}}"\n'
+        f'export {lib_env}="{extract_dir}${{{lib_env}:+:${lib_env}}}"\n'
         f'exec "{extract_dir}/llama-server" "$@"\n'
     )
     with open(wrapper_path, "w") as f:
