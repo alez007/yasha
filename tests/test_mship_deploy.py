@@ -390,7 +390,7 @@ class TestBuildDeploymentOptions:
         assert opts["ray_actor_options"]["num_gpus"] == 0.5
 
     def test_sherpa_onnx_num_gpus_forced_to_zero(self):
-        # sherpa_onnx never touches CUDA (CPU/CoreML only); a nonzero num_gpus
+        # sherpa_onnx never touches CUDA or CoreML (CPU only); a nonzero num_gpus
         # here would just reserve GPU capacity the loader never uses.
         config = ModelshipModelConfig(
             name="test-model",

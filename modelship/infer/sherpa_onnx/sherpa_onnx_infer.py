@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import os
-import platform
 import threading
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -24,7 +23,7 @@ logger = get_logger("infer.sherpa_onnx")
 
 class SherpaOnnxInfer(BaseInfer):
     """In-process sherpa-onnx TTS loader, generic across `OfflineTtsConfig`
-    families. v1 scope: the registry only curates kokoro, CPU/CoreML only."""
+    families. v1 scope: the registry only curates kokoro, CPU only."""
 
     def __init__(self, model_config: ModelshipModelConfig):
         super().__init__(model_config)
@@ -58,9 +57,9 @@ class SherpaOnnxInfer(BaseInfer):
             setattr(family_cfg, slot, os.path.join(bundle_dir, rel_path))
         if entry.lexicon:
             family_cfg.lexicon = ",".join(os.path.join(bundle_dir, rel_path) for rel_path in entry.lexicon)
-        # Never take provider from config: an unsupported/typo'd value silently
-        # falls back to CPU inside sherpa's C++ instead of raising.
-        cfg.model.provider = "coreml" if platform.system() == "Darwin" else "cpu"
+        # CPU only: CoreML fails under Ray's forked actor processes (macOS TCC
+        # check on the coremlcompiler XPC call).
+        cfg.model.provider = "cpu"
         cfg.model.num_threads = max(1, round(self.model_config.num_cpus))
 
         logger.info("loading sherpa_onnx model %r for '%s'", self.model_config.model, self.model_config.name)

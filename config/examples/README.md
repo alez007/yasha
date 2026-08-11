@@ -10,7 +10,7 @@ Ready-to-run `models.yaml` configs for common scenarios. Mount one into the cont
 | [vllm-vision.yaml](vllm-vision.yaml) | Vision-language chat (image_url content parts) | NVIDIA GPU |
 | [diffusers.yaml](diffusers.yaml) | SDXL Turbo image generation | NVIDIA GPU |
 | [stable-diffusion-cpp.yaml](stable-diffusion-cpp.yaml) | GGUF-quantized image generation (SD 2.1, Flux-schnell) | CPU |
-| [sherpa-onnx.yaml](sherpa-onnx.yaml) | Kokoro TTS via sherpa-onnx | CPU or NVIDIA GPU (CoreML on Metal) |
+| [sherpa-onnx.yaml](sherpa-onnx.yaml) | Kokoro TTS via sherpa-onnx | CPU only |
 | [full-stack.yaml](full-stack.yaml) | LLM + TTS + STT + embeddings on one GPU | NVIDIA GPU |
 | [mini-pc.yaml](mini-pc.yaml) | Low-resource stack: llama-server chat + Kokoro TTS + whisper.cpp STT | CPU (e.g. Intel N100) |
 

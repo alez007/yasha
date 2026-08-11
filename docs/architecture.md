@@ -7,7 +7,7 @@ Modelship is built on [Ray Serve](https://docs.ray.io/en/latest/serve/) for depl
 - **[vLLM](https://github.com/vllm-project/vllm)** — high-throughput inference with continuous batching and PagedAttention, on GPU or CPU
 - **llama-server** — a proxied `llama-server` subprocess for quantized GGUF chat, embeddings, and vision on CPU or GPU
 - **[HuggingFace Diffusers](https://github.com/huggingface/diffusers)** — image generation via `AutoPipelineForText2Image`
-- **sherpa-onnx** — TTS (Kokoro), on CPU or GPU (CoreML on Metal)
+- **sherpa-onnx** — TTS (Kokoro), CPU only
 - **whisper.cpp** — STT, via `pywhispercpp` bindings
 
 ## Request Lifecycle
