@@ -217,8 +217,8 @@ The `vllm` loader supports chat/generation, embeddings, transcription, and trans
 
 ### CPU (no GPU required)
 
-The `vllm` loader also installs on the `cpu` extra (`num_gpus: 0`), for quantized chat
-without a GPU. The GGUF rejection above applies here too, so you need a non-GGUF
+The `vllm` loader also installs via the `vllm-cpu` extra (paired with `cpu`, `num_gpus: 0`),
+for quantized chat without a GPU. The GGUF rejection above applies here too, so you need a non-GGUF
 checkpoint (safetensors, or an AWQ/GPTQ/compressed-tensors quant — the CPU backend
 supports AWQ/GPTQ on x86 plus INT8 W8A8).
 

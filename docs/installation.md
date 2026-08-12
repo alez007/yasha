@@ -77,9 +77,35 @@ mship deploy --config models.yaml
 `pip install "mship[metal]"` works too if that exact version is already
 present (same Xcode CLI Tools prerequisite applies). The first install
 compiles stable-diffusion.cpp and takes a few minutes — that's expected, not
-a hang. Bare `pip install mship`, `mship[cuda]`, and
-`mship[cpu]` are not supported install paths; those extras exist only
-for the Docker images.
+a hang.
+
+## Native install (Linux, CPU)
+
+`mship[cpu]` is torch-free — `llama_server` (auto-provisioned, same as
+Metal), `whispercpp`, `sherpa_onnx`, and `stable_diffusion_cpp` all run
+without pulling in CUDA. Install `build-essential`/`cmake` first —
+`stable-diffusion-cpp-python` compiles from source on first install, same
+requirement as Xcode CLI Tools on Metal.
+
+```bash
+sudo apt-get install -y build-essential cmake   # first-time only
+uv tool install "mship[cpu]"
+mship deploy --config models.yaml
+```
+
+For CPU vLLM (`loader: vllm`, `num_gpus: 0`), add the `vllm-cpu` extra —
+also install `libnuma1`/`openssl` and pass both indexes:
+
+```bash
+sudo apt-get install -y libnuma1 openssl   # first-time only
+uv tool install "mship[cpu,vllm-cpu]" \
+  --index https://download.pytorch.org/whl/cpu \
+  --index https://wheels.vllm.ai/0.26.0/cpu \
+  --index-strategy unsafe-best-match
+```
+
+`mship[cuda]` is Docker-only — no GPU offload path exists for a native
+Linux install; use the `-cuda` image instead.
 
 ## Local development
 

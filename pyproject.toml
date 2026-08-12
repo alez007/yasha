@@ -71,13 +71,8 @@ cuda = [
     "sherpa-onnx-core==1.13.4",
 ]
 cpu = [
-    "torch>=2.10.0",
-    "torchvision>=0.25.0",
-    "transformers>=5.5.3",
     "stable-diffusion-cpp-python>=0.4.7",
     "onnxruntime>=1.28.0",
-    "vllm==0.26.0",
-    "vllm[audio]==0.26.0",
     "librosa>=0.11.0",
     "numba>=0.61.0",
     "scipy>=1.16.1",
@@ -85,6 +80,15 @@ cpu = [
     "pywhispercpp>=1.5.0",
     "sherpa-onnx>=1.13.4",
     "sherpa-onnx-core==1.13.4",
+]
+# Adds CPU-only vLLM on top of `cpu`. Pinned to the `+cpu` local version, not a
+# bare `==0.26.0` — see docs/installation.md.
+vllm-cpu = [
+    "torch==2.11.0+cpu ; sys_platform == 'linux'",
+    "torchvision==0.26.0+cpu ; sys_platform == 'linux'",
+    "transformers>=5.5.3",
+    "vllm==0.26.0+cpu ; sys_platform == 'linux'",
+    "vllm[audio]==0.26.0+cpu ; sys_platform == 'linux'",
 ]
 otel = [
     "opentelemetry-sdk>=1.20.0",
@@ -136,14 +140,14 @@ explicit = true
 [tool.uv.sources]
 torch = [
   { index = "pytorch-cu130", extra = "cuda" },
-  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cpu", extra = "vllm-cpu" },
 ]
 torchvision = [
   { index = "pytorch-cu130", extra = "cuda" },
-  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cpu", extra = "vllm-cpu" },
 ]
 vllm = [
-  { index = "vllm-cpu", extra = "cpu" },
+  { index = "vllm-cpu", extra = "vllm-cpu" },
 ]
 
 [tool.uv]
@@ -155,6 +159,10 @@ conflicts = [
   [
     { extra = "cuda" },
     { extra = "metal" },
+  ],
+  [
+    { extra = "cuda" },
+    { extra = "vllm-cpu" },
   ],
 ]
 

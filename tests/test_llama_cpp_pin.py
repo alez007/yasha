@@ -14,8 +14,9 @@ def test_tag_matches_dockerfile_llama_cpp_images():
 
 
 def test_asset_url_embeds_pinned_tag():
-    assert launcher._LLAMA_CPP_TAG in launcher._LLAMA_CPP_METAL_ASSET_URL
-    assert launcher._LLAMA_CPP_METAL_ASSET_URL.startswith("https://github.com/")
+    metal_url = launcher._LLAMA_CPP_ASSETS[("Darwin", "arm64")].url
+    assert launcher._LLAMA_CPP_TAG in metal_url
+    assert metal_url.startswith("https://github.com/")
 
 
 def test_workflow_bumps_launcher_constants():
