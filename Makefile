@@ -17,15 +17,15 @@ lint-fix:
 	uv run ruff check --fix .
 	uv run ruff format .
 
-# Fires the macOS Metal build for a new llama.cpp tag and returns immediately —
-# it does not wait for the build. The workflow itself publishes the GitHub
-# release and opens a PR with launcher.py's Metal pin and the Dockerfile's
-# CUDA/CPU image digests all bumped to the new tag; review and merge that PR
-# once CI confirms the build (and your own testing) is good.
+# Fires all four platform builds for a new llama.cpp tag and returns immediately
+# — it does not wait. The workflow publishes one release holding every platform's
+# binary, gated on all four succeeding. Updating launcher.py/Dockerfile pins to
+# the new tag is still manual.
 llama-cpp-bump:
-	@if [ -z "$(TAG)" ]; then echo "Error: usage: make llama-cpp-bump TAG=b9860" >&2; exit 1; fi
-	@gh workflow run llama-cpp-metal.yml -f tag=$(TAG)
-	@echo "Triggered llama.cpp Metal build for $(TAG) — it will open a PR with the updated pin once done."
+	@if [ -z "$(TAG)" ]; then echo "Error: usage: make llama-cpp-bump TAG=b10375" >&2; exit 1; fi
+	@gh workflow run llama-cpp-build.yml -f tag=$(TAG)
+	@echo "Triggered llama.cpp build for $(TAG) (~2h, gated on the CUDA job)."
+	@echo "Publishes https://github.com/modelship-ai/llama-cpp-builds/releases/tag/llamacpp-$(TAG)"
 
 release-patch:
 	$(eval NEW_VERSION := $(MAJOR).$(MINOR).$(shell echo $$(($(PATCH)+1))))

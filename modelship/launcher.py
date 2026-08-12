@@ -20,7 +20,7 @@ from modelship.utils.cache import resolve_cache_root
 
 _REQUIRED_PYTHON = (3, 12, 10)
 
-# Own-CI Metal build; see .github/workflows/llama-cpp-metal.yml.
+# Own-CI Metal build; see .github/workflows/llama-cpp-build.yml.
 _LLAMA_CPP_TAG = "b10200"
 _LLAMA_CPP_BUILDS_REPO = "modelship-ai/llama-cpp-builds"
 
