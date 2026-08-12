@@ -81,12 +81,8 @@ cpu = [
     "sherpa-onnx>=1.13.4",
     "sherpa-onnx-core==1.13.4",
 ]
-# Adds CPU-only vLLM on top of `cpu` (loader: vllm, num_gpus: 0). Split out because
-# it pulls torch, which the rest of `cpu` doesn't need — see docs/installation.md.
-# Pinned to the `+cpu` local version, not a bare `==0.26.0`: PyPI's own `vllm`/`torch`
-# publish that exact version string too, as their CUDA build — a bare pin would
-# silently resolve there without the CPU indexes below. `+cpu` exists only on those
-# indexes, so a missing --index fails the install outright instead of installing CUDA.
+# Adds CPU-only vLLM on top of `cpu`. Pinned to the `+cpu` local version, not a
+# bare `==0.26.0` — see docs/installation.md.
 vllm-cpu = [
     "torch==2.11.0+cpu ; sys_platform == 'linux'",
     "torchvision==0.26.0+cpu ; sys_platform == 'linux'",
