@@ -33,8 +33,8 @@ def test_build_workflow_covers_every_asset_platform():
 
 
 def test_cuda_backend_shares_the_linux_x64_runner():
-    """libggml-cuda.so is dlopened beside the linux-x64 tarball's binaries, so a
-    newer runner image would raise its glibc floor above theirs."""
+    """A newer runner image would raise the backend's glibc floor above the
+    linux-x64 binaries it is dlopened beside."""
     workflow = _build_workflow()
     x64 = next(m for m in workflow["jobs"]["server"]["strategy"]["matrix"]["include"] if m["name"] == "linux-x64")
     assert workflow["jobs"]["cuda-backend"]["runs-on"] == x64["os"]

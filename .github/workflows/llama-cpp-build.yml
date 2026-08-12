@@ -10,8 +10,7 @@ on:
 permissions:
   contents: read
 
-# One release per tag holds every platform's binary, so a second run would have
-# to overwrite a set other nodes may already be running.
+# One release per tag; concurrent runs would overwrite each other's assets.
 concurrency:
   group: llama-cpp-build
 
@@ -129,8 +128,7 @@ jobs:
 
   cuda-backend:
     needs: preflight
-    # Must match the linux-x64 server job's runner: ggml dlopens this beside the
-    # binaries from that tarball, so the glibc floor has to be the same or lower.
+    # Runner must match the linux-x64 job's: same glibc floor or lower.
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout llama.cpp
@@ -230,7 +228,6 @@ jobs:
             sha256sum "$f" | awk '{print $1}' > "${f}.sha256"
           done
           ls -lh
-          # A partial set would pin nodes to mismatched builds.
           test "$(ls -1 *.tar.gz | wc -l)" -eq 4 \
             || { echo "::error::expected 4 tarballs, got $(ls -1 *.tar.gz | wc -l)"; exit 1; }
 
