@@ -21,6 +21,21 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
+      # Publishing is the last step of a ~2h build, so check the token first.
+      - name: Check publish token
+        env:
+          GH_TOKEN: ${{ secrets.LLAMA_CPP_BUILDS_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::LLAMA_CPP_BUILDS_TOKEN is unset"
+            exit 1
+          fi
+          PUSH=$(gh api "repos/${LLAMA_CPP_BUILDS_REPO}" --jq .permissions.push 2>/dev/null || echo denied)
+          if [ "$PUSH" != "true" ]; then
+            echo "::error::LLAMA_CPP_BUILDS_TOKEN cannot write to ${LLAMA_CPP_BUILDS_REPO} (permissions.push=${PUSH}). A fine-grained PAT needs Contents: Read and write on that repo and, for an org-owned repo, org approval; a classic PAT needs the public_repo scope."
+            exit 1
+          fi
+
       - name: Checkout llama.cpp
         uses: actions/checkout@v4
         with:
@@ -91,6 +106,15 @@ jobs:
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           ls -lh "${NAME}.tar.gz"
+
+      # Keeps the build recoverable if publishing fails.
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            ${{ steps.package.outputs.name }}.tar.gz
+            ${{ steps.package.outputs.name }}.tar.gz.sha256
 
       - name: Publish release
         env:
