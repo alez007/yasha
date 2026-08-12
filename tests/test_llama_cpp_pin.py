@@ -27,9 +27,14 @@ def test_asset_url_embeds_pinned_tag():
     assert metal_url.startswith("https://github.com/")
 
 
-def test_build_workflow_covers_every_asset_platform():
+def test_build_workflow_matrix_names():
     built = {m["name"] for m in _build_workflow()["jobs"]["server"]["strategy"]["matrix"]["include"]}
     assert built == {"linux-x64", "linux-arm64", "macos-arm64-metal"}
+
+
+def test_makefile_triggers_the_build_workflow():
+    makefile = (_REPO_ROOT / "Makefile").read_text()
+    assert f"gh workflow run {_BUILD_WORKFLOW.name}" in makefile
 
 
 def test_cuda_backend_shares_the_linux_x64_runner():
