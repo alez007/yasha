@@ -59,6 +59,9 @@ jobs:
         uses: ggml-org/ccache-action@v1.2.21
         with:
           key: llama-cpp-cuda-${{ inputs.tag }}
+          # ggml-cuda compiles every .cu once per CUDA arch, which overruns the
+          # 500MB default and evicts the cache mid-build.
+          max-size: 2G
 
       - name: Build
         run: |
