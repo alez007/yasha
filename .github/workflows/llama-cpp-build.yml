@@ -145,7 +145,7 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/cuda.list > /dev/null
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
-            gcc-12 g++-12 \
+            build-essential \
             cuda-nvcc-${CUDA_VERSION_DASH} \
             cuda-cudart-dev-${CUDA_VERSION_DASH} \
             libcublas-dev-${CUDA_VERSION_DASH}
@@ -159,10 +159,6 @@ jobs:
           max-size: 2G
 
       - name: Build
-        env:
-          CC: gcc-12
-          CXX: g++-12
-          CUDAHOSTCXX: g++-12
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
