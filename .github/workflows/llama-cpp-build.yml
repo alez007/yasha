@@ -1,0 +1,264 @@
+name: Build llama.cpp
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "llama.cpp tag to build (e.g. b10375)"
+        required: true
+
+permissions:
+  contents: read
+
+# One release per tag holds every platform's binary, so a second run would have
+# to overwrite a set other nodes may already be running.
+concurrency:
+  group: llama-cpp-build
+
+env:
+  LLAMA_CPP_BUILDS_REPO: modelship-ai/llama-cpp-builds
+  CMAKE_ARGS: "-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON -DGGML_RPC=ON"
+  CUDA_VERSION_DASH: 13-0
+  CUDA_HOME: /usr/local/cuda-13.0
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      # Publishing is the last step of a ~2h build, so fail on a bad token now.
+      - name: Check publish token and release slot
+        env:
+          GH_TOKEN: ${{ secrets.LLAMA_CPP_BUILDS_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::LLAMA_CPP_BUILDS_TOKEN is unset"
+            exit 1
+          fi
+          PUSH=$(gh api "repos/${LLAMA_CPP_BUILDS_REPO}" --jq .permissions.push 2>/dev/null || echo denied)
+          if [ "$PUSH" != "true" ]; then
+            echo "::error::LLAMA_CPP_BUILDS_TOKEN cannot write to ${LLAMA_CPP_BUILDS_REPO} (permissions.push=${PUSH}). A fine-grained PAT needs Contents: Read and write on that repo and, for an org-owned repo, org approval; a classic PAT needs the public_repo scope."
+            exit 1
+          fi
+          if gh release view "llamacpp-${{ inputs.tag }}" --repo "${LLAMA_CPP_BUILDS_REPO}" >/dev/null 2>&1; then
+            echo "::error::release llamacpp-${{ inputs.tag }} already exists — delete it first to rebuild that tag"
+            exit 1
+          fi
+
+      - name: Check tag exists upstream
+        run: |
+          curl -fsSL -o /dev/null \
+            "https://api.github.com/repos/ggml-org/llama.cpp/git/ref/tags/${{ inputs.tag }}" \
+            || { echo "::error::ggml-org/llama.cpp has no tag ${{ inputs.tag }}"; exit 1; }
+
+  server:
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-22.04
+            rpath: "$ORIGIN"
+            defines: -DGGML_BACKEND_DL=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            rpath: "$ORIGIN"
+            defines: -DGGML_BACKEND_DL=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON
+          - name: macos-arm64-metal
+            os: macos-14
+            rpath: "@loader_path"
+            defines: -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_METAL_USE_BF16=ON -DLLAMA_BUILD_BORINGSSL=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout llama.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: ${{ inputs.tag }}
+
+      - name: Install build deps
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends build-essential libssl-dev
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          key: llama-cpp-${{ matrix.name }}
+
+      - name: Build
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_RPATH='${{ matrix.rpath }}' \
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+            ${{ matrix.defines }} \
+            ${CMAKE_ARGS}
+          cmake --build build --config Release -j "$(getconf _NPROCESSORS_ONLN)"
+
+      - name: Package
+        id: package
+        run: |
+          NAME="llama-server-${{ inputs.tag }}-${{ matrix.name }}"
+          cp LICENSE build/bin/
+          mkdir "$NAME"
+          cp -a build/bin/. "$NAME"/
+          test -x "$NAME/llama-server"
+          tar czf "${NAME}.tar.gz" "$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          ls -lh "${NAME}.tar.gz"
+
+      # The binary resolves its sibling ggml libs by rpath, not a wrapper script.
+      - name: Verify rpath
+        run: |
+          BIN="${{ steps.package.outputs.name }}/llama-server"
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            readelf -d "$BIN" | grep -q '(RUNPATH).*\$ORIGIN' \
+              || { echo "::error::missing \$ORIGIN runpath"; exit 1; }
+          else
+            otool -l "$BIN" | grep -q '@loader_path' \
+              || { echo "::error::missing @loader_path rpath"; exit 1; }
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.name }}.tar.gz
+
+  cuda-backend:
+    needs: preflight
+    # Must match the linux-x64 server job's runner: ggml dlopens this beside the
+    # binaries from that tarball, so the glibc floor has to be the same or lower.
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout llama.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: ${{ inputs.tag }}
+
+      - name: Install CUDA toolkit
+        run: |
+          curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub \
+            | sudo gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" \
+            | sudo tee /etc/apt/sources.list.d/cuda.list > /dev/null
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            gcc-12 g++-12 \
+            cuda-nvcc-${CUDA_VERSION_DASH} \
+            cuda-cudart-dev-${CUDA_VERSION_DASH} \
+            libcublas-dev-${CUDA_VERSION_DASH}
+          echo "${CUDA_HOME}/bin" >> "$GITHUB_PATH"
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          key: llama-cpp-cuda
+          # ggml-cuda compiles every .cu once per arch, overrunning the 500MB default.
+          max-size: 2G
+
+      - name: Build
+        env:
+          CC: gcc-12
+          CXX: g++-12
+          CUDAHOSTCXX: g++-12
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_RPATH='$ORIGIN' \
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+            -DGGML_BACKEND_DL=ON \
+            -DGGML_NATIVE=OFF \
+            -DGGML_CPU=OFF \
+            -DGGML_CUDA=ON \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_TOOLS=OFF \
+            -DLLAMA_BUILD_SERVER=OFF
+          cmake --build build --config Release -j "$(nproc)" --target ggml-cuda
+          df -h /
+
+      - name: Verify ABI
+        run: |
+          SO=build/bin/libggml-cuda.so
+          test -f "$SO"
+          readelf -d "$SO"
+          readelf -d "$SO" | grep -q '(RUNPATH).*\$ORIGIN' \
+            || { echo "::error::missing \$ORIGIN runpath"; exit 1; }
+          BAD=$(readelf -d "$SO" \
+            | sed -n 's/.*Shared library: \[\(lib\(cudart\|cublas\|cublasLt\)\.so\.[0-9]*\)\].*/\1/p' \
+            | grep -v '\.so\.13$' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::non-CUDA-13 dependency: ${BAD}"
+            exit 1
+          fi
+
+      - name: Package
+        id: package
+        run: |
+          NAME="libggml-cuda-${{ inputs.tag }}-linux-x64-cuda13"
+          mkdir "$NAME"
+          cp build/bin/libggml-cuda.so "$NAME"/
+          cp LICENSE "$NAME"/
+          tar czf "${NAME}.tar.gz" "$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          ls -lh "${NAME}.tar.gz"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.name }}.tar.gz
+
+  publish:
+    needs: [server, cuda-backend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksum
+        run: |
+          cd dist
+          for f in *.tar.gz; do
+            sha256sum "$f" | awk '{print $1}' > "${f}.sha256"
+          done
+          ls -lh
+          # A partial set would pin nodes to mismatched builds.
+          test "$(ls -1 *.tar.gz | wc -l)" -eq 4 \
+            || { echo "::error::expected 4 tarballs, got $(ls -1 *.tar.gz | wc -l)"; exit 1; }
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.LLAMA_CPP_BUILDS_TOKEN }}
+        run: |
+          TAG=${{ inputs.tag }}
+          cd dist
+          {
+            echo "Own-CI build of ggml-org/llama.cpp \`${TAG}\` for every platform modelship ships, from \`.github/workflows/llama-cpp-build.yml\`."
+            echo
+            echo "| asset | consumers |"
+            echo "|---|---|"
+            echo "| \`llama-server-${TAG}-linux-x64.tar.gz\` | native Linux x86_64, Docker \`thin\`/\`cpu\`/\`cuda\` amd64 |"
+            echo "| \`llama-server-${TAG}-linux-arm64.tar.gz\` | native Linux aarch64, Docker \`thin\`/\`cpu\` arm64 |"
+            echo "| \`llama-server-${TAG}-macos-arm64-metal.tar.gz\` | native macOS arm64 (Metal) |"
+            echo "| \`libggml-cuda-${TAG}-linux-x64-cuda13.tar.gz\` | extracted over the linux-x64 tarball for CUDA offload |"
+            echo
+            echo "\`libggml-cuda.so\` is a dlopen'd ggml backend, not a server: a CUDA node runs the same \`llama-server\` as a CPU node. It needs \`libcudart.so.13\`/\`libcublas.so.13\` (torch cu130 bundles both under \`site-packages/nvidia/cu13/lib\`) and \`libcuda.so.1\` from the driver."
+            echo
+            echo '```'
+            sha256sum *.tar.gz
+            echo '```'
+          } > notes.md
+          gh release create "llamacpp-${TAG}" \
+            --repo "${LLAMA_CPP_BUILDS_REPO}" \
+            --title "llama.cpp ${TAG}" \
+            --notes-file notes.md \
+            --prerelease \
+            *.tar.gz *.sha256
