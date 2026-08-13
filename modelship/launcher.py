@@ -33,8 +33,7 @@ _SHA256_LINUX_ARM64 = "122186a168c10c9510b6e43c670515206d3a4ca7f5c10ef9fa4708fbe
 _SHA256_MACOS_ARM64_METAL = "b3f66fc4f82fbaaa70a3d18c37d1e9cbddc65133cf226b1695dc8c2cd20b4545"
 _SHA256_CUDA_X64 = "693d45d45b42902a2746f89e51e7caa62bffa22059673db0255c5b029755256a"
 
-# dlopen'd ggml backend layered over the linux-x64 tarball, which is otherwise
-# byte-identical on a CPU and a CUDA node.
+# dlopen'd ggml backend, layered over the linux-x64 tarball.
 _CUDA_ADDON_URL = f"{_LLAMA_CPP_RELEASE_URL}/libggml-cuda-{_LLAMA_CPP_TAG}-linux-x64-cuda13.tar.gz"
 _CUDA_BACKEND_SO = "libggml-cuda.so"
 

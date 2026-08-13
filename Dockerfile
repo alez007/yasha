@@ -71,20 +71,7 @@ RUN printf '#!/bin/sh\nexport LD_LIBRARY_PATH="/opt/llama.cpp${LD_LIBRARY_PATH:+
     chmod +x /opt/llama.cpp/llama-server.sh
 
 # =============================================================================
-# base — minimal runtime OS + uv + non-root user + env vars.
-#
-# CUDA strategy: torch cu130 bundles libcublas/libcudnn/libcurand/libnccl/
-# libnvrtc inside the venv (under site-packages/nvidia/*/lib) and the NVIDIA
-# Container Toolkit provides libcuda.so at run time via --gpus. However, vLLM's
-# C extensions (_C.abi3.so, _moe_C.abi3.so, ...) are built with an RPATH that
-# hard-references /usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.13.
-# Without that file, the vLLM registry subprocess that runs before torch has
-# bootstrapped its dlopen paths crashes with malloc_consolidate/SIGABRT while
-# the dynamic loader resolves symbols. We therefore install ONLY the tiny
-# cuda-cudart runtime package (~800 KB) in the base image. libcublas/cudnn/
-# curand/nvrtc are NOT installed — torch's bundled copies are resolved via its
-# own rpath once Python imports torch, so adding system duplicates is wasted
-# space.
+# base — runtime OS + uv + non-root user + env vars.
 # =============================================================================
 FROM ubuntu:24.04 AS base
 
@@ -109,12 +96,9 @@ RUN apt-get update -y && \
         ninja-build && \
     rm -rf /var/lib/apt/lists/*
 
-# Register the NVIDIA CUDA apt repo and install cuda-cudart, cuda-nvcc, and
-# cuda-cuobjdump (cuda variant only). gcc/g++ + libc6-dev and ninja-build stay
-# because torch/triton and flashinfer JIT-compile kernels at model-load time
-# and shell out to $CC/nvcc; without them, vllm crashes in _inductor (needs
-# g++ for its CPU codegen backend, e.g. the vllm CPU loader's torch.compile
-# path) or flashinfer on newer architectures (such as Blackwell).
+# nvcc/cuobjdump stay in the runtime image because torch, triton and flashinfer
+# JIT-compile kernels at model-load time. cuda-cudart is separate from torch's
+# bundled copy: vLLM's C extensions hard-reference it by RPATH.
 RUN if [ "$MSHIP_VARIANT" = "cuda" ]; then \
     CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && \
     curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
@@ -157,33 +141,22 @@ ENV MSHIP_LOG_FORMAT=text
 ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv/python
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
 
-# Pinned llama.cpp build for the llama_server loader (see the llama-server
-# stages above). llama-server additionally needs libgomp1 (ggml CPU backends)
-# and libssl3 (already pulled in via curl).
+# llama-server's runtime deps come from the apt list above: libgomp1 for the
+# ggml CPU backends, libssl3 via curl.
 COPY --from=llama-server /opt/llama.cpp /opt/llama.cpp
 ENV MSHIP_LLAMA_SERVER_BIN=/opt/llama.cpp/llama-server.sh
 
-# onnxruntime-gpu (a direct dependency of the cuda/metal extras) dlopen()s
-# libonnxruntime_providers_cuda.so which has plain DT_NEEDED entries for
-# libcublasLt.so.13 / libcudnn.so.9 / etc. Torch cu130 bundles these under
-# site-packages/nvidia/*/lib and resolves them via its own rpath once imported
-# — but onnxruntime doesn't participate in that. Expose the torch-bundled
-# CUDA libs on LD_LIBRARY_PATH so onnxruntime's CUDA provider can load.
-# Python version is pinned via PYTHON_VERSION (see pyproject.toml); we hard-
-# code 3.12 here because UV_PROJECT_ENVIRONMENT is fixed and the ENV cannot
-# shell-evaluate.
+# Torch's bundled CUDA libs, for consumers that don't resolve through torch's
+# own rpath: onnxruntime's CUDA provider and libggml-cuda.so. 3.12 is spelled
+# out because ENV can't shell-evaluate PYTHON_VERSION.
 ENV LD_LIBRARY_PATH="/.venv/lib/python3.12/site-packages/nvidia/cu13/lib:/.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:/.venv/lib/python3.12/site-packages/nvidia/nccl/lib:/.venv/lib/python3.12/site-packages/nvidia/cusparselt/lib:/.venv/lib/python3.12/site-packages/nvidia/nvshmem/lib"
 
 RUN mkdir -p /.cache /.venv /usr/local/uv/python && \
     chown -R $UID:$GID /modelship /.cache /.venv /usr/local/uv/python
 
 # =============================================================================
-# builder — adds build toolchain (nvcc, build-essential, dev headers, git) and
-# re-registers the NVIDIA apt repo so we can pull nvcc / dev headers needed to
-# compile wheels from source (flashinfer, llama-cpp-python, etc.). All of this
-# stays in the builder stage and is NOT copied into prod.
-#
-# The venv is resolved with --extra $MSHIP_VARIANT, plus --extra vllm-cpu on cpu.
+# builder — build toolchain for wheels compiled from source, plus the resolved
+# venv. Not inherited by prod.
 # =============================================================================
 FROM base AS builder
 
@@ -237,9 +210,7 @@ RUN --mount=type=cache,target=/.cache/uv,uid=$UID,gid=$GID \
     fi
 
 # =============================================================================
-# dev — inherits builder (keeps toolchain) and adds dev extras so developers
-# get editable installs for interactive REPL / pytest. Prod does not inherit
-# this stage.
+# dev — builder plus the dev extra.
 # =============================================================================
 FROM builder AS dev
 
@@ -261,8 +232,7 @@ USER root
 ENTRYPOINT ["/modelship/scripts/entrypoint.sh"]
 
 # =============================================================================
-# prod — minimal runtime. No build tools. Copies the resolved venv and
-# Python interpreter from builder.
+# prod — runtime only; venv and interpreter copied from builder.
 # =============================================================================
 FROM base AS prod
 
@@ -283,9 +253,8 @@ USER root
 
 ENTRYPOINT ["/modelship/scripts/entrypoint.sh", "--serve"]
 
-# thin variant: pin capacity to 0 so it never advertises resources it can't
-# serve (no torch/vllm). Layered on top since a shared stage can't
-# conditionally set ENV.
+# thin has no torch/vllm, so it advertises no capacity. Separate stage because
+# a shared one can't conditionally set ENV.
 FROM prod AS prod-thin
 
 ENV MSHIP_NODE_NUM_CPUS=0

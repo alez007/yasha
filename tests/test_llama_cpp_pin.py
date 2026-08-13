@@ -49,7 +49,6 @@ def test_makefile_triggers_the_build_workflow():
 
 
 def test_pin_job_rewrites_both_pinned_files():
-    """A build nobody consumes is a no-op; the pin PR is what lands it."""
     pin = _build_workflow()["jobs"]["pin"]
     assert pin["needs"] == "publish"
     steps = " ".join(step.get("run", "") for step in pin["steps"])

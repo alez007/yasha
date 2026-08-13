@@ -311,8 +311,7 @@ jobs:
             -e "s|^ARG LLAMA_CPP_SHA256_CUDA_X64=.*|ARG LLAMA_CPP_SHA256_CUDA_X64=${CUDA}|" \
             Dockerfile
 
-          # sed exits 0 when a pattern matches nothing, which silently shipped a
-          # stale hash once already.
+          # sed exits 0 when a pattern matches nothing.
           for value in "$TAG" "$X64" "$ARM64" "$METAL" "$CUDA"; do
             grep -q "$value" modelship/launcher.py \
               || { echo "::error::launcher.py kept its old pin for ${value}"; exit 1; }
