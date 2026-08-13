@@ -227,7 +227,6 @@ class TestResolveLlamaServerBin:
             patch.object(launcher, "resolve_cache_root", return_value=cache_root),
             patch.object(launcher, "_SHA256_CUDA_X64", addon_digest),
             patch.object(launcher, "_torch_cuda_lib_dir", return_value=str(torch_libs)),
-            patch.object(launcher, "_warn_if_no_cuda_device"),
             patch.dict(launcher._LLAMA_CPP_ASSETS, {("Linux", "x86_64"): asset}),
             patch("modelship.utils.download", side_effect=download),
         ):
@@ -256,7 +255,6 @@ class TestResolveLlamaServerBin:
             patch.object(launcher, "resolve_cache_root", return_value=cache_root),
             patch.object(launcher, "_SHA256_CUDA_X64", addon_digest),
             patch.object(launcher, "_torch_cuda_lib_dir", return_value=None),
-            patch.object(launcher, "_warn_if_no_cuda_device"),
             patch.dict(launcher._LLAMA_CPP_ASSETS, {("Linux", "x86_64"): asset}),
             patch("modelship.utils.download", side_effect=download),
         ):
@@ -303,28 +301,6 @@ class TestResolveLlamaServerBin:
             pytest.raises(ValueError, match="sha256 verification"),
         ):
             launcher._resolve_llama_server_bin()
-
-
-class TestWarnIfNoCudaDevice:
-    def _wrapper(self, tmp_path, body: str) -> str:
-        path = tmp_path / "llama-server.sh"
-        path.write_text(f"#!/bin/sh\n{body}\n")
-        path.chmod(0o755)
-        return str(path)
-
-    def test_silent_when_a_cuda_device_is_listed(self, tmp_path, capsys):
-        wrapper = self._wrapper(tmp_path, "echo 'CUDA0: NVIDIA RTX 5060 Ti (15849 MiB)'")
-        launcher._warn_if_no_cuda_device(wrapper)
-        assert capsys.readouterr().err == ""
-
-    def test_warns_when_the_backend_did_not_load(self, tmp_path, capsys):
-        wrapper = self._wrapper(tmp_path, "echo 'Available devices:'; echo '  (none)'")
-        launcher._warn_if_no_cuda_device(wrapper)
-        assert "no CUDA device" in capsys.readouterr().err
-
-    def test_warns_when_the_binary_cannot_run(self, tmp_path, capsys):
-        launcher._warn_if_no_cuda_device(str(tmp_path / "missing.sh"))
-        assert "could not list llama-server devices" in capsys.readouterr().err
 
 
 class TestCmdDeploy:

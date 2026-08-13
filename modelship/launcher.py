@@ -1,7 +1,6 @@
 """`mship` console-script entry point. Ray-free until it hands off to
 modelship.driver — see modelship/utils/cli.py and modelship/utils/ray_auth.py
-for the same discipline. detect_accelerator() imports torch when installed,
-which llama-server provisioning needs to pick its ggml backend.
+for the same discipline.
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ import os
 import platform
 import shutil
 import stat
-import subprocess
 import sys
 from typing import NamedTuple
 
@@ -182,28 +180,7 @@ def _resolve_llama_server_bin() -> str:
             _install_cuda_backend(tag_dir, extract_dir)
 
     _write_wrapper(wrapper_path, extract_dir, asset.lib_env, cuda=cuda)
-    if cuda:
-        _warn_if_no_cuda_device(wrapper_path)
     return wrapper_path
-
-
-def _warn_if_no_cuda_device(wrapper_path: str) -> None:
-    """ggml drops a backend it can't dlopen without a word, so an unresolved
-    libcudart/libcublas surfaces only as CPU-speed inference."""
-    try:
-        listed = subprocess.run(
-            [wrapper_path, "--list-devices"], capture_output=True, text=True, timeout=30, check=False
-        )
-    except Exception as e:
-        print(f"warning: could not list llama-server devices: {e}", file=sys.stderr)
-        return
-    if "CUDA" not in listed.stdout + listed.stderr:
-        print(
-            "warning: llama-server lists no CUDA device and will run on CPU. "
-            f"{_CUDA_BACKEND_SO} needs libcudart.so.13 and libcublas.so.13 (torch cu130 bundles "
-            "both) plus the driver's libcuda.so.1.",
-            file=sys.stderr,
-        )
 
 
 def _wants_cuda_addon() -> bool:
@@ -211,8 +188,7 @@ def _wants_cuda_addon() -> bool:
 
 
 def _install_cuda_backend(tag_dir: str, extract_dir: str) -> None:
-    """Extracts to its own dir and moves the backend across, because
-    fetch_and_extract_archive swaps whole directories and so can't merge into
+    """fetch_and_extract_archive swaps whole directories, so it can't merge into
     extract_dir."""
     addon_dir = os.path.join(tag_dir, "cuda")
     shutil.rmtree(addon_dir, ignore_errors=True)

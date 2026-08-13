@@ -140,10 +140,11 @@ slow while kernels compile; they're cached per GPU architecture under
 **Loader coverage.** `vllm`, `diffusers`, and `llama_server` all get full GPU.
 `llama_server` provisioning adds a CUDA ggml backend beside the same
 `llama-server` binary every other platform runs, and resolves its
-`libcudart`/`libcublas` from torch's bundled copies; if the backend can't load,
-`mship deploy` warns that inference will fall back to CPU.
-`stable_diffusion_cpp`, `whispercpp`, and `sherpa_onnx` are CPU-only here, same
-as in the image.
+`libcudart`/`libcublas` from torch's bundled copies. ggml skips a backend it
+can't load without saying so, so if a GGUF deploy seems slow, check
+`"$MSHIP_LLAMA_SERVER_BIN" --list-devices` — it prints `(none)` instead of a
+`CUDA0:` line. `stable_diffusion_cpp`, `whispercpp`, and `sherpa_onnx` are
+CPU-only here, same as in the image.
 
 ## Local development
 
