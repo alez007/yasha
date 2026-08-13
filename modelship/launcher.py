@@ -1,4 +1,4 @@
-"""`mship` console-script entry point. Ray/torch-free until it hands off to
+"""`mship` console-script entry point. Ray-free until it hands off to
 modelship.driver — see modelship/utils/cli.py and modelship/utils/ray_auth.py
 for the same discipline.
 """
@@ -20,55 +20,44 @@ from modelship.utils.cache import resolve_cache_root
 
 _REQUIRED_PYTHON = (3, 12, 10)
 
-# Own-CI Metal build; see .github/workflows/llama-cpp-build.yml.
-_LLAMA_CPP_TAG = "b10200"
+# Own-CI builds for every platform; see .github/workflows/llama-cpp-build.yml.
+_LLAMA_CPP_TAG = "b10375"
 _LLAMA_CPP_BUILDS_REPO = "modelship-ai/llama-cpp-builds"
+_LLAMA_CPP_RELEASE_URL = f"https://github.com/{_LLAMA_CPP_BUILDS_REPO}/releases/download/llamacpp-{_LLAMA_CPP_TAG}"
 
-# ggml-org never cut a GitHub Release for b10200 (only a GHCR image), so Linux
-# pulls straight from upstream Releases under a separate, newer tag until the
-# CI workflow is extended to `crane export` these from the same GHCR image
-# Docker uses and unify everything under one tag.
-_LLAMA_CPP_LINUX_TAG = "b10361"
+# Line-anchored: llama-cpp-build.yml's pin job rewrites these by sed.
+_SHA256_LINUX_X64 = "64625921d1257485a82cc7eee6de58075d5f81a1b588e3e2817cf9632ffc8090"
+_SHA256_LINUX_ARM64 = "122186a168c10c9510b6e43c670515206d3a4ca7f5c10ef9fa4708fbea77a9de"
+_SHA256_MACOS_ARM64_METAL = "b3f66fc4f82fbaaa70a3d18c37d1e9cbddc65133cf226b1695dc8c2cd20b4545"
+_SHA256_CUDA_X64 = "693d45d45b42902a2746f89e51e7caa62bffa22059673db0255c5b029755256a"
+
+# dlopen'd ggml backend, layered over the linux-x64 tarball.
+_CUDA_ADDON_URL = f"{_LLAMA_CPP_RELEASE_URL}/libggml-cuda-{_LLAMA_CPP_TAG}-linux-x64-cuda13.tar.gz"
+_CUDA_BACKEND_SO = "libggml-cuda.so"
 
 
 class _LlamaCppAsset(NamedTuple):
-    """`tag` names the cache subdirectory; `lib_env` is the loader-path env var
-    the wrapper script exports."""
+    """`lib_env` is the loader-path env var the wrapper script exports."""
 
-    tag: str
     url: str
     sha256: str
     lib_env: str
 
 
-# CPU-only on Linux — upstream ships no Linux CUDA release binary; Docker's GPU
-# offload comes from LLAMA_CPP_IMAGE_CUDA instead.
 _LLAMA_CPP_ASSETS: dict[tuple[str, str], _LlamaCppAsset] = {
     ("Darwin", "arm64"): _LlamaCppAsset(
-        tag=_LLAMA_CPP_TAG,
-        url=(
-            f"https://github.com/{_LLAMA_CPP_BUILDS_REPO}/releases/download/llamacpp-{_LLAMA_CPP_TAG}-metal/"
-            f"llama-server-{_LLAMA_CPP_TAG}-macos-arm64-metal.tar.gz"
-        ),
-        sha256="8b0f7fb4343befee98d4247f4065cdf38adf142e26e3f10f4451dff3411c4deb",
+        url=f"{_LLAMA_CPP_RELEASE_URL}/llama-server-{_LLAMA_CPP_TAG}-macos-arm64-metal.tar.gz",
+        sha256=_SHA256_MACOS_ARM64_METAL,
         lib_env="DYLD_LIBRARY_PATH",
     ),
     ("Linux", "x86_64"): _LlamaCppAsset(
-        tag=_LLAMA_CPP_LINUX_TAG,
-        url=(
-            f"https://github.com/ggml-org/llama.cpp/releases/download/{_LLAMA_CPP_LINUX_TAG}/"
-            f"llama-{_LLAMA_CPP_LINUX_TAG}-bin-ubuntu-x64.tar.gz"
-        ),
-        sha256="7809d66f8f48ca1887036b3ff10689b990462153a6fc5ada0246bd3dccfad5ac",
+        url=f"{_LLAMA_CPP_RELEASE_URL}/llama-server-{_LLAMA_CPP_TAG}-linux-x64.tar.gz",
+        sha256=_SHA256_LINUX_X64,
         lib_env="LD_LIBRARY_PATH",
     ),
     ("Linux", "aarch64"): _LlamaCppAsset(
-        tag=_LLAMA_CPP_LINUX_TAG,
-        url=(
-            f"https://github.com/ggml-org/llama.cpp/releases/download/{_LLAMA_CPP_LINUX_TAG}/"
-            f"llama-{_LLAMA_CPP_LINUX_TAG}-bin-ubuntu-arm64.tar.gz"
-        ),
-        sha256="10b01972cce4a67b6152354e6e556d1ab7e355f234664d780bebf4d41d912edc",
+        url=f"{_LLAMA_CPP_RELEASE_URL}/llama-server-{_LLAMA_CPP_TAG}-linux-arm64.tar.gz",
+        sha256=_SHA256_LINUX_ARM64,
         lib_env="LD_LIBRARY_PATH",
     ),
 }
@@ -168,13 +157,14 @@ def _resolve_llama_server_bin() -> str:
             "See https://github.com/ggml-org/llama.cpp/releases."
         )
 
-    tag_dir = os.path.join(resolve_cache_root(), "llama.cpp", asset.tag)
+    tag_dir = os.path.join(resolve_cache_root(), "llama.cpp", _LLAMA_CPP_TAG)
     archive_path = os.path.join(tag_dir, "archive.tar.gz")
     extract_dir = os.path.join(tag_dir, "extracted")
     wrapper_path = os.path.join(tag_dir, "llama-server.sh")
 
     binary = os.path.join(extract_dir, "llama-server")
-    if not os.path.isfile(binary):
+    cuda = _wants_cuda_addon()
+    if not os.path.isfile(binary) or (cuda and not os.path.isfile(os.path.join(extract_dir, _CUDA_BACKEND_SO))):
         if os.path.isdir(extract_dir):
             shutil.rmtree(extract_dir, ignore_errors=True)
         fetch_and_extract_archive(
@@ -186,15 +176,55 @@ def _resolve_llama_server_bin() -> str:
             keep_archive=True,
         )
         os.chmod(binary, os.stat(binary).st_mode | stat.S_IEXEC)
+        if cuda:
+            _install_cuda_backend(tag_dir, extract_dir)
 
-    _write_wrapper(wrapper_path, extract_dir, asset.lib_env)
+    _write_wrapper(wrapper_path, extract_dir, asset.lib_env, cuda=cuda)
     return wrapper_path
 
 
-def _write_wrapper(wrapper_path: str, extract_dir: str, lib_env: str) -> None:
+def _wants_cuda_addon() -> bool:
+    return (platform.system(), platform.machine()) == ("Linux", "x86_64") and detect_accelerator() == "cuda"
+
+
+def _install_cuda_backend(tag_dir: str, extract_dir: str) -> None:
+    """fetch_and_extract_archive swaps whole directories, so it can't merge into
+    extract_dir."""
+    addon_dir = os.path.join(tag_dir, "cuda")
+    shutil.rmtree(addon_dir, ignore_errors=True)
+    fetch_and_extract_archive(
+        _CUDA_ADDON_URL,
+        _SHA256_CUDA_X64,
+        os.path.join(tag_dir, "cuda.tar.gz"),
+        addon_dir,
+        flatten=True,
+        keep_archive=True,
+    )
+    os.replace(os.path.join(addon_dir, _CUDA_BACKEND_SO), os.path.join(extract_dir, _CUDA_BACKEND_SO))
+    shutil.rmtree(addon_dir, ignore_errors=True)
+
+
+def _torch_cuda_lib_dir() -> str | None:
+    """site-packages/nvidia/cu13/lib, holding the libcudart/libcublas that
+    libggml-cuda.so links. find_spec doesn't execute torch."""
+    try:
+        spec = importlib.util.find_spec("torch")
+    except Exception:
+        return None
+    if spec is None or not spec.origin:
+        return None
+    lib_dir = os.path.join(os.path.dirname(os.path.dirname(spec.origin)), "nvidia", "cu13", "lib")
+    return lib_dir if os.path.isdir(lib_dir) else None
+
+
+def _write_wrapper(wrapper_path: str, extract_dir: str, lib_env: str, *, cuda: bool = False) -> None:
+    lib_dirs = [extract_dir]
+    if cuda and (torch_cuda_libs := _torch_cuda_lib_dir()):
+        lib_dirs.append(torch_cuda_libs)
+    search_path = ":".join(lib_dirs)
     content = (
         "#!/bin/sh\n"
-        f'export {lib_env}="{extract_dir}${{{lib_env}:+:${lib_env}}}"\n'
+        f'export {lib_env}="{search_path}${{{lib_env}:+:${lib_env}}}"\n'
         f'exec "{extract_dir}/llama-server" "$@"\n'
     )
     with open(wrapper_path, "w") as f:

@@ -1,5 +1,5 @@
-"""launcher.py's pinned llama.cpp tag must not drift from the Dockerfile's image
-tags, nor from what llama-cpp-build.yml actually builds."""
+"""launcher.py's pinned llama.cpp tag must not drift from the Dockerfile's pins,
+nor from what llama-cpp-build.yml actually builds."""
 
 from pathlib import Path
 
@@ -15,16 +15,27 @@ def _build_workflow() -> dict:
     return yaml.safe_load(_BUILD_WORKFLOW.read_text())
 
 
-def test_tag_matches_dockerfile_llama_cpp_images():
+def test_dockerfile_pins_match_launcher():
+    """Both fetch the same tarballs, so a drift here means the image and a native
+    node run different binaries."""
     dockerfile = (_REPO_ROOT / "Dockerfile").read_text()
-    assert f"server-cuda13-{launcher._LLAMA_CPP_TAG}" in dockerfile
-    assert f"server-{launcher._LLAMA_CPP_TAG}@sha256" in dockerfile
+    assert f"\nARG LLAMA_CPP_TAG={launcher._LLAMA_CPP_TAG}\n" in dockerfile
+    assert f"\nARG LLAMA_CPP_SHA256_LINUX_X64={launcher._SHA256_LINUX_X64}\n" in dockerfile
+    assert f"\nARG LLAMA_CPP_SHA256_LINUX_ARM64={launcher._SHA256_LINUX_ARM64}\n" in dockerfile
+    assert f"\nARG LLAMA_CPP_SHA256_CUDA_X64={launcher._SHA256_CUDA_X64}\n" in dockerfile
 
 
 def test_asset_url_embeds_pinned_tag():
-    metal_url = launcher._LLAMA_CPP_ASSETS[("Darwin", "arm64")].url
-    assert launcher._LLAMA_CPP_TAG in metal_url
-    assert metal_url.startswith("https://github.com/")
+    for asset in launcher._LLAMA_CPP_ASSETS.values():
+        assert launcher._LLAMA_CPP_TAG in asset.url
+        assert asset.url.startswith(f"https://github.com/{launcher._LLAMA_CPP_BUILDS_REPO}/")
+
+
+def test_cuda_addon_comes_from_the_same_build():
+    """The backend is dlopened beside the CPU tarball's libggml-base.so; a
+    different tag is an ABI mismatch."""
+    assert launcher._LLAMA_CPP_TAG in launcher._CUDA_ADDON_URL
+    assert launcher._CUDA_ADDON_URL.startswith(f"https://github.com/{launcher._LLAMA_CPP_BUILDS_REPO}/")
 
 
 def test_build_workflow_matrix_names():
@@ -35,6 +46,14 @@ def test_build_workflow_matrix_names():
 def test_makefile_triggers_the_build_workflow():
     makefile = (_REPO_ROOT / "Makefile").read_text()
     assert f"gh workflow run {_BUILD_WORKFLOW.name}" in makefile
+
+
+def test_pin_job_rewrites_both_pinned_files():
+    pin = _build_workflow()["jobs"]["pin"]
+    assert pin["needs"] == "publish"
+    steps = " ".join(step.get("run", "") for step in pin["steps"])
+    assert "modelship/launcher.py" in steps
+    assert "Dockerfile" in steps
 
 
 def test_cuda_backend_shares_the_linux_x64_runner():

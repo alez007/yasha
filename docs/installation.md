@@ -104,8 +104,47 @@ uv tool install "mship[cpu,vllm-cpu]" \
   --index-strategy unsafe-best-match
 ```
 
-`mship[cuda]` is Docker-only — no GPU offload path exists for a native
-Linux install; use the `-cuda` image instead.
+## Native install (Linux, CUDA)
+
+`mship[cuda]` installs outside Docker on any Linux host with an NVIDIA driver.
+Unlike `vllm-cpu` it needs **no `--index` flags** — PyPI's default `torch`
+wheel is already the CUDA 13.0 build.
+
+Beyond `build-essential`/`cmake` (the same source-compile step as `[cpu]`), it
+needs `ninja-build` and NVIDIA's `nvcc`: flashinfer JIT-compiles its sampling
+kernel at model-load time, so without a CUDA toolkit the vLLM engine dies
+during init with `RuntimeError: Could not find nvcc and default
+cuda_home='/usr/local/cuda' doesn't exist`.
+
+```bash
+# first-time only
+sudo apt-get install -y build-essential cmake ninja-build
+
+# NVIDIA apt repo (Ubuntu 24.04) — CUDA 13.0, matching the -cuda image's pin
+curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
+  | sudo gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
+  | sudo tee /etc/apt/sources.list.d/cuda.list
+sudo apt-get update && sudo apt-get install -y \
+  cuda-nvcc-13-0 cuda-cuobjdump-13-0 libcurand-dev-13-0
+
+uv tool install "mship[cuda]"
+mship deploy --config models.yaml
+```
+
+`nvcc` does not need to be on `PATH` — the packages create the
+`/usr/local/cuda` symlink that flashinfer looks for. The first vLLM deploy is
+slow while kernels compile; they're cached per GPU architecture under
+`~/.cache/flashinfer`.
+
+**Loader coverage.** `vllm`, `diffusers`, and `llama_server` all get full GPU.
+`llama_server` provisioning adds a CUDA ggml backend beside the same
+`llama-server` binary every other platform runs, and resolves its
+`libcudart`/`libcublas` from torch's bundled copies. ggml skips a backend it
+can't load without saying so, so if a GGUF deploy seems slow, check
+`"$MSHIP_LLAMA_SERVER_BIN" --list-devices` — it prints `(none)` instead of a
+`CUDA0:` line. `stable_diffusion_cpp`, `whispercpp`, and `sherpa_onnx` are
+CPU-only here, same as in the image.
 
 ## Local development
 
