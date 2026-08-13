@@ -48,6 +48,15 @@ def test_makefile_triggers_the_build_workflow():
     assert f"gh workflow run {_BUILD_WORKFLOW.name}" in makefile
 
 
+def test_pin_job_rewrites_both_pinned_files():
+    """A build nobody consumes is a no-op; the pin PR is what lands it."""
+    pin = _build_workflow()["jobs"]["pin"]
+    assert pin["needs"] == "publish"
+    steps = " ".join(step.get("run", "") for step in pin["steps"])
+    assert "modelship/launcher.py" in steps
+    assert "Dockerfile" in steps
+
+
 def test_cuda_backend_shares_the_linux_x64_runner():
     """A newer runner image would raise the backend's glibc floor above the
     linux-x64 binaries it is dlopened beside."""

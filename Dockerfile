@@ -13,13 +13,6 @@ ARG LLAMA_CPP_BUILDS_REPO=modelship-ai/llama-cpp-builds
 
 # =============================================================================
 # llama-server — assembles /opt/llama.cpp for the llama_server loader.
-#
-# The tarball holds llama-server plus the .so backends it dlopen()s
-# (GGML_BACKEND_DL), which resolve each other via the binary's $ORIGIN runpath.
-# libggml-cuda.so drops in over the same CPU tarball; it links
-# libcudart/libcublas, resolved from the venv's torch-bundled copies through
-# the LD_LIBRARY_PATH set below, plus the driver's libcuda.so.1 from the NVIDIA
-# Container Toolkit. A CUDA backend that fails to load is skipped silently.
 # =============================================================================
 FROM ubuntu:24.04 AS llama-server-download
 
@@ -64,9 +57,7 @@ RUN set -e; \
 
 FROM llama-server-download AS llama-server-cpu
 
-# thin ships no llama-server binary — it never loads a model. The wrapper
-# script + MSHIP_LLAMA_SERVER_BIN below still get written pointing at this
-# empty dir; harmless, since thin never invokes it.
+# thin ships no llama-server binary; the wrapper below still points here.
 FROM ubuntu:24.04 AS llama-server-thin
 
 RUN mkdir -p /opt/llama.cpp

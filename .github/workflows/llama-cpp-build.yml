@@ -264,3 +264,81 @@ jobs:
             --notes-file notes.md \
             --prerelease \
             *.tar.gz *.sha256
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: dist/*.sha256
+
+  pin:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout modelship
+        uses: actions/checkout@v4
+
+      - name: Download checksums
+        uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          path: dist
+
+      - name: Rewrite pins
+        run: |
+          set -e
+          TAG=${{ inputs.tag }}
+          read_sha() { cat "dist/$1-${TAG}-$2.tar.gz.sha256"; }
+          X64=$(read_sha llama-server linux-x64)
+          ARM64=$(read_sha llama-server linux-arm64)
+          METAL=$(read_sha llama-server macos-arm64-metal)
+          CUDA=$(read_sha libggml-cuda linux-x64-cuda13)
+
+          sed -i \
+            -e "s|^_LLAMA_CPP_TAG = .*|_LLAMA_CPP_TAG = \"${TAG}\"|" \
+            -e "s|^_SHA256_LINUX_X64 = .*|_SHA256_LINUX_X64 = \"${X64}\"|" \
+            -e "s|^_SHA256_LINUX_ARM64 = .*|_SHA256_LINUX_ARM64 = \"${ARM64}\"|" \
+            -e "s|^_SHA256_MACOS_ARM64_METAL = .*|_SHA256_MACOS_ARM64_METAL = \"${METAL}\"|" \
+            -e "s|^_SHA256_CUDA_X64 = .*|_SHA256_CUDA_X64 = \"${CUDA}\"|" \
+            modelship/launcher.py
+          sed -i \
+            -e "s|^ARG LLAMA_CPP_TAG=.*|ARG LLAMA_CPP_TAG=${TAG}|" \
+            -e "s|^ARG LLAMA_CPP_SHA256_LINUX_X64=.*|ARG LLAMA_CPP_SHA256_LINUX_X64=${X64}|" \
+            -e "s|^ARG LLAMA_CPP_SHA256_LINUX_ARM64=.*|ARG LLAMA_CPP_SHA256_LINUX_ARM64=${ARM64}|" \
+            -e "s|^ARG LLAMA_CPP_SHA256_CUDA_X64=.*|ARG LLAMA_CPP_SHA256_CUDA_X64=${CUDA}|" \
+            Dockerfile
+
+          # sed exits 0 when a pattern matches nothing, which silently shipped a
+          # stale hash once already.
+          for value in "$TAG" "$X64" "$ARM64" "$METAL" "$CUDA"; do
+            grep -q "$value" modelship/launcher.py \
+              || { echo "::error::launcher.py kept its old pin for ${value}"; exit 1; }
+          done
+          for value in "$TAG" "$X64" "$ARM64" "$CUDA"; do
+            grep -q "$value" Dockerfile \
+              || { echo "::error::Dockerfile kept its old pin for ${value}"; exit 1; }
+          done
+
+      - name: Open pin-bump PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAG=${{ inputs.tag }}
+          BRANCH="llama-cpp/${TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add modelship/launcher.py Dockerfile
+          git commit -m "build: bump llama.cpp to ${TAG}"
+          git push origin "$BRANCH" --force
+          gh pr create \
+            --repo "${{ github.repository }}" \
+            --title "build: bump llama.cpp to ${TAG}" \
+            --body "Own-CI build published: https://github.com/${LLAMA_CPP_BUILDS_REPO}/releases/tag/llamacpp-${TAG}
+
+          Native installs and all three Docker variants fetch these same tarballs, so this bumps both in one go." \
+            || echo "PR create failed or already exists for branch $BRANCH"
