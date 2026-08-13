@@ -4,37 +4,65 @@ ARG MSHIP_VARIANT=cuda
 ARG UID=1000
 ARG GID=1000
 
-# llama.cpp's official server images, pinned by manifest digest (the digest IS
-# the sha256 of the content). Upstream publishes no Linux CUDA binary in its
-# GitHub releases, so the CUDA variant sources their CUDA 13 Docker build
-# instead. Bump the tag and digest together.
-ARG LLAMA_CPP_IMAGE_CUDA=ghcr.io/ggml-org/llama.cpp:server-cuda13-b10200@sha256:2cbeb792ac84c518f29f6003d00ec2c6769a58f43514ccb1a3b84122b8ff5a1d
-ARG LLAMA_CPP_IMAGE_CPU=ghcr.io/ggml-org/llama.cpp:server-b10200@sha256:8b7f05d7d14d040463ef9191b24da93724574abd6bfea9bf12899100f62e98db
+# Own-CI llama.cpp builds; rewritten by llama-cpp-build.yml's pin job.
+ARG LLAMA_CPP_TAG=b10375
+ARG LLAMA_CPP_SHA256_LINUX_X64=64625921d1257485a82cc7eee6de58075d5f81a1b588e3e2817cf9632ffc8090
+ARG LLAMA_CPP_SHA256_LINUX_ARM64=122186a168c10c9510b6e43c670515206d3a4ca7f5c10ef9fa4708fbea77a9de
+ARG LLAMA_CPP_SHA256_CUDA_X64=693d45d45b42902a2746f89e51e7caa62bffa22059673db0255c5b029755256a
+ARG LLAMA_CPP_BUILDS_REPO=modelship-ai/llama-cpp-builds
 
 # =============================================================================
 # llama-server — assembles /opt/llama.cpp for the llama_server loader.
 #
-# /app in the upstream images holds the llama-server binary plus the .so
-# backends it dlopen()s (GGML_BACKEND_DL). The CUDA backend is skipped
-# gracefully when no GPU/driver is present, so the CUDA build also runs
-# CPU-only. libggml-cuda.so dynamically links libcudart/libcublas(Lt) — copied
-# in from the same image so they can't skew against the venv's torch-bundled
-# CUDA libs — and the driver's libcuda.so.1, which the NVIDIA Container
-# Toolkit provides at run time.
+# The tarball holds llama-server plus the .so backends it dlopen()s
+# (GGML_BACKEND_DL), which resolve each other via the binary's $ORIGIN runpath.
+# libggml-cuda.so drops in over the same CPU tarball; it links
+# libcudart/libcublas, resolved from the venv's torch-bundled copies through
+# the LD_LIBRARY_PATH set below, plus the driver's libcuda.so.1 from the NVIDIA
+# Container Toolkit. A CUDA backend that fails to load is skipped silently.
 # =============================================================================
-FROM ${LLAMA_CPP_IMAGE_CUDA} AS llama-server-cuda
+FROM ubuntu:24.04 AS llama-server-download
 
-RUN set -e && \
-    mkdir -p /opt/llama.cpp && \
-    cp -a /app/. /opt/llama.cpp/ && \
-    ldconfig && \
-    for lib in libcudart.so.13 libcublas.so.13 libcublasLt.so.13; do \
-        cp -L "$(ldconfig -p | awk -v lib="$lib" '$1 == lib { print $NF; exit }')" /opt/llama.cpp/; \
-    done
+ARG LLAMA_CPP_TAG
+ARG LLAMA_CPP_SHA256_LINUX_X64
+ARG LLAMA_CPP_SHA256_LINUX_ARM64
+ARG LLAMA_CPP_BUILDS_REPO
+ARG TARGETARCH
 
-FROM ${LLAMA_CPP_IMAGE_CPU} AS llama-server-cpu
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /opt/llama.cpp && cp -a /app/. /opt/llama.cpp/
+RUN set -e; \
+    case "$TARGETARCH" in \
+        amd64) slug=linux-x64; sha=$LLAMA_CPP_SHA256_LINUX_X64 ;; \
+        arm64) slug=linux-arm64; sha=$LLAMA_CPP_SHA256_LINUX_ARM64 ;; \
+        *) echo "no llama.cpp build for TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    name="llama-server-${LLAMA_CPP_TAG}-${slug}"; \
+    curl -fsSL -o /tmp/llama.tar.gz \
+        "https://github.com/${LLAMA_CPP_BUILDS_REPO}/releases/download/llamacpp-${LLAMA_CPP_TAG}/${name}.tar.gz"; \
+    echo "${sha}  /tmp/llama.tar.gz" | sha256sum -c -; \
+    mkdir -p /opt/llama.cpp; \
+    tar xzf /tmp/llama.tar.gz -C /opt/llama.cpp --strip-components=1; \
+    rm /tmp/llama.tar.gz
+
+FROM llama-server-download AS llama-server-cuda
+
+ARG LLAMA_CPP_TAG
+ARG LLAMA_CPP_SHA256_CUDA_X64
+ARG LLAMA_CPP_BUILDS_REPO
+
+RUN set -e; \
+    name="libggml-cuda-${LLAMA_CPP_TAG}-linux-x64-cuda13"; \
+    curl -fsSL -o /tmp/cuda.tar.gz \
+        "https://github.com/${LLAMA_CPP_BUILDS_REPO}/releases/download/llamacpp-${LLAMA_CPP_TAG}/${name}.tar.gz"; \
+    echo "${LLAMA_CPP_SHA256_CUDA_X64}  /tmp/cuda.tar.gz" | sha256sum -c -; \
+    tar xzf /tmp/cuda.tar.gz -C /opt/llama.cpp --strip-components=1; \
+    rm /tmp/cuda.tar.gz; \
+    test -f /opt/llama.cpp/libggml-cuda.so
+
+FROM llama-server-download AS llama-server-cpu
 
 # thin ships no llama-server binary — it never loads a model. The wrapper
 # script + MSHIP_LLAMA_SERVER_BIN below still get written pointing at this
@@ -43,10 +71,8 @@ FROM ubuntu:24.04 AS llama-server-thin
 
 RUN mkdir -p /opt/llama.cpp
 
-# The raw binary can't run standalone: it resolves its sibling .so files via
-# the loader path. The wrapper scopes LD_LIBRARY_PATH to the llama-server
-# process only — globally, /opt/llama.cpp would shadow llama-cpp-python's own
-# bundled libllama/libggml.
+# MSHIP_LLAMA_SERVER_BIN points at a wrapper in both the image and the native
+# install (launcher._write_wrapper); sibling .so files resolve via $ORIGIN.
 FROM llama-server-${MSHIP_VARIANT} AS llama-server
 
 RUN printf '#!/bin/sh\nexport LD_LIBRARY_PATH="/opt/llama.cpp${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec /opt/llama.cpp/llama-server "$@"\n' \

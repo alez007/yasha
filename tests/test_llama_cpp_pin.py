@@ -1,5 +1,5 @@
-"""launcher.py's pinned llama.cpp tag must not drift from the Dockerfile's image
-tags, nor from what llama-cpp-build.yml actually builds."""
+"""launcher.py's pinned llama.cpp tag must not drift from the Dockerfile's pins,
+nor from what llama-cpp-build.yml actually builds."""
 
 from pathlib import Path
 
@@ -15,10 +15,13 @@ def _build_workflow() -> dict:
     return yaml.safe_load(_BUILD_WORKFLOW.read_text())
 
 
-def test_tag_matches_dockerfile_llama_cpp_images():
+def test_dockerfile_pins_match_launcher():
+    """Both fetch the same tarballs, so a drift here means the image and a native
+    node run different binaries."""
     dockerfile = (_REPO_ROOT / "Dockerfile").read_text()
-    assert f"server-cuda13-{launcher._LLAMA_CPP_TAG}" in dockerfile
-    assert f"server-{launcher._LLAMA_CPP_TAG}@sha256" in dockerfile
+    assert f"\nARG LLAMA_CPP_TAG={launcher._LLAMA_CPP_TAG}\n" in dockerfile
+    assert f"\nARG LLAMA_CPP_SHA256_LINUX_X64={launcher._SHA256_LINUX_X64}\n" in dockerfile
+    assert f"\nARG LLAMA_CPP_SHA256_LINUX_ARM64={launcher._SHA256_LINUX_ARM64}\n" in dockerfile
 
 
 def test_asset_url_embeds_pinned_tag():

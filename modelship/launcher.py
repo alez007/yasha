@@ -20,55 +20,39 @@ from modelship.utils.cache import resolve_cache_root
 
 _REQUIRED_PYTHON = (3, 12, 10)
 
-# Own-CI Metal build; see .github/workflows/llama-cpp-build.yml.
-_LLAMA_CPP_TAG = "b10200"
+# Own-CI builds for every platform; see .github/workflows/llama-cpp-build.yml.
+_LLAMA_CPP_TAG = "b10375"
 _LLAMA_CPP_BUILDS_REPO = "modelship-ai/llama-cpp-builds"
+_LLAMA_CPP_RELEASE_URL = f"https://github.com/{_LLAMA_CPP_BUILDS_REPO}/releases/download/llamacpp-{_LLAMA_CPP_TAG}"
 
-# ggml-org never cut a GitHub Release for b10200 (only a GHCR image), so Linux
-# pulls straight from upstream Releases under a separate, newer tag until the
-# CI workflow is extended to `crane export` these from the same GHCR image
-# Docker uses and unify everything under one tag.
-_LLAMA_CPP_LINUX_TAG = "b10361"
+# Line-anchored: llama-cpp-build.yml's pin job rewrites these by sed.
+_SHA256_LINUX_X64 = "64625921d1257485a82cc7eee6de58075d5f81a1b588e3e2817cf9632ffc8090"
+_SHA256_LINUX_ARM64 = "122186a168c10c9510b6e43c670515206d3a4ca7f5c10ef9fa4708fbea77a9de"
+_SHA256_MACOS_ARM64_METAL = "b3f66fc4f82fbaaa70a3d18c37d1e9cbddc65133cf226b1695dc8c2cd20b4545"
 
 
 class _LlamaCppAsset(NamedTuple):
-    """`tag` names the cache subdirectory; `lib_env` is the loader-path env var
-    the wrapper script exports."""
+    """`lib_env` is the loader-path env var the wrapper script exports."""
 
-    tag: str
     url: str
     sha256: str
     lib_env: str
 
 
-# CPU-only on Linux — upstream ships no Linux CUDA release binary; Docker's GPU
-# offload comes from LLAMA_CPP_IMAGE_CUDA instead.
 _LLAMA_CPP_ASSETS: dict[tuple[str, str], _LlamaCppAsset] = {
     ("Darwin", "arm64"): _LlamaCppAsset(
-        tag=_LLAMA_CPP_TAG,
-        url=(
-            f"https://github.com/{_LLAMA_CPP_BUILDS_REPO}/releases/download/llamacpp-{_LLAMA_CPP_TAG}-metal/"
-            f"llama-server-{_LLAMA_CPP_TAG}-macos-arm64-metal.tar.gz"
-        ),
-        sha256="8b0f7fb4343befee98d4247f4065cdf38adf142e26e3f10f4451dff3411c4deb",
+        url=f"{_LLAMA_CPP_RELEASE_URL}/llama-server-{_LLAMA_CPP_TAG}-macos-arm64-metal.tar.gz",
+        sha256=_SHA256_MACOS_ARM64_METAL,
         lib_env="DYLD_LIBRARY_PATH",
     ),
     ("Linux", "x86_64"): _LlamaCppAsset(
-        tag=_LLAMA_CPP_LINUX_TAG,
-        url=(
-            f"https://github.com/ggml-org/llama.cpp/releases/download/{_LLAMA_CPP_LINUX_TAG}/"
-            f"llama-{_LLAMA_CPP_LINUX_TAG}-bin-ubuntu-x64.tar.gz"
-        ),
-        sha256="7809d66f8f48ca1887036b3ff10689b990462153a6fc5ada0246bd3dccfad5ac",
+        url=f"{_LLAMA_CPP_RELEASE_URL}/llama-server-{_LLAMA_CPP_TAG}-linux-x64.tar.gz",
+        sha256=_SHA256_LINUX_X64,
         lib_env="LD_LIBRARY_PATH",
     ),
     ("Linux", "aarch64"): _LlamaCppAsset(
-        tag=_LLAMA_CPP_LINUX_TAG,
-        url=(
-            f"https://github.com/ggml-org/llama.cpp/releases/download/{_LLAMA_CPP_LINUX_TAG}/"
-            f"llama-{_LLAMA_CPP_LINUX_TAG}-bin-ubuntu-arm64.tar.gz"
-        ),
-        sha256="10b01972cce4a67b6152354e6e556d1ab7e355f234664d780bebf4d41d912edc",
+        url=f"{_LLAMA_CPP_RELEASE_URL}/llama-server-{_LLAMA_CPP_TAG}-linux-arm64.tar.gz",
+        sha256=_SHA256_LINUX_ARM64,
         lib_env="LD_LIBRARY_PATH",
     ),
 }
@@ -168,7 +152,7 @@ def _resolve_llama_server_bin() -> str:
             "See https://github.com/ggml-org/llama.cpp/releases."
         )
 
-    tag_dir = os.path.join(resolve_cache_root(), "llama.cpp", asset.tag)
+    tag_dir = os.path.join(resolve_cache_root(), "llama.cpp", _LLAMA_CPP_TAG)
     archive_path = os.path.join(tag_dir, "archive.tar.gz")
     extract_dir = os.path.join(tag_dir, "extracted")
     wrapper_path = os.path.join(tag_dir, "llama-server.sh")
