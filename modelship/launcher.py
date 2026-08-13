@@ -1,6 +1,7 @@
-"""`mship` console-script entry point. Ray/torch-free until it hands off to
+"""`mship` console-script entry point. Ray-free until it hands off to
 modelship.driver — see modelship/utils/cli.py and modelship/utils/ray_auth.py
-for the same discipline.
+for the same discipline. detect_accelerator() imports torch when installed,
+which llama-server provisioning needs to pick its ggml backend.
 """
 
 from __future__ import annotations
@@ -29,6 +30,12 @@ _LLAMA_CPP_RELEASE_URL = f"https://github.com/{_LLAMA_CPP_BUILDS_REPO}/releases/
 _SHA256_LINUX_X64 = "64625921d1257485a82cc7eee6de58075d5f81a1b588e3e2817cf9632ffc8090"
 _SHA256_LINUX_ARM64 = "122186a168c10c9510b6e43c670515206d3a4ca7f5c10ef9fa4708fbea77a9de"
 _SHA256_MACOS_ARM64_METAL = "b3f66fc4f82fbaaa70a3d18c37d1e9cbddc65133cf226b1695dc8c2cd20b4545"
+_SHA256_CUDA_X64 = "693d45d45b42902a2746f89e51e7caa62bffa22059673db0255c5b029755256a"
+
+# dlopen'd ggml backend layered over the linux-x64 tarball, which is otherwise
+# byte-identical on a CPU and a CUDA node.
+_CUDA_ADDON_URL = f"{_LLAMA_CPP_RELEASE_URL}/libggml-cuda-{_LLAMA_CPP_TAG}-linux-x64-cuda13.tar.gz"
+_CUDA_BACKEND_SO = "libggml-cuda.so"
 
 
 class _LlamaCppAsset(NamedTuple):
@@ -158,7 +165,8 @@ def _resolve_llama_server_bin() -> str:
     wrapper_path = os.path.join(tag_dir, "llama-server.sh")
 
     binary = os.path.join(extract_dir, "llama-server")
-    if not os.path.isfile(binary):
+    cuda = _wants_cuda_addon()
+    if not os.path.isfile(binary) or (cuda and not os.path.isfile(os.path.join(extract_dir, _CUDA_BACKEND_SO))):
         if os.path.isdir(extract_dir):
             shutil.rmtree(extract_dir, ignore_errors=True)
         fetch_and_extract_archive(
@@ -170,15 +178,56 @@ def _resolve_llama_server_bin() -> str:
             keep_archive=True,
         )
         os.chmod(binary, os.stat(binary).st_mode | stat.S_IEXEC)
+        if cuda:
+            _install_cuda_backend(tag_dir, extract_dir)
 
-    _write_wrapper(wrapper_path, extract_dir, asset.lib_env)
+    _write_wrapper(wrapper_path, extract_dir, asset.lib_env, cuda=cuda)
     return wrapper_path
 
 
-def _write_wrapper(wrapper_path: str, extract_dir: str, lib_env: str) -> None:
+def _wants_cuda_addon() -> bool:
+    return (platform.system(), platform.machine()) == ("Linux", "x86_64") and detect_accelerator() == "cuda"
+
+
+def _install_cuda_backend(tag_dir: str, extract_dir: str) -> None:
+    """Extracts to its own dir and moves the backend across, because
+    fetch_and_extract_archive swaps whole directories and so can't merge into
+    extract_dir."""
+    addon_dir = os.path.join(tag_dir, "cuda")
+    shutil.rmtree(addon_dir, ignore_errors=True)
+    fetch_and_extract_archive(
+        _CUDA_ADDON_URL,
+        _SHA256_CUDA_X64,
+        os.path.join(tag_dir, "cuda.tar.gz"),
+        addon_dir,
+        flatten=True,
+        keep_archive=True,
+    )
+    os.replace(os.path.join(addon_dir, _CUDA_BACKEND_SO), os.path.join(extract_dir, _CUDA_BACKEND_SO))
+    shutil.rmtree(addon_dir, ignore_errors=True)
+
+
+def _torch_cuda_lib_dir() -> str | None:
+    """site-packages/nvidia/cu13/lib, holding the libcudart/libcublas that
+    libggml-cuda.so links. find_spec doesn't execute torch."""
+    try:
+        spec = importlib.util.find_spec("torch")
+    except Exception:
+        return None
+    if spec is None or not spec.origin:
+        return None
+    lib_dir = os.path.join(os.path.dirname(os.path.dirname(spec.origin)), "nvidia", "cu13", "lib")
+    return lib_dir if os.path.isdir(lib_dir) else None
+
+
+def _write_wrapper(wrapper_path: str, extract_dir: str, lib_env: str, *, cuda: bool = False) -> None:
+    lib_dirs = [extract_dir]
+    if cuda and (torch_cuda_libs := _torch_cuda_lib_dir()):
+        lib_dirs.append(torch_cuda_libs)
+    search_path = ":".join(lib_dirs)
     content = (
         "#!/bin/sh\n"
-        f'export {lib_env}="{extract_dir}${{{lib_env}:+:${lib_env}}}"\n'
+        f'export {lib_env}="{search_path}${{{lib_env}:+:${lib_env}}}"\n'
         f'exec "{extract_dir}/llama-server" "$@"\n'
     )
     with open(wrapper_path, "w") as f:

@@ -23,6 +23,28 @@ def _make_archive(tmp_path, contents: bytes = b"binary-contents") -> tuple[str, 
     return str(archive), digest
 
 
+def _make_cuda_addon_archive(tmp_path) -> tuple[str, str]:
+    src = tmp_path / "cuda-src"
+    src.mkdir()
+    (src / launcher._CUDA_BACKEND_SO).write_bytes(b"cuda-backend")
+    archive = tmp_path / "cuda.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(src / launcher._CUDA_BACKEND_SO, arcname=launcher._CUDA_BACKEND_SO)
+    return str(archive), hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def _fake_download(sources: dict[str, str]):
+    """Serves a different local archive per requested URL, keyed by substring."""
+
+    def download(url, dest):
+        source = next(path for marker, path in sources.items() if marker in url)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(source, "rb") as src, open(dest, "wb") as dst:
+            dst.write(src.read())
+
+    return download
+
+
 class TestGuardPythonVersion:
     def test_matching_version_passes(self):
         with patch.object(launcher.sys, "version_info", (3, 12, 10, "final", 0)):
@@ -147,6 +169,7 @@ class TestResolveLlamaServerBin:
         with (
             patch.object(launcher.platform, "system", return_value=system),
             patch.object(launcher.platform, "machine", return_value=machine),
+            patch.object(launcher, "detect_accelerator", return_value="cpu"),
             patch.object(launcher, "resolve_cache_root", return_value=cache_root),
             patch.dict(launcher._LLAMA_CPP_ASSETS, {(system, machine): asset}),
             patch("modelship.utils.download", side_effect=fake_download) as mock_download,
@@ -187,6 +210,77 @@ class TestResolveLlamaServerBin:
         assert os.path.isfile(wrapper)
         assert os.path.isfile(os.path.join(extract_dir, "llama-server"))
         assert not os.path.exists(os.path.join(extract_dir, "leftover_junk.txt"))
+
+    def test_cuda_addon_lands_beside_the_binary(self, tmp_path):
+        archive, digest = _make_archive(tmp_path)
+        addon_archive, addon_digest = _make_cuda_addon_archive(tmp_path)
+        cache_root = str(tmp_path / "cache")
+        torch_libs = tmp_path / "site-packages" / "nvidia" / "cu13" / "lib"
+        torch_libs.mkdir(parents=True)
+
+        asset = launcher._LLAMA_CPP_ASSETS[("Linux", "x86_64")]._replace(sha256=digest)
+        download = _fake_download({"llama-server-": archive, "libggml-cuda-": addon_archive})
+        with (
+            patch.object(launcher.platform, "system", return_value="Linux"),
+            patch.object(launcher.platform, "machine", return_value="x86_64"),
+            patch.object(launcher, "detect_accelerator", return_value="cuda"),
+            patch.object(launcher, "resolve_cache_root", return_value=cache_root),
+            patch.object(launcher, "_SHA256_CUDA_X64", addon_digest),
+            patch.object(launcher, "_torch_cuda_lib_dir", return_value=str(torch_libs)),
+            patch.dict(launcher._LLAMA_CPP_ASSETS, {("Linux", "x86_64"): asset}),
+            patch("modelship.utils.download", side_effect=download),
+        ):
+            wrapper = launcher._resolve_llama_server_bin()
+
+        extract_dir = os.path.join(os.path.dirname(wrapper), "extracted")
+        assert os.path.isfile(os.path.join(extract_dir, launcher._CUDA_BACKEND_SO))
+        assert os.path.isfile(os.path.join(extract_dir, "llama-server"))
+        assert str(torch_libs) in Path(wrapper).read_text()
+
+    def test_cpu_only_cache_is_refetched_when_the_addon_is_wanted(self, tmp_path):
+        archive, digest = _make_archive(tmp_path)
+        addon_archive, addon_digest = _make_cuda_addon_archive(tmp_path)
+        cache_root = str(tmp_path / "cache")
+
+        extract_dir = os.path.join(cache_root, "llama.cpp", launcher._LLAMA_CPP_TAG, "extracted")
+        os.makedirs(extract_dir)
+        Path(extract_dir, "llama-server").write_bytes(b"cpu-only")
+
+        asset = launcher._LLAMA_CPP_ASSETS[("Linux", "x86_64")]._replace(sha256=digest)
+        download = _fake_download({"llama-server-": archive, "libggml-cuda-": addon_archive})
+        with (
+            patch.object(launcher.platform, "system", return_value="Linux"),
+            patch.object(launcher.platform, "machine", return_value="x86_64"),
+            patch.object(launcher, "detect_accelerator", return_value="cuda"),
+            patch.object(launcher, "resolve_cache_root", return_value=cache_root),
+            patch.object(launcher, "_SHA256_CUDA_X64", addon_digest),
+            patch.object(launcher, "_torch_cuda_lib_dir", return_value=None),
+            patch.dict(launcher._LLAMA_CPP_ASSETS, {("Linux", "x86_64"): asset}),
+            patch("modelship.utils.download", side_effect=download),
+        ):
+            launcher._resolve_llama_server_bin()
+
+        assert os.path.isfile(os.path.join(extract_dir, launcher._CUDA_BACKEND_SO))
+
+    def test_no_addon_without_a_cuda_accelerator(self, tmp_path):
+        archive, digest = _make_archive(tmp_path)
+        cache_root = str(tmp_path / "cache")
+
+        asset = launcher._LLAMA_CPP_ASSETS[("Linux", "x86_64")]._replace(sha256=digest)
+        download = _fake_download({"llama-server-": archive})
+        with (
+            patch.object(launcher.platform, "system", return_value="Linux"),
+            patch.object(launcher.platform, "machine", return_value="x86_64"),
+            patch.object(launcher, "detect_accelerator", return_value="cpu"),
+            patch.object(launcher, "resolve_cache_root", return_value=cache_root),
+            patch.dict(launcher._LLAMA_CPP_ASSETS, {("Linux", "x86_64"): asset}),
+            patch("modelship.utils.download", side_effect=download) as mock_download,
+        ):
+            wrapper = launcher._resolve_llama_server_bin()
+
+        mock_download.assert_called_once()
+        extract_dir = os.path.join(os.path.dirname(wrapper), "extracted")
+        assert not os.path.exists(os.path.join(extract_dir, launcher._CUDA_BACKEND_SO))
 
     def test_digest_mismatch_raises(self, tmp_path):
         archive, _real_digest = _make_archive(tmp_path)

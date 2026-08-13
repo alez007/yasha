@@ -22,12 +22,20 @@ def test_dockerfile_pins_match_launcher():
     assert f"\nARG LLAMA_CPP_TAG={launcher._LLAMA_CPP_TAG}\n" in dockerfile
     assert f"\nARG LLAMA_CPP_SHA256_LINUX_X64={launcher._SHA256_LINUX_X64}\n" in dockerfile
     assert f"\nARG LLAMA_CPP_SHA256_LINUX_ARM64={launcher._SHA256_LINUX_ARM64}\n" in dockerfile
+    assert f"\nARG LLAMA_CPP_SHA256_CUDA_X64={launcher._SHA256_CUDA_X64}\n" in dockerfile
 
 
 def test_asset_url_embeds_pinned_tag():
-    metal_url = launcher._LLAMA_CPP_ASSETS[("Darwin", "arm64")].url
-    assert launcher._LLAMA_CPP_TAG in metal_url
-    assert metal_url.startswith("https://github.com/")
+    for asset in launcher._LLAMA_CPP_ASSETS.values():
+        assert launcher._LLAMA_CPP_TAG in asset.url
+        assert asset.url.startswith(f"https://github.com/{launcher._LLAMA_CPP_BUILDS_REPO}/")
+
+
+def test_cuda_addon_comes_from_the_same_build():
+    """The backend is dlopened beside the CPU tarball's libggml-base.so; a
+    different tag is an ABI mismatch."""
+    assert launcher._LLAMA_CPP_TAG in launcher._CUDA_ADDON_URL
+    assert launcher._CUDA_ADDON_URL.startswith(f"https://github.com/{launcher._LLAMA_CPP_BUILDS_REPO}/")
 
 
 def test_build_workflow_matrix_names():
