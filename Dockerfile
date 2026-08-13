@@ -45,8 +45,13 @@ FROM llama-server-download AS llama-server-cuda
 ARG LLAMA_CPP_TAG
 ARG LLAMA_CPP_SHA256_CUDA_X64
 ARG LLAMA_CPP_BUILDS_REPO
+ARG TARGETARCH
 
 RUN set -e; \
+    if [ "$TARGETARCH" != "amd64" ]; then \
+        echo "MSHIP_VARIANT=cuda is amd64-only; no CUDA ggml backend is built for TARGETARCH=$TARGETARCH" >&2; \
+        exit 1; \
+    fi; \
     name="libggml-cuda-${LLAMA_CPP_TAG}-linux-x64-cuda13"; \
     curl -fsSL -o /tmp/cuda.tar.gz \
         "https://github.com/${LLAMA_CPP_BUILDS_REPO}/releases/download/llamacpp-${LLAMA_CPP_TAG}/${name}.tar.gz"; \
