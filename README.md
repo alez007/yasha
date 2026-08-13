@@ -128,11 +128,13 @@ uv tool install "mship[metal]"
 mship deploy --config models.yaml
 ```
 
-`uv tool install` auto-fetches the pinned Python 3.12.10 interpreter. `pip install "mship[metal]"` also works if you already have that exact version (same Xcode CLI Tools prerequisite applies). `mship[cuda]` is Docker-only — no native GPU offload path exists on Linux.
+`uv tool install` auto-fetches the pinned Python 3.12.10 interpreter. `pip install "mship[metal]"` also works if you already have that exact version (same Xcode CLI Tools prerequisite applies).
 
 ### Linux (native, no Docker)
 
 `mship[cpu]` is torch-free — install `build-essential`/`cmake` first (same role as Xcode CLI Tools above), then `uv tool install "mship[cpu]"` gets you `llama_server`, `whispercpp`, `sherpa_onnx`, and `stable_diffusion_cpp` with no CUDA pulled in. For CPU vLLM, use `mship[cpu,vllm-cpu]` with its indexes plus `libnuma1`/`openssl` — the extra is pinned to the `+cpu` local versions, so a missing index fails fast instead of silently installing CUDA — see [docs/installation.md](docs/installation.md#native-install-linux-cpu).
+
+On an NVIDIA box, `mship[cuda]` installs natively too — no index flags needed, but add `ninja-build` and NVIDIA's `nvcc` (flashinfer JIT-compiles kernels at model load). vLLM and Diffusers get full GPU; GGUF offload via `llama_server` still needs the `-cuda` image. See [docs/installation.md](docs/installation.md#native-install-linux-cuda).
 
 ### GPU (vLLM, Diffusers)
 
