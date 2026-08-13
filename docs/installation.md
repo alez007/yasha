@@ -137,12 +137,13 @@ mship deploy --config models.yaml
 slow while kernels compile; they're cached per GPU architecture under
 `~/.cache/flashinfer`.
 
-**Loader coverage.** `vllm` and `diffusers` get full GPU. `llama_server` is
-CPU-only on a native install — the auto-provisioned binary carries no CUDA
-backend, so use the `-cuda` image for GGUF offload, or point
-`MSHIP_LLAMA_SERVER_BIN` at your own CUDA-enabled `llama-server`.
-`stable_diffusion_cpp`, `whispercpp`, and `sherpa_onnx` are CPU-only here,
-same as in the image.
+**Loader coverage.** `vllm`, `diffusers`, and `llama_server` all get full GPU.
+`llama_server` provisioning adds a CUDA ggml backend beside the same
+`llama-server` binary every other platform runs, and resolves its
+`libcudart`/`libcublas` from torch's bundled copies; if the backend can't load,
+`mship deploy` warns that inference will fall back to CPU.
+`stable_diffusion_cpp`, `whispercpp`, and `sherpa_onnx` are CPU-only here, same
+as in the image.
 
 ## Local development
 

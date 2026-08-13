@@ -134,7 +134,7 @@ mship deploy --config models.yaml
 
 `mship[cpu]` is torch-free — install `build-essential`/`cmake` first (same role as Xcode CLI Tools above), then `uv tool install "mship[cpu]"` gets you `llama_server`, `whispercpp`, `sherpa_onnx`, and `stable_diffusion_cpp` with no CUDA pulled in. For CPU vLLM, use `mship[cpu,vllm-cpu]` with its indexes plus `libnuma1`/`openssl` — the extra is pinned to the `+cpu` local versions, so a missing index fails fast instead of silently installing CUDA — see [docs/installation.md](docs/installation.md#native-install-linux-cpu).
 
-On an NVIDIA box, `mship[cuda]` installs natively too — no index flags needed, but add `ninja-build` and NVIDIA's `nvcc` (flashinfer JIT-compiles kernels at model load). vLLM and Diffusers get full GPU; GGUF offload via `llama_server` still needs the `-cuda` image. See [docs/installation.md](docs/installation.md#native-install-linux-cuda).
+On an NVIDIA box, `mship[cuda]` installs natively too — no index flags needed, but add `ninja-build` and NVIDIA's `nvcc` (flashinfer JIT-compiles kernels at model load). vLLM, Diffusers, and GGUF via `llama_server` all get full GPU. See [docs/installation.md](docs/installation.md#native-install-linux-cuda).
 
 ### GPU (vLLM, Diffusers)
 
