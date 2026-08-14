@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Toolchain essentials
 
 - Python is pinned exactly to `3.12.10` (not `>=`). Dependency manager is **uv**. Never use `pip install`.
+- Two packages: `bootstrap/` publishes as **`mship`** (the installer users run, any Python 3.10+); the root publishes as **`mship-engine`**. Versions move in lockstep via `make _release`. Only the bootstrapper has a console script.
 - `cuda` and `cpu` extras are **mutually exclusive** (declared in `[tool.uv] conflicts`) — `torch`/`torchvision` come from different indexes per extra. A third extra, `thin`, is empty — no torch/vllm.
 - Line length is **120**, not 88. Ruff owns formatting (`E501` disabled); don't hand-sort imports (isort via `I` rule handles it).
 - Pyright runs in `basic` mode, scoped to `modelship`, `mship_deploy.py`. Pre-commit only runs ruff — don't rely on it to catch type errors.

@@ -1,6 +1,5 @@
 """Fetch, verify, and extract sherpa_onnx's curated model bundles into the
-shared cache dir, via modelship.utils.fetch_and_extract_archive (also used by
-modelship/launcher.py for llama.cpp's binary tarball)."""
+shared cache dir, via modelship.utils.fetch_and_extract_archive."""
 
 import fcntl
 import os

@@ -91,7 +91,7 @@ class TestNodeCapabilityResources:
 
     def test_llama_server_unquoted_wrapper_with_missing_target_is_unavailable(self, tmp_path):
         """The Dockerfile's actual llama-server.sh emits an unquoted exec target
-        (unlike launcher._write_wrapper's quoted form) — the regex must handle both."""
+        (unlike the bootstrapper's quoted wrapper form) — the regex must handle both."""
         missing_target = tmp_path / "nonexistent" / "llama-server"
         wrapper = tmp_path / "llama-server.sh"
         wrapper.write_text(f'#!/bin/sh\nexport LD_LIBRARY_PATH="{tmp_path}"\nexec {missing_target} "$@"\n')

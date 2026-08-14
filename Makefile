@@ -3,7 +3,7 @@ MAJOR   := $(shell echo $(VERSION) | cut -d. -f1)
 MINOR   := $(shell echo $(VERSION) | cut -d. -f2)
 PATCH   := $(shell echo $(VERSION) | cut -d. -f3)
 
-.PHONY: test lint lint-fix release-patch release-minor release-major _release llama-cpp-bump
+.PHONY: test lint lint-fix pins release-patch release-minor release-major _release llama-cpp-bump
 
 test:
 	uv run pytest tests/ -v
@@ -19,8 +19,8 @@ lint-fix:
 
 # Fires all four platform builds for a new llama.cpp tag and returns immediately
 # — it does not wait. The workflow publishes one release holding every platform's
-# binary, gated on all four succeeding. Updating launcher.py/Dockerfile pins to
-# the new tag is still manual.
+# binary, gated on all four succeeding. Updating the llama_cpp.py/Dockerfile pins
+# to the new tag is still manual.
 llama-cpp-bump:
 	@if [ -z "$(TAG)" ]; then echo "Error: usage: make llama-cpp-bump TAG=b10375" >&2; exit 1; fi
 	@gh workflow run llama-cpp-build.yml -f tag=$(TAG)
@@ -45,7 +45,10 @@ _release:
 	@git pull --rebase origin main
 	@echo "Bumping version: $(VERSION) -> $(NEW_VERSION)"
 	@sed -i '0,/^version = ".*"/{s/^version = ".*"/version = "$(NEW_VERSION)"/}' pyproject.toml
+	@sed -i '0,/^version = ".*"/{s/^version = ".*"/version = "$(NEW_VERSION)"/}' bootstrap/pyproject.toml
+	@sed -i 's/^__version__ = ".*"/__version__ = "$(NEW_VERSION)"/' bootstrap/mship_bootstrap/__init__.py
 	@uv lock
+	@$(MAKE) pins
 	@# --- lockstep the Helm chart with the app version (single source of truth: the tag) ---
 	@# chart version == appVersion == image tag == app version, so a checked-out tag
 	@# renders an installable chart and `helm install --version X.Y.Z` pairs image X.Y.Z.
@@ -73,8 +76,21 @@ _release:
 	if [ -n "$$CHANGED" ]; then echo "" >> "$$TMPF"; echo "### Changed" >> "$$TMPF"; echo "$$CHANGED" >> "$$TMPF"; fi; \
 	sed -i "/^The format is based on/r $$TMPF" CHANGELOG.md; \
 	rm -f "$$TMPF"
-	@git add pyproject.toml uv.lock CHANGELOG.md helm/modelship/Chart.yaml helm/modelship/values.yaml helm/modelship/files
+	@git add pyproject.toml uv.lock CHANGELOG.md helm/modelship/Chart.yaml helm/modelship/values.yaml helm/modelship/files \
+		bootstrap/pyproject.toml bootstrap/mship_bootstrap/__init__.py bootstrap/mship_bootstrap/pins
 	@git commit -m "release: v$(NEW_VERSION)"
 	@git tag -a "v$(NEW_VERSION)" -m "Release v$(NEW_VERSION)"
 	@git push origin main --follow-tags
 	@echo "Done. GitHub Actions will build and publish the release."
+
+# Per-variant hash-pinned dependency lists, shipped in the bootstrapper wheel.
+# --locked, not --frozen: a stale lock silently exports the wrong package set.
+pins:
+	@uv export --quiet --locked --no-emit-project --format requirements-txt \
+		-o bootstrap/mship_bootstrap/pins/thin.txt
+	@uv export --quiet --locked --no-emit-project --extra cpu --extra vllm-cpu --format requirements-txt \
+		-o bootstrap/mship_bootstrap/pins/cpu.txt
+	@uv export --quiet --locked --no-emit-project --extra cuda --format requirements-txt \
+		-o bootstrap/mship_bootstrap/pins/cuda.txt
+	@uv export --quiet --locked --no-emit-project --extra metal --format requirements-txt \
+		-o bootstrap/mship_bootstrap/pins/metal.txt

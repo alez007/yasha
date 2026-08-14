@@ -1,48 +1,10 @@
-import hashlib
 import os
 import sys
-import tarfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from modelship import launcher
-
-
-def _make_archive(tmp_path, contents: bytes = b"binary-contents") -> tuple[str, str]:
-    src_dir = tmp_path / "src"
-    src_dir.mkdir()
-    (src_dir / "llama-server").write_bytes(contents)
-    (src_dir / "libggml.dylib").write_bytes(b"lib")
-    archive = tmp_path / "archive.tar.gz"
-    with tarfile.open(archive, "w:gz") as tar:
-        tar.add(src_dir / "llama-server", arcname="llama-server")
-        tar.add(src_dir / "libggml.dylib", arcname="libggml.dylib")
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    return str(archive), digest
-
-
-def _make_cuda_addon_archive(tmp_path) -> tuple[str, str]:
-    src = tmp_path / "cuda-src"
-    src.mkdir()
-    (src / launcher._CUDA_BACKEND_SO).write_bytes(b"cuda-backend")
-    archive = tmp_path / "cuda.tar.gz"
-    with tarfile.open(archive, "w:gz") as tar:
-        tar.add(src / launcher._CUDA_BACKEND_SO, arcname=launcher._CUDA_BACKEND_SO)
-    return str(archive), hashlib.sha256(archive.read_bytes()).hexdigest()
-
-
-def _fake_download(sources: dict[str, str]):
-    """Serves a different local archive per requested URL, keyed by substring."""
-
-    def download(url, dest):
-        source = next(path for marker, path in sources.items() if marker in url)
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        with open(source, "rb") as src, open(dest, "wb") as dst:
-            dst.write(src.read())
-
-    return download
 
 
 class TestGuardPythonVersion:
@@ -115,194 +77,6 @@ class TestIsOwnHeadDeploy:
             assert launcher._is_own_head_deploy() is True
 
 
-class TestProvisionLlamaServer:
-    def test_short_circuits_when_env_set(self):
-        with patch.dict(os.environ, {"MSHIP_LLAMA_SERVER_BIN": "/existing/bin"}, clear=True):
-            assert launcher._provision_llama_server() == "/existing/bin"
-
-    def test_sets_env_on_success(self):
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(launcher, "_resolve_llama_server_bin", return_value="/resolved/bin"),
-        ):
-            path = launcher._provision_llama_server()
-            assert path == "/resolved/bin"
-            assert os.environ["MSHIP_LLAMA_SERVER_BIN"] == "/resolved/bin"
-
-    def test_warns_and_returns_none_on_failure(self):
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(launcher, "_resolve_llama_server_bin", side_effect=RuntimeError("boom")),
-        ):
-            assert launcher._provision_llama_server() is None
-            # Must stay inside the patch; outside it the ambient env is already restored.
-            assert "MSHIP_LLAMA_SERVER_BIN" not in os.environ
-
-
-_PLATFORM_CASES = [
-    ("Darwin", "arm64", "DYLD_LIBRARY_PATH"),
-    ("Linux", "x86_64", "LD_LIBRARY_PATH"),
-    ("Linux", "aarch64", "LD_LIBRARY_PATH"),
-]
-
-
-class TestResolveLlamaServerBin:
-    def test_unsupported_platform_raises(self):
-        with (
-            patch.object(launcher.platform, "system", return_value="Windows"),
-            patch.object(launcher.platform, "machine", return_value="AMD64"),
-            pytest.raises(launcher.LlamaServerProvisionError, match="MSHIP_LLAMA_SERVER_BIN"),
-        ):
-            launcher._resolve_llama_server_bin()
-
-    @pytest.mark.parametrize(("system", "machine", "lib_env"), _PLATFORM_CASES)
-    def test_downloads_verifies_and_extracts(self, tmp_path, system, machine, lib_env):
-        archive, digest = _make_archive(tmp_path)
-        cache_root = str(tmp_path / "cache")
-
-        def fake_download(url, dest):
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
-            with open(archive, "rb") as src, open(dest, "wb") as dst:
-                dst.write(src.read())
-
-        asset = launcher._LLAMA_CPP_ASSETS[(system, machine)]._replace(sha256=digest)
-        with (
-            patch.object(launcher.platform, "system", return_value=system),
-            patch.object(launcher.platform, "machine", return_value=machine),
-            patch.object(launcher, "detect_accelerator", return_value="cpu"),
-            patch.object(launcher, "resolve_cache_root", return_value=cache_root),
-            patch.dict(launcher._LLAMA_CPP_ASSETS, {(system, machine): asset}),
-            patch("modelship.utils.download", side_effect=fake_download) as mock_download,
-        ):
-            wrapper = launcher._resolve_llama_server_bin()
-
-        mock_download.assert_called_once()
-        assert os.path.isfile(wrapper)
-        assert "llama-server.sh" in wrapper
-        assert lib_env in Path(wrapper).read_text()
-        extracted_bin = os.path.join(os.path.dirname(wrapper), "extracted", "llama-server")
-        assert os.path.isfile(extracted_bin)
-
-    def test_stale_extract_dir_is_cleared_and_refetched(self, tmp_path):
-        archive, digest = _make_archive(tmp_path)
-        cache_root = str(tmp_path / "cache")
-
-        def fake_download(url, dest):
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
-            with open(archive, "rb") as src, open(dest, "wb") as dst:
-                dst.write(src.read())
-
-        extract_dir = os.path.join(cache_root, "llama.cpp", launcher._LLAMA_CPP_TAG, "extracted")
-        os.makedirs(extract_dir)
-        with open(os.path.join(extract_dir, "leftover_junk.txt"), "wb") as f:
-            f.write(b"junk")
-
-        asset = launcher._LLAMA_CPP_ASSETS[("Darwin", "arm64")]._replace(sha256=digest)
-        with (
-            patch.object(launcher.platform, "system", return_value="Darwin"),
-            patch.object(launcher.platform, "machine", return_value="arm64"),
-            patch.object(launcher, "resolve_cache_root", return_value=cache_root),
-            patch.dict(launcher._LLAMA_CPP_ASSETS, {("Darwin", "arm64"): asset}),
-            patch("modelship.utils.download", side_effect=fake_download),
-        ):
-            wrapper = launcher._resolve_llama_server_bin()
-
-        assert os.path.isfile(wrapper)
-        assert os.path.isfile(os.path.join(extract_dir, "llama-server"))
-        assert not os.path.exists(os.path.join(extract_dir, "leftover_junk.txt"))
-
-    def test_cuda_addon_lands_beside_the_binary(self, tmp_path):
-        archive, digest = _make_archive(tmp_path)
-        addon_archive, addon_digest = _make_cuda_addon_archive(tmp_path)
-        cache_root = str(tmp_path / "cache")
-        torch_libs = tmp_path / "site-packages" / "nvidia" / "cu13" / "lib"
-        torch_libs.mkdir(parents=True)
-
-        asset = launcher._LLAMA_CPP_ASSETS[("Linux", "x86_64")]._replace(sha256=digest)
-        download = _fake_download({"llama-server-": archive, "libggml-cuda-": addon_archive})
-        with (
-            patch.object(launcher.platform, "system", return_value="Linux"),
-            patch.object(launcher.platform, "machine", return_value="x86_64"),
-            patch.object(launcher, "detect_accelerator", return_value="cuda"),
-            patch.object(launcher, "resolve_cache_root", return_value=cache_root),
-            patch.object(launcher, "_SHA256_CUDA_X64", addon_digest),
-            patch.object(launcher, "_torch_cuda_lib_dir", return_value=str(torch_libs)),
-            patch.dict(launcher._LLAMA_CPP_ASSETS, {("Linux", "x86_64"): asset}),
-            patch("modelship.utils.download", side_effect=download),
-        ):
-            wrapper = launcher._resolve_llama_server_bin()
-
-        extract_dir = os.path.join(os.path.dirname(wrapper), "extracted")
-        assert os.path.isfile(os.path.join(extract_dir, launcher._CUDA_BACKEND_SO))
-        assert os.path.isfile(os.path.join(extract_dir, "llama-server"))
-        assert str(torch_libs) in Path(wrapper).read_text()
-
-    def test_cpu_only_cache_is_refetched_when_the_addon_is_wanted(self, tmp_path):
-        archive, digest = _make_archive(tmp_path)
-        addon_archive, addon_digest = _make_cuda_addon_archive(tmp_path)
-        cache_root = str(tmp_path / "cache")
-
-        extract_dir = os.path.join(cache_root, "llama.cpp", launcher._LLAMA_CPP_TAG, "extracted")
-        os.makedirs(extract_dir)
-        Path(extract_dir, "llama-server").write_bytes(b"cpu-only")
-
-        asset = launcher._LLAMA_CPP_ASSETS[("Linux", "x86_64")]._replace(sha256=digest)
-        download = _fake_download({"llama-server-": archive, "libggml-cuda-": addon_archive})
-        with (
-            patch.object(launcher.platform, "system", return_value="Linux"),
-            patch.object(launcher.platform, "machine", return_value="x86_64"),
-            patch.object(launcher, "detect_accelerator", return_value="cuda"),
-            patch.object(launcher, "resolve_cache_root", return_value=cache_root),
-            patch.object(launcher, "_SHA256_CUDA_X64", addon_digest),
-            patch.object(launcher, "_torch_cuda_lib_dir", return_value=None),
-            patch.dict(launcher._LLAMA_CPP_ASSETS, {("Linux", "x86_64"): asset}),
-            patch("modelship.utils.download", side_effect=download),
-        ):
-            launcher._resolve_llama_server_bin()
-
-        assert os.path.isfile(os.path.join(extract_dir, launcher._CUDA_BACKEND_SO))
-
-    def test_no_addon_without_a_cuda_accelerator(self, tmp_path):
-        archive, digest = _make_archive(tmp_path)
-        cache_root = str(tmp_path / "cache")
-
-        asset = launcher._LLAMA_CPP_ASSETS[("Linux", "x86_64")]._replace(sha256=digest)
-        download = _fake_download({"llama-server-": archive})
-        with (
-            patch.object(launcher.platform, "system", return_value="Linux"),
-            patch.object(launcher.platform, "machine", return_value="x86_64"),
-            patch.object(launcher, "detect_accelerator", return_value="cpu"),
-            patch.object(launcher, "resolve_cache_root", return_value=cache_root),
-            patch.dict(launcher._LLAMA_CPP_ASSETS, {("Linux", "x86_64"): asset}),
-            patch("modelship.utils.download", side_effect=download) as mock_download,
-        ):
-            wrapper = launcher._resolve_llama_server_bin()
-
-        mock_download.assert_called_once()
-        extract_dir = os.path.join(os.path.dirname(wrapper), "extracted")
-        assert not os.path.exists(os.path.join(extract_dir, launcher._CUDA_BACKEND_SO))
-
-    def test_digest_mismatch_raises(self, tmp_path):
-        archive, _real_digest = _make_archive(tmp_path)
-        cache_root = str(tmp_path / "cache")
-
-        def fake_download(url, dest):
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
-            with open(archive, "rb") as src, open(dest, "wb") as dst:
-                dst.write(src.read())
-
-        asset = launcher._LLAMA_CPP_ASSETS[("Darwin", "arm64")]._replace(sha256="0" * 64)
-        with (
-            patch.object(launcher.platform, "system", return_value="Darwin"),
-            patch.object(launcher.platform, "machine", return_value="arm64"),
-            patch.object(launcher, "resolve_cache_root", return_value=cache_root),
-            patch.dict(launcher._LLAMA_CPP_ASSETS, {("Darwin", "arm64"): asset}),
-            patch("modelship.utils.download", side_effect=fake_download),
-            pytest.raises(ValueError, match="sha256 verification"),
-        ):
-            launcher._resolve_llama_server_bin()
-
-
 class TestCmdDeploy:
     def test_forwards_argv_to_driver_after_gates(self):
         argv = ["--config", "models.yaml", "--reconcile"]
@@ -319,34 +93,6 @@ class TestCmdDeploy:
         mock_guard.assert_called_once()
         mock_gate.assert_called_once()
         mock_driver_main.assert_called_once_with(argv)
-
-    def test_supported_platform_triggers_provisioning(self):
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
-            patch.object(launcher, "detect_accelerator", return_value="cpu"),
-            patch.object(launcher, "_has_llama_cpp_asset", return_value=True),
-            patch.object(launcher, "_provision_llama_server") as mock_provision,
-            patch.object(launcher, "_check_loader_capabilities"),
-            patch.object(launcher, "_guard_python_version"),
-            patch("modelship.driver.main"),
-        ):
-            launcher._cmd_deploy([])
-        mock_provision.assert_called_once()
-
-    def test_unsupported_platform_skips_provisioning(self):
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
-            patch.object(launcher, "detect_accelerator", return_value="cpu"),
-            patch.object(launcher, "_has_llama_cpp_asset", return_value=False),
-            patch.object(launcher, "_provision_llama_server") as mock_provision,
-            patch.object(launcher, "_check_loader_capabilities"),
-            patch.object(launcher, "_guard_python_version"),
-            patch("modelship.driver.main"),
-        ):
-            launcher._cmd_deploy([])
-        mock_provision.assert_not_called()
 
     def test_gate_skipped_on_address_join(self):
         argv = ["--address", "10.0.0.1:6380", "--node-num-gpus", "0"]
@@ -434,7 +180,6 @@ class TestCmdInfo:
             patch.dict(os.environ, {}, clear=True),
             patch.object(launcher, "detect_accelerator", return_value="cpu"),
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
-            patch.object(launcher, "_has_llama_cpp_asset", return_value=False),
         ):
             launcher._cmd_info()
         out = capsys.readouterr().out
@@ -442,14 +187,12 @@ class TestCmdInfo:
         assert "cache: /tmp/cache" in out
         assert "llama-server: unset" in out
 
-    def test_prints_provisioned_path(self, capsys):
+    def test_prints_inherited_llama_server_bin(self, capsys):
+        """The bootstrapper (or the image) sets this before the engine starts."""
         with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(launcher, "detect_accelerator", return_value="metal"),
+            patch.dict(os.environ, {"MSHIP_LLAMA_SERVER_BIN": "/builds/cuda/llama-server.sh"}, clear=True),
+            patch.object(launcher, "detect_accelerator", return_value="cuda"),
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
-            patch.object(launcher, "_has_llama_cpp_asset", return_value=True),
-            patch.object(launcher, "_provision_llama_server", return_value="/tmp/cache/llama-server.sh"),
         ):
             launcher._cmd_info()
-        out = capsys.readouterr().out
-        assert "llama-server: /tmp/cache/llama-server.sh" in out
+        assert "llama-server: /builds/cuda/llama-server.sh" in capsys.readouterr().out
