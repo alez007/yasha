@@ -11,6 +11,8 @@ import tarfile
 import urllib.request
 import uuid
 
+_SOCKET_TIMEOUT_SECONDS = 30
+
 
 class FetchError(RuntimeError):
     pass
@@ -22,7 +24,10 @@ def download(url: str, file_path: str, *, overwrite: bool = False) -> None:
     os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
     tmp_path = f"{file_path}.{uuid.uuid4().hex}.tmp"
     try:
-        with urllib.request.urlopen(url) as response, open(tmp_path, "wb") as f:  # noqa: S310
+        with (
+            urllib.request.urlopen(url, timeout=_SOCKET_TIMEOUT_SECONDS) as response,  # noqa: S310
+            open(tmp_path, "wb") as f,
+        ):
             shutil.copyfileobj(response, f, 1024 * 1024)
         os.replace(tmp_path, file_path)
     except OSError as e:
