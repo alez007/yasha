@@ -18,3 +18,7 @@ helm/**/charts/
 helm/**/*.tgz
 # Dev-only deps for the bootstrapper; nothing ships from this lock.
 bootstrap/uv.lock
+
+.coverage
+.coverage.*
+htmlcov/
