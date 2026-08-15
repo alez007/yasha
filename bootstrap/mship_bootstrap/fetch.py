@@ -50,17 +50,35 @@ def verify_sha256(path: str, expected: str) -> None:
         raise FetchError(f"{path} failed sha256 verification: expected {expected}, got {actual}")
 
 
+def _escapes(path: str) -> bool:
+    """True when `path` is absolute or normalizes above its own root."""
+    return os.path.isabs(path) or os.path.normpath(path).split(os.sep)[0] == ".."
+
+
 def _extract(tar: tarfile.TarFile, dest: str, *, flatten: bool) -> None:
-    """`filter="data"` where the interpreter has it; otherwise the same traversal
-    check it would have applied, since the archive is already sha256-pinned."""
+    """`filter="data"` where the interpreter has it; the checks it would have applied
+    by hand where it doesn't — names and link targets stay under dest, no devices or
+    fifos, and modes lose setuid/setgid/sticky and group/other write. Links stay
+    allowed: the llama.cpp assets ship SONAME symlinks the binary's rpath needs."""
     members = []
     for member in tar.getmembers():
         if flatten:
             member.name = os.path.basename(member.name)
             if not member.name:
                 continue
-        elif os.path.isabs(member.name) or ".." in member.name.split("/"):
+        elif _escapes(member.name):
             raise FetchError(f"refusing to extract {member.name!r} outside {dest}")
+
+        if member.issym() or member.islnk():
+            # A hardlink's target is archive-root-relative; a symlink's is relative to itself.
+            base = os.path.dirname(member.name) if member.issym() else ""
+            if _escapes(os.path.join(base, member.linkname)):
+                raise FetchError(f"refusing to extract {member.name!r} pointing at {member.linkname!r} outside {dest}")
+        elif not (member.isfile() or member.isdir()):
+            raise FetchError(f"refusing to extract {member.name!r}: not a regular file, directory, or link")
+
+        if not _HAS_EXTRACTION_FILTER:
+            member.mode &= 0o755
         members.append(member)
 
     if _HAS_EXTRACTION_FILTER:

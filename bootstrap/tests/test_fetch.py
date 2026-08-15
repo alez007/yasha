@@ -21,6 +21,24 @@ def _tarball(tmp_path, members: dict[str, bytes], *, prefix: str = "") -> tuple[
         return path, hashlib.sha256(f.read()).hexdigest()
 
 
+def _tarball_with(tmp_path, *infos: tarfile.TarInfo) -> tuple[str, str]:
+    """Returns (path, sha256) of a tarball holding sizeless members verbatim."""
+    path = os.path.join(tmp_path, "src.tar.gz")
+    with tarfile.open(path, "w:gz") as tar:
+        for info in infos:
+            tar.addfile(info)
+    with open(path, "rb") as f:
+        return path, hashlib.sha256(f.read()).hexdigest()
+
+
+def _member(name: str, tar_type: bytes, **attrs) -> tarfile.TarInfo:
+    info = tarfile.TarInfo(name)
+    info.type = tar_type
+    for key, value in attrs.items():
+        setattr(info, key, value)
+    return info
+
+
 @pytest.fixture
 def served(tmp_path):
     """Serves a local file through the urlopen call site, so no network is touched."""
@@ -91,6 +109,80 @@ class TestFetchAndExtract:
                     os.path.join(tmp_path, "a.tar.gz"),
                     os.path.join(tmp_path, "extracted"),
                 )
+
+    @pytest.mark.parametrize("has_filter", [True, False])
+    @pytest.mark.parametrize(
+        "member",
+        [
+            pytest.param(_member("dev", tarfile.CHRTYPE, devmajor=1, devminor=3), id="device"),
+            pytest.param(_member("pipe", tarfile.FIFOTYPE), id="fifo"),
+        ],
+    )
+    def test_a_special_file_member_is_refused(self, tmp_path, served, member, has_filter):
+        source, digest = _tarball_with(str(tmp_path), member)
+        extract_dir = os.path.join(tmp_path, "extracted")
+        with served(source), patch.object(fetch, "_HAS_EXTRACTION_FILTER", has_filter):
+            with pytest.raises(fetch.FetchError, match="not a regular file"):
+                fetch.fetch_and_extract_archive(
+                    "https://example.invalid/a.tar.gz", digest, os.path.join(tmp_path, "a.tar.gz"), extract_dir
+                )
+        assert not os.path.exists(extract_dir)
+
+    @pytest.mark.parametrize("has_filter", [True, False])
+    @pytest.mark.parametrize("flatten", [True, False])
+    @pytest.mark.parametrize(
+        "member",
+        [
+            pytest.param(_member("bin/link", tarfile.SYMTYPE, linkname="../../etc/passwd"), id="symlink-relative"),
+            pytest.param(_member("bin/link", tarfile.SYMTYPE, linkname="/etc/passwd"), id="symlink-absolute"),
+            pytest.param(_member("bin/link", tarfile.LNKTYPE, linkname="../etc/passwd"), id="hardlink"),
+        ],
+    )
+    def test_a_link_out_of_the_destination_is_refused(self, tmp_path, served, member, flatten, has_filter):
+        """Flattening rewrites `name` but never `linkname`."""
+        source, digest = _tarball_with(str(tmp_path), member)
+        extract_dir = os.path.join(tmp_path, "extracted")
+        with served(source), patch.object(fetch, "_HAS_EXTRACTION_FILTER", has_filter):
+            with pytest.raises(fetch.FetchError, match="refusing to extract"):
+                fetch.fetch_and_extract_archive(
+                    "https://example.invalid/a.tar.gz",
+                    digest,
+                    os.path.join(tmp_path, "a.tar.gz"),
+                    extract_dir,
+                    flatten=flatten,
+                )
+        assert not os.path.exists(extract_dir)
+
+    @pytest.mark.parametrize("has_filter", [True, False])
+    def test_an_in_tree_symlink_is_extracted(self, tmp_path, served, has_filter):
+        """Every llama-server asset ships SONAME symlinks the binary's rpath needs."""
+        real = tarfile.TarInfo("bin/libggml.so.0")
+        real.size = 3
+        source = os.path.join(tmp_path, "src.tar.gz")
+        with tarfile.open(source, "w:gz") as tar:
+            tar.addfile(real, io.BytesIO(b"lib"))
+            tar.addfile(_member("bin/libggml.so", tarfile.SYMTYPE, linkname="libggml.so.0"))
+        with open(source, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+
+        extract_dir = os.path.join(tmp_path, "extracted")
+        with served(source), patch.object(fetch, "_HAS_EXTRACTION_FILTER", has_filter):
+            fetch.fetch_and_extract_archive(
+                "https://example.invalid/a.tar.gz", digest, os.path.join(tmp_path, "a.tar.gz"), extract_dir
+            )
+        link = os.path.join(extract_dir, "libggml.so")
+        assert os.readlink(link) == "libggml.so.0"
+        with open(link, "rb") as f:
+            assert f.read() == b"lib"
+
+    def test_without_the_filter_unsafe_modes_are_stripped(self, tmp_path, served):
+        source, digest = _tarball_with(str(tmp_path), _member("llama-server", tarfile.REGTYPE, mode=0o4777))
+        extract_dir = os.path.join(tmp_path, "extracted")
+        with served(source), patch.object(fetch, "_HAS_EXTRACTION_FILTER", False):
+            fetch.fetch_and_extract_archive(
+                "https://example.invalid/a.tar.gz", digest, os.path.join(tmp_path, "a.tar.gz"), extract_dir
+            )
+        assert os.stat(os.path.join(extract_dir, "llama-server")).st_mode & 0o7777 == 0o755
 
     def test_a_bad_digest_drops_the_archive(self, tmp_path, served):
         """A retry must re-download rather than re-verify the same corrupt bytes."""
