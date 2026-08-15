@@ -13,6 +13,9 @@ import uuid
 
 _SOCKET_TIMEOUT_SECONDS = 30
 
+# Extraction filters: 3.12, backported to 3.10.12 / 3.11.4.
+_HAS_EXTRACTION_FILTER = hasattr(tarfile, "data_filter")
+
 
 class FetchError(RuntimeError):
     pass
@@ -47,6 +50,25 @@ def verify_sha256(path: str, expected: str) -> None:
         raise FetchError(f"{path} failed sha256 verification: expected {expected}, got {actual}")
 
 
+def _extract(tar: tarfile.TarFile, dest: str, *, flatten: bool) -> None:
+    """`filter="data"` where the interpreter has it; otherwise the same traversal
+    check it would have applied, since the archive is already sha256-pinned."""
+    members = []
+    for member in tar.getmembers():
+        if flatten:
+            member.name = os.path.basename(member.name)
+            if not member.name:
+                continue
+        elif os.path.isabs(member.name) or ".." in member.name.split("/"):
+            raise FetchError(f"refusing to extract {member.name!r} outside {dest}")
+        members.append(member)
+
+    if _HAS_EXTRACTION_FILTER:
+        tar.extractall(dest, members=members, filter="data")
+    else:
+        tar.extractall(dest, members=members)  # noqa: S202
+
+
 def fetch_and_extract_archive(
     url: str,
     sha256: str,
@@ -71,15 +93,7 @@ def fetch_and_extract_archive(
     os.makedirs(tmp_dir, exist_ok=True)
     try:
         with tarfile.open(archive_path) as tar:
-            if flatten:
-                for member in tar.getmembers():
-                    name = os.path.basename(member.name)
-                    if not name:
-                        continue
-                    member.name = name
-                    tar.extract(member, path=tmp_dir, filter="data")
-            else:
-                tar.extractall(tmp_dir, filter="data")
+            _extract(tar, tmp_dir, flatten=flatten)
 
         root = tmp_dir
         if not flatten:

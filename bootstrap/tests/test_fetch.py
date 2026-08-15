@@ -80,6 +80,18 @@ class TestFetchAndExtract:
             )
         assert os.listdir(extract_dir) == ["llama-server"]
 
+    @pytest.mark.parametrize("name", ["../escaped", "/etc/escaped"])
+    def test_a_member_outside_the_destination_is_refused(self, tmp_path, served, name):
+        source, digest = _tarball(str(tmp_path), {name: b"x"})
+        with served(source):
+            with pytest.raises(fetch.FetchError, match="refusing to extract"):
+                fetch.fetch_and_extract_archive(
+                    "https://example.invalid/a.tar.gz",
+                    digest,
+                    os.path.join(tmp_path, "a.tar.gz"),
+                    os.path.join(tmp_path, "extracted"),
+                )
+
     def test_a_bad_digest_drops_the_archive(self, tmp_path, served):
         """A retry must re-download rather than re-verify the same corrupt bytes."""
         source, _ = _tarball(str(tmp_path), {"f": b"x"})
