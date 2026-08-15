@@ -4,6 +4,48 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.12] - 2026-08-15
+
+### Added
+- two-stage bootstrapper with pinned Python and hash-pinned deps
+- warn when llama-server lists no CUDA device
+- offload llama_server to CUDA on a native Linux install
+- make mship[cpu] torch-free, split vLLM into mship[vllm-cpu]
+- auto-provision llama-server on native Linux, not just Metal
+
+### Fixed
+- apply the data filter's checks by hand where the interpreter lacks it
+- let a zero-capacity coordinator hold a config it can't run itself
+- resolve torch from the index the lock pinned it to
+- extract archives on Pythons without tarfile filters
+- bound the bootstrapper's downloads with a socket timeout
+- unbreak the chart job — version-agnostic image assertion and missing capabilities
+- keep pins diffable so a ray or torch bump is reviewable
+- pin vllm-cpu extra to +cpu local versions, not bare 0.26.0
+
+### Changed
+- skip the filter branch where the interpreter has no filter
+- ignore coverage artifacts
+- trim bootstrapper comments and READMEs to the mechanical facts
+- fail fast when the cuda variant is built for arm64
+- drop the CUDA device check from provisioning
+- native CUDA hosts now offload GGUF too
+- cut the Dockerfile comments back to mechanical facts
+- reopen the pin-bump PR after a llama.cpp build
+- source every llama.cpp binary from our own b10375 release
+- document the native Linux CUDA install
+- build llama.cpp arm64 with gcc-14
+- point make llama-cpp-bump at the unified build workflow
+- build the CUDA backend with the stock jammy toolchain
+- trim comments in the llama.cpp build workflow
+- build llama.cpp for every platform from one tag
+- raise the CUDA build's ccache limit to 2G
+- fail fast on a bad publish token, keep the built artifact
+- add Linux CUDA llama.cpp backend build workflow
+- fix development.md's stale macOS-only llama-server claim
+- trim comments and install prose to mechanical facts
+- fix native Linux vllm-cpu install recipe
+
 ## [0.7.11] - 2026-08-11
 
 ### Fixed
