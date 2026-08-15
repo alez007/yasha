@@ -118,23 +118,22 @@ curl http://localhost:8000/v1/responses \
 
 The response includes both `output_text` and a first-class `reasoning` output item — the same server-side conversation state (`previous_response_id`) and tool-calling support work here as they do on GPU-backed models. `/v1/chat/completions` remains available too, if that's what your client speaks.
 
-### Apple Silicon (native, no Docker)
+### Native install (no Docker)
 
-On a Mac, install `mship` directly and get full Metal GPU offload for GGUF models via `llama_server` (and image generation via `stable_diffusion_cpp`) — no container, no Linux VM. Install Xcode Command Line Tools first — `[metal]` compiles `stable-diffusion-cpp-python` from source on first install (a few minutes; `xcode-select -p` checks if you already have it):
+One install command everywhere, then pick the node's role at run time:
 
 ```bash
-xcode-select --install          # first-time only; skip if already installed
-uv tool install "mship[metal]"
-mship deploy --config models.yaml
+pipx install mship          # or: uv tool install mship / pip install mship
+
+mship deploy --cuda  --config models.yaml   # NVIDIA GPU node
+mship deploy --cpu   --config models.yaml   # CPU node (includes vLLM CPU)
+mship deploy --metal --config models.yaml   # Apple Silicon
+mship deploy --thin  --config models.yaml   # coordinator/head only, no capacity
 ```
 
-`uv tool install` auto-fetches the pinned Python 3.12.10 interpreter. `pip install "mship[metal]"` also works if you already have that exact version (same Xcode CLI Tools prerequisite applies).
+Nothing to pin and nothing to match across machines. The first run of a variant sets itself up; after that it starts straight through. Every node lands on the same footing, so a new one joins the cluster by running the same command.
 
-### Linux (native, no Docker)
-
-`mship[cpu]` is torch-free — install `build-essential`/`cmake` first (same role as Xcode CLI Tools above), then `uv tool install "mship[cpu]"` gets you `llama_server`, `whispercpp`, `sherpa_onnx`, and `stable_diffusion_cpp` with no CUDA pulled in. For CPU vLLM, use `mship[cpu,vllm-cpu]` with its indexes plus `libnuma1`/`openssl` — the extra is pinned to the `+cpu` local versions, so a missing index fails fast instead of silently installing CUDA — see [docs/installation.md](docs/installation.md#native-install-linux-cpu).
-
-On an NVIDIA box, `mship[cuda]` installs natively too — no index flags needed, but add `ninja-build` and NVIDIA's `nvcc` (flashinfer JIT-compiles kernels at model load). vLLM, Diffusers, and GGUF via `llama_server` all get full GPU. See [docs/installation.md](docs/installation.md#native-install-linux-cuda).
+Platform prerequisites still apply: Xcode Command Line Tools on macOS, `build-essential`/`cmake` on Linux, plus `ninja-build` and NVIDIA's `nvcc` for `--cuda`. Alpine and other musl distros are unsupported. See [docs/installation.md](docs/installation.md) for the full list.
 
 ### GPU (vLLM, Diffusers)
 

@@ -20,6 +20,8 @@ jobs:
             chart:
               - 'helm/**'
               - '.github/workflows/ci.yml'
+              - 'modelship/deploy/capabilities.py'
+              - 'scripts/check_chart_capability_parity.py'
 
   lint:
     runs-on: ubuntu-latest
@@ -60,6 +62,44 @@ jobs:
 
       - name: Run tests
         run: uv run pytest tests/ -v -m "not integration"
+
+  bootstrap:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10.11 predates tarfile's extraction-filter backport.
+        python: ["3.10.11", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Run tests
+        working-directory: bootstrap
+        run: uv run --python ${{ matrix.python }} --group dev pytest tests/ -v
+
+      - name: Ruff
+        working-directory: bootstrap
+        run: |
+          uvx ruff check .
+          uvx ruff format --check .
+
+  pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      # A stale pins file installs the wrong package set on every user's machine
+      # rather than failing here.
+      - name: Pins match the lock
+        run: |
+          make pins
+          git diff --exit-code bootstrap/mship_bootstrap/pins/
 
   chart:
     needs: changes
@@ -114,15 +154,15 @@ jobs:
           # rayStartParams must pin num-cpus/num-gpus to 0 (KubeRay starts the raylet,
           # so thin's baked MSHIP_NODE_NUM_CPUS/GPUS=0 env doesn't apply on k8s).
           rendered=$(helm template modelship helm/modelship --set redis.address=cache:6379 --set image.variant=cpu)
-          echo "$rendered" | grep -q 'image: ghcr.io/modelship-ai/modelship:0.7.7$'
-          ! echo "$rendered" | grep -qE 'image: ghcr\.io/modelship-ai/modelship:0\.7\.7-(cpu|cuda)$'
+          echo "$rendered" | grep -qE 'image: ghcr\.io/modelship-ai/modelship:[0-9]+\.[0-9]+\.[0-9]+$'
+          ! echo "$rendered" | grep -qE 'image: ghcr\.io/modelship-ai/modelship:[^ ]*-(cpu|cuda)$'
           echo "$rendered" | grep -q 'num-cpus: "0"'
           echo "$rendered" | grep -q 'num-gpus: "0"'
 
       - name: Worker resources rayStartParam matches its image variant
         run: |
-          # cuda advertises all four capabilities; cpu omits mship_diffusers (not in
-          # the cpu extra — see pyproject.toml's [tool.uv] conflicts).
+          # cpu omits mship_diffusers (not in the cpu extra — see pyproject.toml's
+          # [tool.uv] conflicts).
           common="--set redis.address=cache:6379 --set workerGroups[0].name=w --set workerGroups[0].replicas=1 --set workerGroups[0].minReplicas=1 --set workerGroups[0].maxReplicas=1"
           cuda=$(helm template modelship helm/modelship $common --set workerGroups[0].image.variant=cuda)
           echo "$cuda" | grep -q 'resources:.*mship_diffusers'

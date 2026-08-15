@@ -2,14 +2,17 @@
 
 ## Requirements
 
-- **Docker** (or Python 3.12.10 with `uv` for local development — `uv` fetches this
-  exact version automatically, matching the repo's pinned `requires-python`)
+- **Docker**, or any **Python 3.10+** for a native install — `mship` provisions the
+  CPython 3.12.10 the engine needs itself
 - **NVIDIA GPU** (optional) — 16 GB+ VRAM recommended for a full stack (LLM +
   TTS + STT + embeddings) via vLLM; 8 GB is sufficient for lighter setups.
   Not required when using the vLLM or llama.cpp backends on CPU
 - **[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)**
   — required only when running GPU models in Docker
 - **HuggingFace token** for gated models
+- **glibc** for a native install — `ray` publishes no `musllinux` wheels, so Alpine
+  and other musl distros are refused. Use a glibc distro, or the Docker images,
+  which are Debian-based.
 
 ## Image variants
 
@@ -58,93 +61,97 @@ walkthrough.
     disk-backed storage instead of `/dev/shm` if the container's shared
     memory is too small for the object store.
 
-## Native install (Apple Silicon)
+## Native install
 
-No Docker required — `mship` installs directly and runs its own Ray head with
-full Metal GPU offload for `llama_server` (GGUF chat/embeddings/vision) and
-`stable_diffusion_cpp` (image generation). Install Xcode Command Line Tools
-first: `[metal]` compiles `stable-diffusion-cpp-python` from source on first
-install, which fails partway through with a raw compiler error if no
-compiler is present. `xcode-select -p` checks whether you already have it.
+One command on every platform — the node's role is chosen at run time, not at
+install time:
 
 ```bash
-xcode-select --install          # first-time only; skip if already installed
-uv tool install "mship[metal]"
-mship deploy --config models.yaml
+pipx install mship          # or: uv tool install mship / pip install mship
 ```
 
-`uv tool install` auto-fetches the pinned Python 3.12.10 interpreter;
-`pip install "mship[metal]"` works too if that exact version is already
-present (same Xcode CLI Tools prerequisite applies). The first install
-compiles stable-diffusion.cpp and takes a few minutes — that's expected, not
-a hang.
+| Command | Node role |
+|---|---|
+| `mship deploy --cuda --config models.yaml` | NVIDIA GPU node (vLLM, Diffusers, llama.cpp GPU offload) |
+| `mship deploy --cpu --config models.yaml` | CPU node (vLLM CPU, llama.cpp, whisper.cpp, sherpa-onnx, stable-diffusion.cpp) |
+| `mship deploy --metal --config models.yaml` | Apple Silicon (Metal offload) |
+| `mship deploy --thin --config models.yaml` | Coordinator/head only — serves nothing itself |
 
-## Native install (Linux, CPU)
+`mship deploy` with no variant is an error that lists these options; there is no
+default and no auto-detection, so a node's role is always something you stated.
+`MSHIP_VARIANT` is the environment-variable equivalent, for systemd units and CI.
 
-`mship[cpu]` is torch-free — `llama_server` (auto-provisioned, same as
-Metal), `whispercpp`, `sherpa_onnx`, and `stable_diffusion_cpp` all run
-without pulling in CUDA. Install `build-essential`/`cmake` first —
-`stable-diffusion-cpp-python` compiles from source on first install, same
-requirement as Xcode CLI Tools on Metal.
+### What the first run does
 
-```bash
-sudo apt-get install -y build-essential cmake   # first-time only
-uv tool install "mship[cpu]"
-mship deploy --config models.yaml
-```
+The `mship` package is a small installer that runs on any Python 3.10+. The first
+time you use a variant it:
 
-For CPU vLLM (`loader: vllm`, `num_gpus: 0`), add the `vllm-cpu` extra —
-also install `libnuma1`/`openssl` and pass both indexes:
+1. Refuses unsupported platforms (Windows, musl/Alpine) before downloading anything.
+2. Checks the hardware matches — `--cuda` needs `nvidia-smi` to list a device — so a
+   driverless box fails immediately instead of after several GB.
+3. Provisions `~/.modelship/envs/<variant>/` on **CPython 3.12.10**, installing from a
+   hash-pinned dependency list shipped inside the package.
+4. Fetches the pinned `llama-server` build for the platform.
+5. Runs the engine inside that environment.
 
-```bash
-sudo apt-get install -y libnuma1 openssl   # first-time only
-uv tool install "mship[cpu,vllm-cpu]" \
-  --index https://download.pytorch.org/whl/cpu \
-  --index https://wheels.vllm.ai/0.26.0/cpu \
-  --index-strategy unsafe-best-match
-```
+Every node therefore lands on an identical interpreter and dependency set, which is
+what lets a native node join a cluster of Docker nodes — Ray refuses to form a
+cluster across mismatched Python versions. Later runs re-verify the environment in
+milliseconds and start straight away.
 
-## Native install (Linux, CUDA)
+A copy of the exact pinned list that built each environment is left at
+`~/.modelship/envs/<variant>/pins.txt`. `mship info` reports what is provisioned.
 
-`mship[cuda]` installs outside Docker on any Linux host with an NVIDIA driver.
-Unlike `vllm-cpu` it needs **no `--index` flags** — PyPI's default `torch`
-wheel is already the CUDA 13.0 build.
+### Platform prerequisites
 
-Beyond `build-essential`/`cmake` (the same source-compile step as `[cpu]`), it
-needs `ninja-build` and NVIDIA's `nvcc`: flashinfer JIT-compiles its sampling
-kernel at model-load time, so without a CUDA toolkit the vLLM engine dies
-during init with `RuntimeError: Could not find nvcc and default
-cuda_home='/usr/local/cuda' doesn't exist`.
+These are not installed for you.
 
 ```bash
-# first-time only
-sudo apt-get install -y build-essential cmake ninja-build
+# macOS — compiles stable-diffusion-cpp-python on first install
+xcode-select --install
 
-# NVIDIA apt repo (Ubuntu 24.04) — CUDA 13.0, matching the -cuda image's pin
+# Linux, all variants
+sudo apt-get install -y build-essential cmake
+
+# Linux --cpu, additionally (lscpu feeds vLLM's CPU NUMA detection; its absence
+# surfaces as an opaque `Engine core initialization failed`)
+sudo apt-get install -y libnuma1 openssl util-linux
+
+# Linux --cuda, additionally: flashinfer JIT-compiles kernels at model-load time
+sudo apt-get install -y ninja-build gnupg
 curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
   | sudo gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
   | sudo tee /etc/apt/sources.list.d/cuda.list
 sudo apt-get update && sudo apt-get install -y \
   cuda-nvcc-13-0 cuda-cuobjdump-13-0 libcurand-dev-13-0
-
-uv tool install "mship[cuda]"
-mship deploy --config models.yaml
 ```
 
-`nvcc` does not need to be on `PATH` — the packages create the
-`/usr/local/cuda` symlink that flashinfer looks for. The first vLLM deploy is
-slow while kernels compile; they're cached per GPU architecture under
-`~/.cache/flashinfer`.
+`nvcc` does not need to be on `PATH` — those packages create the `/usr/local/cuda`
+symlink flashinfer looks for. The first vLLM deploy is slow while kernels compile;
+they are cached per GPU architecture under `~/.modelship/cache/flashinfer`.
 
-**Loader coverage.** `vllm`, `diffusers`, and `llama_server` all get full GPU.
-`llama_server` provisioning adds a CUDA ggml backend beside the same
-`llama-server` binary every other platform runs, and resolves its
-`libcudart`/`libcublas` from torch's bundled copies. ggml skips a backend it
-can't load without saying so, so if a GGUF deploy seems slow, check
-`"$MSHIP_LLAMA_SERVER_BIN" --list-devices` — it prints `(none)` instead of a
-`CUDA0:` line. `stable_diffusion_cpp`, `whispercpp`, and `sherpa_onnx` are
-CPU-only here, same as in the image.
+**Loader coverage on `--cuda`.** `vllm`, `diffusers`, and `llama_server` all get full
+GPU. `llama_server` gets a CUDA ggml backend beside the same binary every other
+platform runs. ggml skips a backend it cannot load without saying so, so if a GGUF
+deploy seems slow, check `"$MSHIP_LLAMA_SERVER_BIN" --list-devices` — it prints
+`(none)` instead of a `CUDA0:` line. `stable_diffusion_cpp`, `whispercpp`, and
+`sherpa_onnx` are CPU-only here, same as in the image.
+
+### Files on disk
+
+```
+~/.modelship/
+  cache/                    models and other downloads (MSHIP_CACHE_DIR)
+  envs/<variant>/           one environment per variant
+  builds/<variant>/         llama-server binaries
+  bin/uv                    only if uv was not already installed
+```
+
+`MSHIP_CACHE_DIR` may point at shared storage — model weights are identical on every
+node. `MSHIP_HOME` (default `~/.modelship`) must stay node-local: environments and
+binaries are platform- and variant-specific. To reset a variant, delete
+`~/.modelship/envs/<variant>/`; the next run rebuilds it and leaves your models alone.
 
 ## Local development
 

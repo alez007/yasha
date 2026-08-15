@@ -1,5 +1,6 @@
 [project]
-name = "mship"
+# Installed by the `mship` bootstrapper (bootstrap/), never directly by users.
+name = "mship-engine"
 version = "0.7.11"
 description = "The production backend for self-hosted agents — the OpenAI Responses API with server-side conversation state (durable with Redis), universal tool calling, and reasoning, alongside embeddings, speech, and image generation, behind one OpenAI-compatible endpoint. Built on Ray Serve."
 authors = [
@@ -105,9 +106,6 @@ dev = [
     "pre-commit>=4.0.0",
     "fakeredis>=2.36.2",
 ]
-
-[project.scripts]
-mship = "modelship.launcher:main"
 
 [project.urls]
 Homepage = "https://github.com/modelship-ai/modelship"

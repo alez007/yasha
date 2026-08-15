@@ -90,11 +90,19 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
-      - name: Build
-        run: uv build
+      # Engine first: the bootstrapper pins mship-engine==<same version>, so
+      # publishing it first would reference a release that doesn't exist yet.
+      - name: Build engine
+        run: uv build -o dist-engine .
 
-      - name: Publish to PyPI
-        run: uv publish
+      - name: Publish engine
+        run: uv publish dist-engine/*
+
+      - name: Build bootstrapper
+        run: uv build -o dist-bootstrap bootstrap
+
+      - name: Publish bootstrapper
+        run: uv publish dist-bootstrap/*
 
   helm:
     runs-on: ubuntu-latest

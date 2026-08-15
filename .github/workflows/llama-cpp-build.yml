@@ -303,7 +303,7 @@ jobs:
             -e "s|^_SHA256_LINUX_ARM64 = .*|_SHA256_LINUX_ARM64 = \"${ARM64}\"|" \
             -e "s|^_SHA256_MACOS_ARM64_METAL = .*|_SHA256_MACOS_ARM64_METAL = \"${METAL}\"|" \
             -e "s|^_SHA256_CUDA_X64 = .*|_SHA256_CUDA_X64 = \"${CUDA}\"|" \
-            modelship/launcher.py
+            bootstrap/mship_bootstrap/llama_cpp.py
           sed -i \
             -e "s|^ARG LLAMA_CPP_TAG=.*|ARG LLAMA_CPP_TAG=${TAG}|" \
             -e "s|^ARG LLAMA_CPP_SHA256_LINUX_X64=.*|ARG LLAMA_CPP_SHA256_LINUX_X64=${X64}|" \
@@ -313,8 +313,8 @@ jobs:
 
           # sed exits 0 when a pattern matches nothing.
           for value in "$TAG" "$X64" "$ARM64" "$METAL" "$CUDA"; do
-            grep -q "$value" modelship/launcher.py \
-              || { echo "::error::launcher.py kept its old pin for ${value}"; exit 1; }
+            grep -q "$value" bootstrap/mship_bootstrap/llama_cpp.py \
+              || { echo "::error::llama_cpp.py kept its old pin for ${value}"; exit 1; }
           done
           for value in "$TAG" "$X64" "$ARM64" "$CUDA"; do
             grep -q "$value" Dockerfile \
@@ -331,7 +331,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
-          git add modelship/launcher.py Dockerfile
+          git add bootstrap/mship_bootstrap/llama_cpp.py Dockerfile
           git commit -m "build: bump llama.cpp to ${TAG}"
           git push origin "$BRANCH" --force
           gh pr create \
