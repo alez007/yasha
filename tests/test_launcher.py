@@ -76,6 +76,25 @@ class TestIsOwnHeadDeploy:
         with patch.dict(os.environ, {"MSHIP_USE_EXISTING_RAY_CLUSTER": "false"}, clear=True):
             assert launcher._is_own_head_deploy() is True
 
+    def test_zero_capacity_coordinator_returns_false(self):
+        """The thin head holds the config for models that only a joiner can run."""
+        env = {"MSHIP_NODE_NUM_CPUS": "0", "MSHIP_NODE_NUM_GPUS": "0"}
+        with patch.dict(os.environ, env, clear=True):
+            assert launcher._is_own_head_deploy() is False
+
+    @pytest.mark.parametrize(
+        "env",
+        [
+            {"MSHIP_NODE_NUM_CPUS": "0"},
+            {"MSHIP_NODE_NUM_CPUS": "0", "MSHIP_NODE_NUM_GPUS": "1"},
+            {"MSHIP_NODE_NUM_CPUS": "4", "MSHIP_NODE_NUM_GPUS": "0"},
+            {"MSHIP_NODE_NUM_CPUS": "", "MSHIP_NODE_NUM_GPUS": ""},
+        ],
+    )
+    def test_any_reserved_capacity_still_gates(self, env):
+        with patch.dict(os.environ, env, clear=True):
+            assert launcher._is_own_head_deploy() is True
+
 
 class TestCmdDeploy:
     def test_forwards_argv_to_driver_after_gates(self):

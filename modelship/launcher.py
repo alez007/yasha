@@ -70,11 +70,25 @@ def _guard_python_version() -> None:
 
 def _is_own_head_deploy() -> bool:
     """True only when this driver IS the node the model will run on (no --address
-    join, no --use-existing-ray-cluster) — the only topology where this local
-    module-presence check is meaningful."""
+    join, no --use-existing-ray-cluster, some capacity of its own) — the only
+    topology where this local module-presence check is meaningful."""
     if os.environ.get("MSHIP_ADDRESS"):
         return False
-    return os.environ.get("MSHIP_USE_EXISTING_RAY_CLUSTER", "false").lower() != "true"
+    if os.environ.get("MSHIP_USE_EXISTING_RAY_CLUSTER", "false").lower() == "true":
+        return False
+    return not _advertises_no_capacity()
+
+
+def _advertises_no_capacity() -> bool:
+    """A thin coordinator reserves 0 CPUs and 0 GPUs, so every model in its config is
+    bound for a node that joins later."""
+    reserved = []
+    for var in ("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS"):
+        try:
+            reserved.append(float(os.environ[var]))
+        except (KeyError, ValueError):
+            return False
+    return not any(reserved)
 
 
 def _check_loader_capabilities(config_path: str | None) -> None:
