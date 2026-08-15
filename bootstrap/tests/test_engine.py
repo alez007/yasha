@@ -19,6 +19,14 @@ def _pins_by_package() -> dict[str, dict[str, str]]:
     return pinned
 
 
+def _local_version_pins(variant) -> list[str]:
+    return [
+        line
+        for line in engine.read_pins(variant).splitlines()
+        if "==" in line and not line.startswith((" ", "#")) and "+" in line.split("==")[1]
+    ]
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("MSHIP_HOME", str(tmp_path))
@@ -85,12 +93,18 @@ class TestProvision:
         assert venv_cmd[:4] == ["/usr/bin/uv", "venv", "--python", engine.PYTHON_VERSION]
         assert sync_cmd[:3] == ["/usr/bin/uv", "pip", "sync"]
 
-    def test_cpu_passes_its_indexes_to_sync(self, home):
+    @pytest.mark.parametrize("name", sorted(VARIANTS))
+    def test_local_version_pins_have_an_index_to_come_from(self, name, home):
+        """A `+cu130`/`+cpu` pin is absent from PyPI, so its index must be passed."""
+        variant = VARIANTS[name]
+        tags = {line.split("+")[1].split()[0].rstrip("\\") for line in _local_version_pins(variant)}
         with patch.object(engine, "_run") as run:
-            engine.provision(VARIANTS["cpu"], "/usr/bin/uv", "0.8.0")
+            engine.provision(variant, "/usr/bin/uv", "0.8.0")
         sync_cmd = run.call_args_list[-1][0][0]
-        assert "https://download.pytorch.org/whl/cpu" in sync_cmd
-        assert "unsafe-best-match" in sync_cmd
+        for tag in tags:
+            assert any(arg.rstrip("/").endswith(f"/{tag}") for arg in sync_cmd), f"no index serves {tag} for {name}"
+        if tags:
+            assert "unsafe-first-match" in sync_cmd
 
     def test_existing_venv_is_not_recreated(self, home):
         python = paths.venv_python("cpu")

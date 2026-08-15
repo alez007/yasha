@@ -6,9 +6,21 @@ from __future__ import annotations
 import os
 from typing import NamedTuple
 
+_PYPI_INDEX = "https://pypi.org/simple"
 _PYTORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
+_PYTORCH_CU130_INDEX = "https://download.pytorch.org/whl/cu130"
 # Embeds the vLLM version; bump alongside the `vllm` pin in the engine's pyproject.
 _VLLM_CPU_INDEX = "https://wheels.vllm.ai/0.26.0/cpu"
+
+
+def _index_args(*accelerator_indexes: str) -> tuple[str, ...]:
+    """PyPI outranks the accelerator indexes, which also serve triton, torchaudio and
+    torchcodec at the locked versions but as different artifacts — the lock's hashes
+    are PyPI's, so a wrong-index pick fails `uv pip sync` outright. `unsafe-first-match`
+    (not `first-index`) so a package PyPI carries at another version still falls
+    through; the pinned hashes are what make it safe."""
+    indexes = (_PYPI_INDEX, *accelerator_indexes)
+    return (*(arg for index in indexes for arg in ("--index", index)), "--index-strategy", "unsafe-first-match")
 
 
 class Variant(NamedTuple):
@@ -25,7 +37,7 @@ VARIANTS: dict[str, Variant] = {
     "cuda": Variant(
         name="cuda",
         extras=("cuda",),
-        index_args=(),
+        index_args=_index_args(_PYTORCH_CU130_INDEX),
         requires_accelerator="cuda",
         serves_models=True,
         summary="NVIDIA GPU node (vLLM, Diffusers, llama.cpp GPU offload)",
@@ -33,14 +45,7 @@ VARIANTS: dict[str, Variant] = {
     "cpu": Variant(
         name="cpu",
         extras=("cpu", "vllm-cpu"),
-        index_args=(
-            "--index",
-            _PYTORCH_CPU_INDEX,
-            "--index",
-            _VLLM_CPU_INDEX,
-            "--index-strategy",
-            "unsafe-best-match",
-        ),
+        index_args=_index_args(_PYTORCH_CPU_INDEX, _VLLM_CPU_INDEX),
         requires_accelerator=None,
         serves_models=True,
         summary="CPU node (vLLM CPU, llama.cpp, whisper.cpp, sherpa-onnx, SD)",

@@ -67,10 +67,18 @@ class TestVariantDefinitions:
     def test_cpu_always_includes_vllm_cpu(self):
         assert VARIANTS["cpu"].extras == ("cpu", "vllm-cpu")
 
-    def test_only_cpu_passes_extra_indexes(self):
-        assert VARIANTS["cpu"].index_args
-        for name in ("cuda", "metal", "thin"):
+    def test_only_the_torch_variants_pass_extra_indexes(self):
+        for name in ("cpu", "cuda"):
+            assert VARIANTS[name].index_args
+        for name in ("metal", "thin"):
             assert VARIANTS[name].index_args == ()
+
+    @pytest.mark.parametrize("name", ["cpu", "cuda"])
+    def test_pypi_outranks_the_accelerator_indexes(self, name):
+        """Both also serve triton/torchaudio/torchcodec as artifacts the lock never saw."""
+        indexes = [a for a in VARIANTS[name].index_args if a.startswith("http")]
+        assert indexes[0] == "https://pypi.org/simple"
+        assert len(indexes) > 1
 
     def test_hardware_requirements(self):
         assert VARIANTS["cuda"].requires_accelerator == "cuda"
