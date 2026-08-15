@@ -167,9 +167,9 @@ what's installed. Call with a variant string, e.g. (include "modelship.capabilit
 */}}
 {{- define "modelship.capabilityResources" -}}
 {{- if eq . "cuda" -}}
-{"mship_vllm": 1, "mship_diffusers": 1, "mship_llama_server": 1, "mship_stable_diffusion_cpp": 1}
+{"mship_vllm": 1, "mship_diffusers": 1, "mship_llama_server": 1, "mship_stable_diffusion_cpp": 1, "mship_whispercpp": 1, "mship_sherpa_onnx": 1}
 {{- else if eq . "cpu" -}}
-{"mship_vllm": 1, "mship_llama_server": 1, "mship_stable_diffusion_cpp": 1}
+{"mship_vllm": 1, "mship_llama_server": 1, "mship_stable_diffusion_cpp": 1, "mship_whispercpp": 1, "mship_sherpa_onnx": 1}
 {{- else -}}
 {}
 {{- end -}}
