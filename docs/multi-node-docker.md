@@ -118,6 +118,18 @@ This means, per fleet:
   that path on every node that could host it, since there's no cross-node
   copying of a local reference.
 
+## Capability-aware scheduling
+
+Every node advertises `mship_<loader>` Ray custom resources for whatever it can
+actually run (probed via `importlib.util.find_spec()`, plus a real-binary check
+for `llama_server`), and every deploy requests its loader's resource regardless
+of `num_gpus`. A thin head advertises none — it never accidentally schedules a
+model onto itself. A worker missing the right extras (e.g. a `-cpu` node given a
+`loader: vllm` config that needs `cuda`) just leaves that deploy pending; Ray's
+own scheduling message names the missing resource, nothing hard-fails at driver
+time. Override the probe wholesale with `MSHIP_NODE_CAPABILITIES` (JSON) if
+auto-detection is wrong or you want to disable a loader on one node.
+
 ## `MSHIP_STATE_STORE=redis://` is the multi-node recommendation
 
 Without it, the effective config (this gateway's desired model set) and the

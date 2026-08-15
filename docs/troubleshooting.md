@@ -22,9 +22,9 @@ mkdir -p models-cache && chmod 777 models-cache
 
 If you previously used the old `/root/.cache/huggingface` mount path, switch to `/.cache` and move any cached weights across — the container no longer looks at the old location.
 
-## `shm-size` too small / Ray crashes at startup
+## `shm-size` too small / deployment is slow
 
-Ray's object store needs shared memory. Always pass `--shm-size=8g` (or larger for big models). Without it, you'll see Ray worker crashes or silent hangs during deployment.
+Ray's object store needs shared memory covering `object_store_memory` (~30% of the node's memory budget). Pass `--shm-size=8g` (or larger for big models) — Docker's 64MB default falls well short. If it's too small, Ray doesn't error, it silently falls back to slower disk-backed Plasma storage. When co-locating containers, size it off `--node-memory` explicitly ([multi-node-docker.md](multi-node-docker.md#co-location-running-more-than-one-node-per-physical-box)).
 
 ## arm64 vs amd64 image selection
 
@@ -47,6 +47,10 @@ Weights are cached to `/.cache/huggingface` inside the container. Mount a persis
 ## `CUDA out of memory` with vLLM
 
 vLLM reserves VRAM based on `num_gpus` (fraction of one GPU). If a single model uses more than its budget, lower `num_gpus` for other deployments, or set `vllm_engine_kwargs.max_model_len` to cap KV cache size.
+
+## Deploy stuck pending, never schedules
+
+Every deploy requests an `mship_<loader>` Ray resource; nodes only advertise the loaders they can run. A node missing the right extras (e.g. `-cpu` given a `loader: vllm` config) pends the deploy instead of failing it. Check `ray status`/dashboard for the missing `mship_*` resource, and override a bad probe with `MSHIP_NODE_CAPABILITIES` (JSON).
 
 ## Can't reach the server from another host
 

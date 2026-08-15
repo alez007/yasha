@@ -21,8 +21,7 @@ The recommended way to develop is via the VS Code Dev Container. See [docs/devel
 
 ```bash
 uv sync --extra dev
-ray start --head --port=6379 --dashboard-host=0.0.0.0 --num-cpus=2 --num-gpus=1
-uv run mship_deploy.py
+uv run mship_deploy.py   # starts its own Ray head, auto-detecting CPUs/GPUs
 ```
 
 ## Code Style
@@ -30,18 +29,17 @@ uv run mship_deploy.py
 The project uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting, and [Pyright](https://github.com/microsoft/pyright) for type checking. Both run in CI on every pull request.
 
 ```bash
-ruff check .          # lint
-ruff format .         # format
-pyright               # type check
+make lint        # ruff check + ruff format --check + pyright — all three must pass
+make lint-fix    # auto-fix ruff issues
 ```
 
-Configuration is in `pyproject.toml`. Key settings: Python 3.12, 120 character line length.
+`make lint` requires the `cuda` extra installed (`uv sync --extra dev --extra cuda`) — pyright resolves imports against the active venv and some packages ship cuda-only. Line length is 120, not 88; config lives in `pyproject.toml`.
 
 ## Submitting Changes
 
 1. Fork the repository and create a branch from `main`
 2. Make your changes
-3. Ensure `ruff check`, `ruff format --check`, and `pyright` pass
+3. Ensure `make lint` and `make test` pass
 4. Open a pull request against `main` with a clear description of what changed and why
 
 ## Reporting Issues

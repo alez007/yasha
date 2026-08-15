@@ -71,9 +71,9 @@ docker run --rm --shm-size=8g --gpus all \
     three-image breakdown.
 
 !!! tip
-    Always set `--shm-size=8g` (or higher) when running the docker container
-    to prevent PyTorch from hitting shared memory limits during
-    multi-process operations.
+    Always set `--shm-size=8g` (or higher) — Ray falls back to slower
+    disk-backed storage instead of `/dev/shm` if the container's shared
+    memory is too small for the object store.
 
 Hitting an error? Check [Troubleshooting](troubleshooting.md).
 

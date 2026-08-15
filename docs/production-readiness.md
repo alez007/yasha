@@ -32,7 +32,7 @@ Future development priorities for making Modelship production-ready, organized b
 
 - [x] **Kubernetes manifests** — KubeRay `RayCluster` + `RayJob`, gateway `Service`, models `ConfigMap`, cache `PVC`, secrets, optional `PodMonitor` (via the Helm chart in `helm/modelship`), with resource requests/limits, GPU scheduling, node affinity, and tolerations per worker group
 - [x] **Helm chart** — parameterized deployment in `helm/modelship` (see its README)
-- [x] **Simpler non-K8s deployment** — reframed from "Docker Compose": Compose orchestrates a single host and can't form a cluster across VMs, so it was never going to satisfy this literally. The supported path is own-head/join `docker run` (see [docs/multi-node-docker.md](multi-node-docker.md)) — a few VMs, no orchestrator, joined into one Ray cluster via `--address`/`--token`. Compose remains a possible single-host convenience wrapper around the existing single-container mode, not planned work.
+- [x] **Simpler non-K8s deployment** — reframed from "Docker Compose", which orchestrates a single host and can't form a cluster across VMs. Supported path is own-head/join `docker run` (see [docs/multi-node-docker.md](multi-node-docker.md)): a few VMs, no orchestrator, joined into one Ray cluster via `--address`/`--token`. Compose remains a possible single-host wrapper around single-container mode, not planned work.
 - [x] **Liveness/readiness probes in container spec** — KubeRay gates each Ray pod on a Serve proxy `/-/healthz` check (via the named `serve` port); `/readyz` returns 503 until all models load, suitable for an external LB/Ingress health check
 
 ### Alerting & Observability
@@ -47,7 +47,7 @@ Future development priorities for making Modelship production-ready, organized b
 
 ### Resilience
 
-- [x] **Head-node HA (GCS fault tolerance)** — the chart backs Ray's GCS with Redis (`gcsFaultToleranceOptions`, `redis.address` required), so a restarted head pod recovers cluster state and workers + model actors survive instead of the whole cluster going down. The same Redis backs the modelship state store (`redis://`), so the deploy coordinator's routing registry survives head/coordinator death and the gateway self-heals its routing on recovery (the coordinator runs `max_restarts=-1`)
+- [x] **Head-node HA (GCS fault tolerance)** — the chart backs Ray's GCS with Redis (`gcsFaultToleranceOptions`, `redis.address` required): a restarted head pod recovers cluster state, workers + model actors survive. The same Redis backs the modelship state store (`redis://`), so the deploy coordinator's routing registry survives head/coordinator death and the gateway self-heals routing on recovery (coordinator runs `max_restarts=-1`)
 - [ ] **Ray actor restart policies** — auto-restart crashed model actors
 - [ ] **Circuit breaker** — stop routing to a failing model after N consecutive errors
 - [ ] **Backpressure / queue depth limits** — reject requests when queue is saturated instead of unbounded queuing

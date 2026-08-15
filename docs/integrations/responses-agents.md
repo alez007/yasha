@@ -8,9 +8,9 @@ chat completions.
 ## Support matrix
 
 `/v1/responses` is implemented on the **vLLM** and **llama.cpp**
-(`llama_server`) loaders. It 404s on `diffusers`, `sherpa_onnx`, and
-`whispercpp` deployments, since those don't have a text generation loop to
-attach it to.
+(`llama_server`) loaders. It 404s on `diffusers`, `stable_diffusion_cpp`,
+`sherpa_onnx`, and `whispercpp` deployments, since those don't have a text
+generation loop to attach it to.
 
 Supported on both loaders:
 
@@ -25,9 +25,10 @@ Hosted built-in tools (e.g. `web_search`, or a client's own proprietary hosted
 tool type — OpenAI's Codex CLI sends one called `namespace`) have no
 self-hosted equivalent and are dropped rather than failing the whole request;
 a warning is logged per dropped tool. Encrypted reasoning
-(`reasoning.encrypted_content`) is not supported and is rejected with a clear
-`400` — server-side state is how Modelship carries reasoning across turns
-instead.
+(`reasoning.encrypted_content`) isn't implemented — Modelship never returns
+it, and a `reasoning` input item is dropped rather than replayed back into the
+prompt. Server-side state (`previous_response_id`) is how Modelship carries
+reasoning across turns instead.
 
 ## Continuing a conversation
 

@@ -2,13 +2,14 @@
 
 ## Overview
 
-Modelship is built on [Ray Serve](https://docs.ray.io/en/latest/serve/) for deployment orchestration and a **FastAPI gateway** that exposes an OpenAI-compatible API. Multiple inference backends are supported:
+Modelship is a **FastAPI gateway** exposing an OpenAI-compatible API, built on [Ray Serve](https://docs.ray.io/en/latest/serve/) for deployment orchestration. Inference backends:
 
-- **[vLLM](https://github.com/vllm-project/vllm)** — high-throughput inference with continuous batching and PagedAttention, on GPU or CPU
-- **llama-server** — a proxied `llama-server` subprocess for quantized GGUF chat, embeddings, and vision on CPU or GPU
+- **[vLLM](https://github.com/vllm-project/vllm)** — continuous batching + PagedAttention, GPU or CPU
+- **llama-server** — proxied `llama-server` subprocess for quantized GGUF chat/embeddings/vision, CPU or GPU
 - **[HuggingFace Diffusers](https://github.com/huggingface/diffusers)** — image generation via `AutoPipelineForText2Image`
-- **sherpa-onnx** — TTS (Kokoro), CPU only
-- **whisper.cpp** — STT, via `pywhispercpp` bindings
+- **stable-diffusion.cpp** — image generation for GGUF SD models, CPU everywhere plus Metal on Apple Silicon
+- **sherpa-onnx** — TTS (Kokoro), CPU/CoreML
+- **whisper.cpp** — STT via `pywhispercpp`, CPU everywhere plus Metal on Apple Silicon
 
 ## Request Lifecycle
 
@@ -16,99 +17,75 @@ Modelship is built on [Ray Serve](https://docs.ray.io/en/latest/serve/) for depl
 2. The gateway identifies the target model from the request body
 3. A `RequestWatcher` begins monitoring the client connection for disconnects
 4. The request is forwarded to the model's Ray Serve deployment via a `RawRequestProxy` (serializable headers + cancellation event)
-5. The model deployment runs inference (vLLM, llama-server, diffusers, sherpa-onnx, or whisper.cpp)
-6. Response streams back as JSON or SSE
-7. If the client disconnects mid-inference, the watcher fires the cancellation event, freeing GPU resources immediately
+5. The deployment runs inference and streams the response back as JSON or SSE
+6. On client disconnect mid-inference, the watcher fires the cancellation event, freeing GPU resources immediately
 
 ## Model Deployments
 
-Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDeployment` actor). This gives:
+Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDeployment` actor):
 
 - **Independent lifecycle** — one model crashing doesn't affect others
-- **Per-model GPU budgeting** — `num_gpus` controls VRAM allocation (e.g. 0.70 for 70%)
-- **Sequential startup** — models deploy one at a time to prevent memory spikes, ordered by tensor parallelism size (TP > 1 first)
-- **Additive deploys** — by default, `mship_deploy.py` adds models to a running cluster without disrupting existing deployments, enabling incremental composition from multiple config files. Use `--reconcile` to instead make the cluster match a config exactly (add/remove/replace), without ever tearing down the cluster
+- **Per-model GPU budgeting** — `num_gpus` controls VRAM allocation (e.g. `0.7` for 70%)
+- **Ordered startup** — a cluster-wide mutex (`DeployCoordinator`) admits one deploy at a time; models are ordered by GPU footprint descending (multi-GPU/TP jobs first, whole-GPU before fractional) to avoid memory spikes
+- **Additive by default** — `mship deploy` adds models to a running cluster without disrupting existing deployments. `--reconcile` instead makes the cluster match the config exactly (add/remove/replace); it never tears the cluster down
 - **One deployment per model name** — a model name maps to exactly one deployment; scale it with `num_replicas` (or `autoscaling_config`), which Ray Serve load-balances across replicas natively. Changing a model's config replaces its deployment (`--replace-strategy`, default `blue_green`) rather than adding a second one alongside it
-- **Multi-gateway support** — multiple independent gateways can run on the same cluster via `--gateway-name`, each managing its own set of models
+- **Multi-gateway support** — independent gateways can share a cluster via `--gateway-name`, each managing its own models
 
 ### Inference Loaders
 
-Each deployment uses one of the following loaders:
-
 | Loader | Backend | Use cases | GPU required |
 |--------|---------|-----------|--------------|
-| `vllm` | vLLM engine | Chat/generation, embeddings, transcription, translation | No — installs on GPU or CPU |
-| `llama_server` | llama-server subprocess | Chat/generation, embeddings, vision (GGUF models) | No — runs on CPU or GPU (GGUF offload) |
-| `diffusers` | HuggingFace Diffusers | Image generation (any `AutoPipelineForText2Image` model) | Yes |
-| `stable_diffusion_cpp` | stable-diffusion.cpp | Image generation (GGUF models: SD1.5/SDXL/SD-Turbo, all-in-one Flux) | No — CPU everywhere, plus Metal on Apple Silicon |
-| `custom` | Plugin system | TTS backends (Kokoro ONNX, Orpheus), STT backends (whisper.cpp) | No |
+| `vllm` | vLLM engine | Chat/generation, embeddings, transcription, translation | No — GPU or CPU |
+| `llama_server` | llama-server subprocess | Chat/generation, embeddings, vision (GGUF) | No — CPU or GPU (`n_gpu_layers` offload, fractional or whole) |
+| `diffusers` | HuggingFace Diffusers | Image generation | Yes |
+| `stable_diffusion_cpp` | stable-diffusion.cpp | Image generation (GGUF SD1.5/SDXL/SD-Turbo, Flux) | No — CPU everywhere, Metal on Apple Silicon |
+| `whispercpp` | `pywhispercpp` | STT | No — CPU everywhere, Metal on Apple Silicon |
+| `sherpa_onnx` | sherpa-onnx | TTS (Kokoro) | No — never touches CUDA |
 
-The `llama_server` loader provides high-efficiency inference for quantized GGUF models on CPU or GPU (`n_gpu_layers` offload, whole GPUs only — fractional `num_gpus` is rejected) by proxying a `llama-server` subprocess's own OpenAI-compatible API. The `vllm` loader provides higher throughput with continuous batching and PagedAttention, on GPU or CPU.
+Every deployment also requests a `mship_<loader>` Ray custom resource (see [Capability-aware scheduling](#capability-aware-scheduling)) alongside `num_gpus`/`GPU`.
 
 ### Identity-scoped vLLM prefix caching
 
-vLLM's automatic prefix caching shares KV-cache blocks across every request on an engine by default — without isolation, two different callers sending the same prefix (e.g. a shared system prompt) get observably different time-to-first-token depending on whether that prefix is already cached, letting one caller infer another's recent activity via timing alone even though no content is ever exposed. Every vLLM chat/Responses request is cache-salted with the caller's `identity_key()` (`modelship/openai/auth.py`, the same identity used to scope `/v1/responses` state) before it reaches the engine, so cache reuse is confined to a single identity — a different identity always gets a clean miss, closing the timing channel, while a caller's own repeated/multi-turn prompts still benefit from caching normally.
-
-This only isolates as well as identity resolution does: with no `MSHIP_API_KEYS`/`MSHIP_TRUSTED_IDENTITY_HEADER` configured, every caller shares the single unscoped identity bucket and this salting has nothing to scope by (see [Authentication](model-configuration.md)). Salting also trades cache **hit rate**, not memory, for isolation — vLLM's KV-cache block pool is a fixed size set once at engine startup, so a workload where many identities legitimately share one large prefix (e.g. a big shared system prompt) will see more cache eviction/recomputation than before, in exchange for the isolation. An operator who wants prefix caching off entirely, regardless of identity, can set `enable_prefix_caching: false` in `vllm_engine_kwargs`.
+vLLM's automatic prefix caching shares KV-cache blocks across every request on an engine by default — two callers sending the same prefix (e.g. a shared system prompt) get observably different time-to-first-token depending on cache state, leaking one caller's recent activity to another via timing. Every vLLM chat/Responses request is cache-salted with the caller's `identity_key()` (`modelship/openai/auth.py`) before it reaches the engine, so cache reuse is confined to one identity; a different identity always misses. This only isolates as well as identity resolution does — with no `MSHIP_API_KEYS`/`MSHIP_TRUSTED_IDENTITY_HEADER` configured, every caller shares one identity bucket. Salting trades cache hit rate, not memory, for isolation. Set `enable_prefix_caching: false` in `vllm_engine_kwargs` to disable prefix caching entirely.
 
 ## Responses API (`/v1/responses`)
 
-`/v1/responses` is shaped natively per loader, not via a chat-completions round trip. `BaseInfer.create_response(request, raw_request)` is a hookable method (defaulting to "not supported," like every other unimplemented capability); `VllmInfer` and `LlamaServerInfer` are the loaders that implement it, building the Responses envelope directly from their own parsed `(reasoning, content, tool_calls)` output — the same `ParsedChatOutput` seam `/v1/chat/completions` uses — rather than baking a `ChatCompletionResponse` and translating that back. `ModelDeployment.respond()` mirrors the existing `generate()` dispatch; the gateway route does a fail-fast validation pass and then calls straight through to it.
+Shaped natively per loader, not via a chat-completions round trip. `BaseInfer.create_response(request, raw_request)` is a hookable method (default: unsupported); `VllmInfer` and `LlamaServerInfer` implement it directly from their parsed `(reasoning, content, tool_calls)` output — the same `ParsedChatOutput` seam `/v1/chat/completions` uses.
 
-- **Non-streaming** — `utils.responses.build_responses_items_from_parsed` maps the parsed tuple into `output[]` items (`reasoning` → reasoning item, content → message item, tool calls → `function_call` items), then `protocol/responses/adapter.build_response_object` builds the envelope and remaps usage.
-- **Streaming** (`stream: true`) — `ResponsesStreamTranslator` is fed loader-native typed chunks directly (vLLM's `engine_ops.stream_chat_completion`, llama-server's own delta fields) and emits the Responses event protocol (`response.created` → `output_item.added` → `output_text.delta` / `reasoning_summary_text.delta` / `function_call_arguments.delta` → `output_item.done` → `response.completed`), tracking `output_index` / `sequence_number`. Output items are opened lazily on their first delta and closed at stream end, so the translation is independent of how a model interleaves reasoning, text, and tool calls.
+- **Non-streaming** — `utils.responses.build_responses_items_from_parsed` maps the parsed tuple into `output[]` items; `protocol/responses/adapter.build_response_object` builds the envelope.
+- **Streaming** — `ResponsesStreamTranslator` consumes loader-native typed chunks and emits the Responses event protocol (`response.created` → `output_item.added` → `output_text.delta`/`reasoning_summary_text.delta`/`function_call_arguments.delta` → `output_item.done` → `response.completed`). Output items open lazily on first delta and close at stream end.
 
-**Supported:** text, reasoning (as a first-class `reasoning` output item), client-driven tool calling (`function_call` / `function_call_output` round-trip), server-side MCP tool execution (see below), server-side conversation state (`store` / `previous_response_id`, `GET`/`DELETE /v1/responses/{id}`, `/input_items`), and `background` (queue/poll/cancel — see below), streaming and non-streaming — on the `vllm` and `llama_server` loaders.
+**Supported** (on `vllm` and `llama_server` only): text, reasoning (`reasoning` output item), client-driven tool calling, server-side MCP tool execution, conversation state (`store`/`previous_response_id`, `GET`/`DELETE /v1/responses/{id}`, `/input_items`), `background` mode. **404s** on `diffusers` — no generic fallback. **Rejected with 400**: hosted built-in tools (`web_search`), OpenAI-hosted MCP connectors, `tool_choice` forcing a specific `mcp` tool, `background: true` + `store: false`. Encrypted reasoning (`reasoning.encrypted_content`) isn't implemented — server-side state covers the same need.
 
-**404s on other loaders** (`diffusers`, `custom`) — there is no generic fallback; a loader must implement `create_response` itself.
+### Server-side MCP (`tools: [{"type": "mcp", ...}]`)
 
-**Rejected with a clear 400** (rather than silently dropped): hosted built-in tools (e.g. `web_search`), OpenAI-hosted MCP connectors (`connector_id`), `tool_choice` forcing a specific `mcp` tool, and `background: true` combined with an explicit `store: false` over HTTP. Encrypted reasoning (`reasoning.encrypted_content`) is not implemented — server-side state supersedes it as the way to carry reasoning across turns.
+Discovered and executed entirely at the gateway (`modelship/openai/mcp/`), never touching a loader — intercepted before the Ray hop (`mcp.loop.wants_mcp`) and driven through `mcp.loop.run_mcp_response`. Works uniformly across loaders with zero loader changes, and composes with background mode and the WebSocket transport.
 
-### Server-side MCP tool execution (`tools: [{"type": "mcp", ...}]`)
+Loop: list the server's tools over streamable HTTP (official `mcp` SDK), expose them to the model as plain `function` tools, run turns, execute resulting `tools/call` calls itself, append results and loop — up to 10 turns or `max_tool_calls` — then return a completed response. A `require_approval` tool instead emits `mcp_approval_request` and ends the turn; the client resumes with `previous_response_id` + `mcp_approval_response`.
 
-Unlike client-driven `function` tools, an `mcp` tool is discovered and executed entirely at the **gateway** (`modelship/openai/mcp/`), never touching a loader — a request with an `mcp` tool is intercepted before the Ray hop (`mcp.loop.wants_mcp`) and driven through `mcp.loop.run_mcp_response` instead of the normal `handle.respond` call. This is why it works uniformly across `vllm`, `llama_server`, and any future loader with zero loader changes, and composes for free with background mode and the WebSocket transport (both already consume the same event-dict generator shape).
+One logical response can span N loader turns, so a gateway-side stitcher (`mcp.loop.Stitcher`) owns the outer envelope: renumbers `sequence_number`/`output_index` per turn, accumulates output, rewrites matched tool-call events into `mcp_call` events (unmatched calls pass through as plain `function_call`). The client always sees one `response.created` and one terminal event.
 
-The loop: discover the server's tools (`tools/list`, over streamable HTTP via the official `mcp` SDK), expand them into plain `function` tools for the model, run turns against the loader, and execute any resulting tool call (`tools/call`) itself — appending the result and looping, up to 10 turns (or `max_tool_calls`, if set) — before returning a normal completed response with the MCP calls already resolved. A `require_approval` tool instead produces an `mcp_approval_request` item and ends the turn; the client resumes with `previous_response_id` plus an `mcp_approval_response` input item, same as any other continuation.
-
-Because one logical response now spans N loader turns, a gateway-side stream stitcher (`mcp.loop.Stitcher`) owns the outer envelope: it renumbers each turn's `sequence_number`/`output_index`, absorbs each turn's output into one accumulator, and rewrites tool-call events into `mcp_call` events for any call that matches a discovered MCP tool (a plain `function_call` for anything else, handed back to the client unresolved). The client always sees exactly one `response.created` and one terminal event, never one per turn.
-
-Egress is permissive by default (plain `http://`, localhost, and private IPs are all allowed — a self-hosted MCP server rarely has a public cert) except for cloud metadata endpoints, which are blocked unconditionally. `MSHIP_MCP_ALLOWED_HOSTS` (comma-separated) and `MSHIP_MCP_REQUIRE_HTTPS=true` lock this down for multi-tenant deploys.
-
-```python
-resp = client.responses.create(
-    model="reasoning-qwen",
-    input="Roll two dice.",
-    tools=[{"type": "mcp", "server_label": "dice", "server_url": "http://localhost:3000/mcp", "require_approval": "never"}],
-)
-print(resp.output_text)  # the model's answer, with the tool already called
-```
+Egress is permissive by default (plain HTTP, localhost, private IPs allowed) except cloud metadata endpoints, blocked unconditionally. Lock down with `MSHIP_MCP_ALLOWED_HOSTS` and `MSHIP_MCP_REQUIRE_HTTPS=true`.
 
 ### Background mode (`background: true`)
 
-The client gets back a `status: "queued"` `ResponseObject` immediately; generation continues detached, driven by a task on the gateway replica that dispatched it (not the model deployment, which stays generic). The client polls `GET /v1/responses/{id}` until the status reaches a terminal state (`completed`/`incomplete`/`failed`/`cancelled`), or aborts early with `POST /v1/responses/{id}/cancel` — which reuses the same `DisconnectRegistry` actor that already cancels generation on client disconnect, just signalled explicitly instead of via a socket watch. `DELETE` on an in-flight background run implies cancel. A detached run has no client connection to detect a dead worker, so the drain task heartbeats a dedicated `HeartbeatRegistry` actor every few seconds — kept separate from the response snapshot so a heartbeat refresh can never race a terminal write (cancel/completion/staleness) and regress the response back out of its terminal status; a poller that finds no live heartbeat entry for a non-terminal snapshot reports it `failed` rather than polling forever.
+Returns a `status: "queued"` `ResponseObject` immediately; generation continues on a task on the dispatching gateway replica (not the model deployment). Poll `GET /v1/responses/{id}` until terminal (`completed`/`incomplete`/`failed`/`cancelled`), or `POST /v1/responses/{id}/cancel` (reuses the `DisconnectRegistry` actor). `DELETE` on an in-flight run implies cancel. Requires `store: true` (default) — `background: true` + `store: false` is a 400.
 
-Because a background response must be pollable, it requires `store: true` (the default) — `background: true` with an explicit `store: false` is a 400. `background: true` combined with `stream: true` streams live: the drain task tees every event into a short-lived, per-response replay log (`MSHIP_RESPONSES_STREAM_BUFFER_TTL_S`, default 600s — far shorter than the response TTL, since nobody resumes a stream from days ago) as well as writing the durable snapshot; the initial `POST` tails that log from the start, and a disconnected client resumes with `GET /v1/responses/{id}?stream=true&starting_after=<last sequence_number seen>` — the same tailing code path, just a different starting cursor. The replay log is discarded as soon as the run reaches a terminal event (or on cancel/delete), rather than waiting out its own TTL. Since `background` needs somewhere durable to poll from, `memory://`'s per-cluster-lifetime actor is fine for dev, but `redis://` (`MSHIP_STATE_STORE=redis://…`, using native Redis Streams for the replay log) is the supported backend for production background use.
+A detached run has no client connection to detect a dead worker, so the drain task heartbeats a separate `HeartbeatRegistry` actor every few seconds; a poller finding no live heartbeat for a non-terminal snapshot reports it `failed`. `background: true` + `stream: true` tees events into a short-lived per-response replay log (`MSHIP_RESPONSES_STREAM_BUFFER_TTL_S`, default 600s) as well as the durable snapshot; a disconnected client resumes via `GET .../{id}?stream=true&starting_after=<sequence_number>`. `redis://` (`MSHIP_STATE_STORE`) is the supported backend for production background use — `memory://` doesn't survive a restart.
 
 ### Conversation state
 
-State lives **in the gateway**, not the loaders. `GET`/`DELETE` carry no model, so they could not be routed to a deployment at all; putting the write there too keeps one seam and leaves both loaders untouched. `api.py`'s routes delegate the state plumbing to `openai/utils/responses.py`: `resolve_history` prepends `previous_response_id`'s conversation into `input` *before* the Ray hop — so a store outage is a clean 503 before any GPU work — and `persist_response` tees `respond`'s output into the store on the way back, ahead of `_handle_response` so that stays generic. The loader therefore only ever sees a flat `input`, and echoes `store` / `previous_response_id` back on the envelope without acting on them.
+State lives in the gateway, not the loaders — `GET`/`DELETE` carry no model and can't be routed to a deployment. `resolve_history` prepends `previous_response_id`'s conversation into `input` before the Ray hop (a store outage is a clean 503 before any GPU work); `persist_response` tees output into the store on the way back. The loader only ever sees a flat `input`.
 
-`modelship/openai/state/responses.py` stores one **self-contained snapshot per response id**, keyed `responses/<identity>/<response_id>` via the generic `modelship.state` store: continuing is a single read rather than a walk down a pointer chain, and each turn's fresh id makes branching fall out for free. Identity scoping means another caller builds a different key and simply misses — isolation with no comparison logic. Reading the id back off the response (rather than minting one in the gateway) keeps the loader's ownership of it intact; injecting an id ahead of generation is what Phase E (background mode) will need.
-
-The streaming write is the one asymmetry: the terminal `response.completed` event is re-parsed out of our own SSE to recover the response object. It is safe because `streaming._sse` is that format's only writer, and persisting *before* forwarding the event is what allows a store failure to downgrade the terminal event to `response.failed` — the response is uncontinuable, so reporting success would hand back an id that 404s next turn.
-
-Any `vllm` or `llama_server` model works — no special `models.yaml` entry is needed:
+`modelship/openai/state/responses.py` stores one self-contained snapshot per response id, keyed `responses/<identity>/<response_id>` via the generic `modelship.state` store — continuing is a single read, and each turn's fresh id gives branching for free. The streaming write is the one asymmetry: the terminal `response.completed` event is re-parsed out of the SSE stream to recover the response object, persisted before forwarding so a store failure can downgrade the terminal event to `response.failed`.
 
 ```python
 from openai import OpenAI
-
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="…")
 
-# Non-streaming
 resp = client.responses.create(model="reasoning-qwen", input="Which is larger, 9.11 or 9.9?")
 print(resp.output_text)
 
-# Streaming — named events; reasoning and tool-call argument deltas stream live
 with client.responses.stream(model="reasoning-qwen", input="Explain why, briefly.") as stream:
     for event in stream:
         if event.type == "response.output_text.delta":
@@ -117,26 +94,29 @@ with client.responses.stream(model="reasoning-qwen", input="Explain why, briefly
 
 ## GPU Allocation
 
-Ray automatically schedules model deployments across available GPUs based on the `num_gpus` fraction each model requests. For example, two models each requesting `num_gpus: 0.9` will be placed on separate GPUs.
+Ray schedules deployments across available GPUs based on the `num_gpus` fraction each model requests — e.g. two models each requesting `num_gpus: 0.9` land on separate GPUs. Multi-slot vLLM deploys (`tp*pp > 1`) build a Ray Serve placement group instead (one whole-GPU bundle per slot, STRICT_PACK); fractional `num_gpus` combined with `tp*pp > 1` is rejected at config time.
 
 ### Capability-aware scheduling
 
-`num_gpus`/`num_cpus` alone only describe *how much* hardware a deployment needs, not *whether the node can actually run the loader at all*. Every node advertises a `mship_<loader>` Ray custom resource (e.g. `mship_vllm`) for each loader whose backend is actually installed — probed via `importlib.util.find_spec()` at startup, plus a real-binary check for `llama_server` (`modelship/deploy/capabilities.py`). Every model deployment requests its loader's resource alongside `num_gpus`/`GPU`, so it can only schedule onto a node with that backend present. A deploy with no capable node pends, and Ray Serve's own slow-start warning names the missing `mship_<loader>` resource — the same way it already names an unsatisfiable `GPU` request.
+`num_gpus`/`num_cpus` describe *how much* hardware a deployment needs, not *whether the node can run the loader at all*. Every node advertises a `mship_<loader>` Ray custom resource (e.g. `mship_vllm`) for each loader whose backend is installed — probed via `importlib.util.find_spec()`, plus a real-binary check for `llama_server` (`modelship/deploy/capabilities.py`). Every deployment requests its loader's resource alongside `num_gpus`/`GPU`, so it only schedules onto a node with that backend present; an unsatisfiable deploy pends, and Ray Serve's own slow-start warning names the missing resource.
 
-This is what lets a `thin` (no-torch) coordinator node deploy models onto `cuda`/`cpu` worker nodes in a multi-node cluster, and what stops a `diffusers` model from landing on a `cpu`-image node that doesn't have `diffusers` installed. `MSHIP_NODE_CAPABILITIES` (a JSON object) overrides a node's advertised set wholesale, for environments where the probe isn't accurate.
+This is what lets a `thin` (no-torch) coordinator deploy models onto `cuda`/`cpu` worker nodes, and what stops a `diffusers` model from landing on a `cpu`-image node without `diffusers` installed. `MSHIP_NODE_CAPABILITIES` (JSON) overrides a node's advertised set wholesale.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `mship_deploy.py` | Entry point — initializes Ray, deploys models additively (or reconciles with `--reconcile`) |
+| `modelship/launcher.py` | Entry point behind `mship deploy` / `python -m modelship.launcher deploy` — resolves cache root, checks Python version, detects accelerator, hands off to `driver.py` |
+| `modelship/driver.py` | Ray init + deploy loop: additive by default, `--reconcile` to converge exactly |
 | `modelship/openai/api.py` | FastAPI gateway with OpenAI endpoints |
-| `modelship/openai/protocol/responses/` | `/v1/responses` schemas + chat adapter (`adapter.py`) and streaming translator (`streaming.py`) |
-| `modelship/state/` | Generic pluggable KV store (`memory://` via a detached Ray actor, `redis://`). Domain layers live with their callers: `openai/state/responses.py`, `deploy/effective_config.py` |
+| `modelship/openai/protocol/responses/` | `/v1/responses` schemas, chat adapter (`adapter.py`), streaming translator (`streaming.py`) |
+| `modelship/state/` | Generic pluggable KV store (`memory://` via a detached Ray actor, `redis://`). Domain layers: `openai/state/responses.py`, `deploy/effective_config.py` |
 | `modelship/infer/model_deployment.py` | Ray Serve deployment actor |
 | `modelship/infer/infer_config.py` | Pydantic config models and protocols |
 | `modelship/infer/vllm/vllm_infer.py` | vLLM engine wrapper |
 | `modelship/infer/llama_server/llama_server_infer.py` | llama-server subprocess proxy (GGUF chat/embed/vision) |
 | `modelship/infer/diffusers/diffusers_infer.py` | Diffusers pipeline wrapper |
 | `modelship/infer/stable_diffusion_cpp/stable_diffusion_cpp_infer.py` | stable-diffusion.cpp wrapper (CPU/Metal image gen) |
+| `modelship/infer/whispercpp/` | whisper.cpp STT wrapper |
+| `modelship/infer/sherpa_onnx/` | sherpa-onnx TTS wrapper |
 | `config/models.yaml` | Model configuration |

@@ -28,7 +28,7 @@ Modelship runs the AI stack your agents call — chat, the **Responses API** wit
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/architecture-light.svg">
-  <img alt="Modelship architecture: an agent app calls the Modelship gateway's OpenAI-compatible API, which exposes chat, embeddings, audio, and image endpoints plus a Responses API backed by a shared conversation-state store, routing round-robin to Ray Serve deployments across GPU and CPU cluster nodes." src="docs/assets/architecture-light.svg">
+  <img alt="Modelship architecture: an agent app calls the Modelship gateway's OpenAI-compatible API, which exposes chat, embeddings, audio, and image endpoints plus a Responses API backed by a shared conversation-state store, routing each request by model name to Ray Serve deployments across GPU and CPU cluster nodes." src="docs/assets/architecture-light.svg">
 </picture>
 
 Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Several inference backends are available:
@@ -41,7 +41,7 @@ Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/i
 | **sherpa-onnx** | TTS (Kokoro) | No |
 | **whisper.cpp** | STT | No |
 
-Models can be deployed across multiple GPUs, run on CPU-only, or both — multiple deployments of the same model (e.g. one on GPU via vLLM, one on CPU via vLLM or llama.cpp) are load-balanced with round-robin routing. Each deployment can also scale horizontally with `num_replicas`.
+Models can be deployed across multiple GPUs or run on CPU-only. A model name maps to exactly one deployment — swapping GPU/CPU or backend replaces it with a blue-green cutover rather than adding a second one alongside it. Each deployment scales horizontally with `num_replicas`, load-balanced by Ray Serve.
 
 ## Requirements
 
@@ -61,7 +61,7 @@ Models can be deployed across multiple GPUs, run on CPU-only, or both — multip
 - **Per-model isolated deployments** — each model runs in its own Ray Serve deployment with independent lifecycle, health checks, failure isolation, and configurable replica count
 - **OpenAI-compatible API** — drop-in replacement for any OpenAI SDK client
 - **Streaming** — SSE streaming for chat completions and TTS audio
-- **Multi-GPU & hybrid routing** — assign models to specific GPUs or run them on CPU-only; deploy the same model on both GPU and CPU and requests are load-balanced via round-robin; full tensor parallelism support for large models spanning multiple GPUs
+- **Multi-GPU & hybrid deploys** — assign models to specific GPUs or run them on CPU-only; full tensor parallelism support for large models spanning multiple GPUs
 - **Client disconnect detection** — cancels in-flight inference when the client disconnects, freeing GPU resources immediately
 - **Security** — gateway API-key authentication (`MSHIP_API_KEYS`), Ray cluster token auth (`--ray-auth=token`), and configurable request payload/concurrency limits
 - **Built-in observability** — Prometheus metrics, custom `modelship:*` metrics, vLLM engine stats, Ray cluster metrics, structured JSON logging, and OpenTelemetry log export; pre-built Grafana dashboard and alerting rules included
@@ -152,7 +152,7 @@ docker run --rm --shm-size=8g --gpus all \
 > `ghcr.io/modelship-ai/modelship:latest` (bare tag, no suffix) is the **thin** control/coordinator image — no torch/vllm, for a driver/head role only. It cannot serve models by itself; always use `-cuda` or `-cpu` to actually run inference. See [docs/development.md](docs/development.md) for the full three-image breakdown.
 
 > [!TIP]
-> Always set `--shm-size=8g` (or higher) when running the docker container to prevent PyTorch from hitting shared memory limits during multi-process operations.
+> Always set `--shm-size=8g` (or higher) — Ray falls back to slower disk-backed storage without enough shared memory.
 
 Hitting an error? Check [docs/troubleshooting.md](docs/troubleshooting.md).
 

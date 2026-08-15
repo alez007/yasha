@@ -27,16 +27,17 @@ The recommended way to develop Modelship is with VS Code Dev Containers. The con
 4. Start the server. It starts its own Ray head, auto-detecting CPUs/GPUs unless `MSHIP_NODE_NUM_CPUS` / `MSHIP_NODE_NUM_GPUS` are set:
 
    ```bash
-   uv run mship deploy
-   # or, without the console script installed: uv run mship_deploy.py
+   uv run mship_deploy.py
    ```
 
+> **Why not `mship deploy`?** That console script ships only in the separate `bootstrap/` package (the `mship` installer), never synced into this repo's venv. `mship_deploy.py` and `python -m modelship.launcher deploy` are equivalent here.
+>
 > **Why the extra steps?** The Dev Container overrides the image's default `CMD` (`uv run --no-sync python -m modelship.launcher deploy`). Inside a Dev Container you sync deps and start it manually.
 
 The Dev Container automatically:
 - Builds the dev image from `Dockerfile` (target: `dev`)
 - Bind-mounts the repo to `/modelship` for live editing
-- Forwards ports `8000` (API) and `8265` (Ray Dashboard)
+- Forwards ports `8000` (API), `8265` (Ray Dashboard), and `8079` (Metrics)
 - Installs extensions: Ruff, Python, Pyright, and Claude Code
 - Configures the Python interpreter and linting to use the container's venv at `/.venv`
 
@@ -168,3 +169,4 @@ docker build -t modelship:dev-cpu --target prod --build-arg MSHIP_VARIANT=cpu .
 |---|---|
 | `8000` | API |
 | `8265` | Ray dashboard |
+| `8079` | Metrics (`MSHIP_METRICS=false` to disable) |

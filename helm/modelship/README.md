@@ -36,9 +36,10 @@ reconciles the live cluster back to the recorded set.
 # From the repo (path install):
 helm install mship ./helm/modelship -f my-values.yaml
 
-# From GHCR (OCI). The chart version is kept in lockstep with the app/image
-# version, so --version <X.Y.Z> always pairs with the matching image:
-helm install mship oci://ghcr.io/modelship-ai/charts/modelship --version 0.4.0 -f my-values.yaml
+# From GHCR (OCI). Chart version is kept in lockstep with the app/image version
+# (see https://github.com/modelship-ai/modelship/releases for the latest), so
+# --version <X.Y.Z> always pairs with the matching image:
+helm install mship oci://ghcr.io/modelship-ai/charts/modelship --version <X.Y.Z> -f my-values.yaml
 ```
 
 Because images and model weights take time to pull, raise Helm's timeout:

@@ -59,13 +59,13 @@ Ship logs to a remote syslog server instead of stderr. Useful for centralized lo
 
 ```bash
 # UDP (default)
-python mship_deploy.py --log-target syslog://192.168.1.50:514
+mship deploy --log-target syslog://192.168.1.50:514
 
 # TCP (reliable delivery)
-python mship_deploy.py --log-target syslog+tcp://192.168.1.50:514
+mship deploy --log-target syslog+tcp://192.168.1.50:514
 
 # Via environment variable
-MSHIP_LOG_TARGET=syslog://192.168.1.50:514 python mship_deploy.py
+MSHIP_LOG_TARGET=syslog://192.168.1.50:514 mship deploy
 ```
 
 Supported URI formats:
@@ -92,10 +92,10 @@ Then configure the endpoint:
 
 ```bash
 # Via CLI
-python mship_deploy.py --otel-endpoint http://collector:4317
+mship deploy --otel-endpoint http://collector:4317
 
 # Via environment variable
-OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317 python mship_deploy.py
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317 mship deploy
 ```
 
 When OTel is enabled:
@@ -126,7 +126,6 @@ Metrics are enabled by default. Set `MSHIP_METRICS=false` to disable:
 ```bash
 docker run --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token \
-  -e MSHIP_METRICS=true \
   -e MSHIP_RAY_DASHBOARD=0.0.0.0 \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
@@ -139,9 +138,9 @@ docker run --rm --shm-size=8g --gpus all \
 | Env Var | Default | Description |
 |---|---|---|
 | `MSHIP_METRICS` | `true` | Master toggle. Enables all metrics and the Ray metrics export port. |
-| `RAY_METRICS_EXPORT_PORT` | `8079` | Port for the Ray metrics agent (only active when `MSHIP_METRICS=true`). |
+| `RAY_METRICS_EXPORT_PORT` | `8079` | Port for the Ray metrics agent. Only takes effect on the own-head path (a joining worker picks up the head's port automatically via Ray's service discovery). |
 
-Set `MSHIP_METRICS=false` to disable all metrics collection. When disabled, port 8079 is not exposed and there is zero overhead.
+Set `MSHIP_METRICS=false` to disable all metrics collection — port 8079 is not exposed.
 
 ## Connecting to Prometheus
 
@@ -274,7 +273,7 @@ curl http://localhost:8000/readyz
 # }
 ```
 
-Per-model timings are gateway-measured: the gap between one model registering and the next (models deploy sequentially in `mship_deploy.py`), so the first model's entry includes any framework-level setup time preceding it.
+Per-model timings are gateway-measured: the gap between one model registering and the next (models deploy sequentially, ordered by GPU footprint), so the first model's entry includes any framework-level setup time preceding it.
 
 Use `/health` for Kubernetes liveness probes and `/readyz` for readiness probes — `/readyz` returning 503 prevents a service from flipping traffic onto the pod before models are loaded.
 

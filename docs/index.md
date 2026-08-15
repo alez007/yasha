@@ -62,7 +62,7 @@ request lifecycle and design.
 | Endpoint | Usecase |
 |---|---|
 | `POST /v1/chat/completions` | Chat / text generation (streaming and non-streaming) |
-| `POST /v1/responses` | Responses API — text, reasoning, client-driven tool calls, and stored conversations (streaming and non-streaming) |
+| `POST /v1/responses` | Responses API — text, reasoning, client-driven tool calls, server-side MCP tool execution, and stored conversations (streaming and non-streaming) |
 | `GET`/`DELETE /v1/responses/{id}` | Fetch or drop a stored response (`/input_items` lists its input); `background: true` on create + `POST .../cancel` for queued/pollable runs |
 | `POST /v1/embeddings` | Text embeddings |
 | `POST /v1/audio/transcriptions` | Speech-to-text |
