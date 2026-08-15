@@ -39,6 +39,17 @@ def _member(name: str, tar_type: bytes, **attrs) -> tarfile.TarInfo:
     return info
 
 
+# Forcing the flag on where the interpreter lacks `extractall(filter=...)` tests a branch
+# that can't run there.
+_HAS_FILTER = [
+    pytest.param(
+        True,
+        marks=pytest.mark.skipif(not fetch._HAS_EXTRACTION_FILTER, reason="interpreter predates extraction filters"),
+    ),
+    pytest.param(False),
+]
+
+
 @pytest.fixture
 def served(tmp_path):
     """Serves a local file through the urlopen call site, so no network is touched."""
@@ -110,7 +121,7 @@ class TestFetchAndExtract:
                     os.path.join(tmp_path, "extracted"),
                 )
 
-    @pytest.mark.parametrize("has_filter", [True, False])
+    @pytest.mark.parametrize("has_filter", _HAS_FILTER)
     @pytest.mark.parametrize(
         "member",
         [
@@ -128,7 +139,7 @@ class TestFetchAndExtract:
                 )
         assert not os.path.exists(extract_dir)
 
-    @pytest.mark.parametrize("has_filter", [True, False])
+    @pytest.mark.parametrize("has_filter", _HAS_FILTER)
     @pytest.mark.parametrize("flatten", [True, False])
     @pytest.mark.parametrize(
         "member",
@@ -153,7 +164,7 @@ class TestFetchAndExtract:
                 )
         assert not os.path.exists(extract_dir)
 
-    @pytest.mark.parametrize("has_filter", [True, False])
+    @pytest.mark.parametrize("has_filter", _HAS_FILTER)
     def test_an_in_tree_symlink_is_extracted(self, tmp_path, served, has_filter):
         """Every llama-server asset ships SONAME symlinks the binary's rpath needs."""
         real = tarfile.TarInfo("bin/libggml.so.0")
