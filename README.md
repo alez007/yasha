@@ -131,9 +131,9 @@ mship deploy --metal --config models.yaml   # Apple Silicon
 mship deploy --thin  --config models.yaml   # coordinator/head only, no capacity
 ```
 
-The first use of a variant provisions a CPython 3.12.10 environment for it under `~/.modelship/`, from hash-pinned dependency lists shipped in the package. No Python version flags, and no index flags for vLLM CPU — every node in a cluster ends up on an identical interpreter and dependency set, which is what Ray requires. Later runs re-verify in milliseconds.
+Nothing to pin and nothing to match across machines. The first run of a variant sets itself up; after that it starts straight through. Every node lands on the same footing, so a new one joins the cluster by running the same command.
 
-Platform prerequisites still apply: Xcode Command Line Tools on macOS, `build-essential`/`cmake` on Linux, plus `ninja-build` and NVIDIA's `nvcc` for `--cuda`. Alpine and other musl distros are unsupported (`ray` ships no musllinux wheels) and are refused before anything downloads. See [docs/installation.md](docs/installation.md) for the full list.
+Platform prerequisites still apply: Xcode Command Line Tools on macOS, `build-essential`/`cmake` on Linux, plus `ninja-build` and NVIDIA's `nvcc` for `--cuda`. Alpine and other musl distros are unsupported. See [docs/installation.md](docs/installation.md) for the full list.
 
 ### GPU (vLLM, Diffusers)
 

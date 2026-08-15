@@ -1,9 +1,8 @@
 """llama-server provisioning.
 
-Must run *after* the engine environment exists: the CUDA wrapper puts torch's
-bundled `nvidia/cu13/lib` on the loader path, and without it `libggml-cuda.so`
-cannot resolve libcudart/libcublas. ggml skips a backend it cannot load without
-saying so, so getting this order wrong makes GGUF models run on CPU silently.
+Must run *after* the engine environment exists: the cuda wrapper puts torch's
+bundled `nvidia/cu13/lib` on the loader path, without which `libggml-cuda.so`
+cannot resolve libcudart/libcublas and ggml skips the backend silently.
 """
 
 from __future__ import annotations
@@ -67,8 +66,8 @@ _ASSETS: dict[tuple[str, str], _Asset] = {
 
 
 def provision(variant: Variant) -> str | None:
-    """Returns the wrapper path, or None when the platform has no prebuilt asset.
-    Never fatal: only the llama_server loader needs this."""
+    """Returns the wrapper path, or None when there is no prebuilt asset for this
+    platform. Never fatal — only the llama_server loader needs it."""
     if explicit := os.environ.get("MSHIP_LLAMA_SERVER_BIN"):
         return explicit
 

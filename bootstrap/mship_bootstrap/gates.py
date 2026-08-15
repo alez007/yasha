@@ -1,8 +1,4 @@
-"""Checks that must pass before anything is downloaded.
-
-A cuda engine environment is on the order of 10 GB, so an unsupported platform or
-a missing driver has to fail here rather than after the download.
-"""
+"""Checks that run before anything is downloaded."""
 
 from __future__ import annotations
 
@@ -51,8 +47,7 @@ def detect_accelerator() -> str:
     """Hardware-visible accelerator: "cuda", "rocm", "metal" or "cpu".
 
     Mirrors `modelship.utils.accelerator._no_torch_fallback`, not
-    `detect_accelerator` — the latter keys on the installed torch build, which
-    does not exist yet at this stage.
+    `detect_accelerator`, which keys on a torch build that doesn't exist yet.
     """
     if _nvidia_devices_present():
         return "cuda"

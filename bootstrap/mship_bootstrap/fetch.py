@@ -1,8 +1,5 @@
-"""Download / verify / extract, stdlib only.
-
-Mirrors `modelship.utils.fetch_and_extract_archive`, reimplemented on urllib
-because that module imports `requests` and this package has no dependencies.
-"""
+"""Stdlib port of `modelship.utils.fetch_and_extract_archive`, which imports
+`requests`."""
 
 from __future__ import annotations
 
@@ -54,8 +51,7 @@ def fetch_and_extract_archive(
     flatten: bool = False,
     keep_archive: bool = False,
 ) -> None:
-    """Extraction goes via a private tmp dir + atomic replace, so concurrent
-    extractors and partial reads are safe."""
+    """Extracts via a private tmp dir and an atomic replace."""
     os.makedirs(os.path.dirname(archive_path) or ".", exist_ok=True)
     os.makedirs(os.path.dirname(extract_dir) or ".", exist_ok=True)
 

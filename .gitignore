@@ -16,3 +16,5 @@ config/models_stack_*.yaml
 # is committed for reproducibility); never commit the downloaded artifacts.
 helm/**/charts/
 helm/**/*.tgz
+# Dev-only deps for the bootstrapper; nothing ships from this lock.
+bootstrap/uv.lock

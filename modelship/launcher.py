@@ -1,12 +1,6 @@
-"""Engine entry point, run as `python -m modelship.launcher` by the `mship`
-bootstrapper and by scripts/entrypoint.sh. Ray-free until it hands off to
-modelship.driver — see modelship/utils/cli.py and modelship/utils/ray_auth.py
-for the same discipline.
+"""Engine entry point: `python -m modelship.launcher`, no console script.
 
-llama-server provisioning lives in the bootstrapper: it needs the CUDA lib path
-of an environment that doesn't exist yet when the engine is being installed.
-MSHIP_LLAMA_SERVER_BIN arrives here already set, by the bootstrapper natively or
-by the image in Docker.
+Ray-free until it hands off to modelship.driver.
 """
 
 from __future__ import annotations

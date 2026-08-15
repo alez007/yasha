@@ -1,9 +1,5 @@
-"""Variant definitions and resolution.
-
-The variant is chosen at runtime, never at install time: `pip install mship` is
-the same command for everyone, and the node's role is always something the
-operator stated explicitly. There is no default and no auto-detection.
-"""
+"""Variant definitions and resolution. Chosen at runtime, not at install time;
+no default and no auto-detection."""
 
 from __future__ import annotations
 
@@ -61,7 +57,6 @@ VARIANTS: dict[str, Variant] = {
         name="thin",
         extras=("thin",),
         index_args=(),
-        # A coordinator runs no model, so it needs no llama-server binary.
         serves_models=False,
         requires_accelerator=None,
         summary="coordinator/head only — joins capacity from other nodes",
@@ -97,8 +92,7 @@ def split_variant_flag(argv: list[str]) -> tuple[str | None, list[str]]:
 
 
 def resolve(flag: str | None, env: dict[str, str] | None = None) -> Variant:
-    """Flag wins over MSHIP_VARIANT; disagreement is an error rather than a
-    silent precedence surprise."""
+    """Flag wins over MSHIP_VARIANT; disagreement is an error."""
     env = os.environ if env is None else env
     from_env = (env.get("MSHIP_VARIANT") or "").strip() or None
 

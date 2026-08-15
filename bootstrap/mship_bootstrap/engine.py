@@ -1,8 +1,7 @@
-"""Provisioning the engine environment.
+"""Provisioning the engine environment: one per variant, no version in the path.
 
-One environment per variant, no version in the path. `uv pip sync` is declarative
-— it removes packages the pins no longer list — so an upgrade converges in place
-and a missing or partial environment repairs itself on the next run.
+`uv pip sync` is declarative, so upgrades converge in place and a partial
+environment repairs itself.
 """
 
 from __future__ import annotations
@@ -49,8 +48,8 @@ def provision(variant: Variant, uv: str, version: str) -> str:
 
 
 def _write_requirements(variant: Variant, version: str) -> str:
-    """The shipped pins plus the engine itself, which `uv export --no-emit-project`
-    omits. Written where an operator debugging the node will find it."""
+    """The shipped pins plus the engine line, which `uv export --no-emit-project`
+    omits."""
     body = read_pins(variant)
     if wheel := os.environ.get("MSHIP_ENGINE_WHEEL"):
         if not os.path.isfile(wheel):

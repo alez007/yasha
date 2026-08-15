@@ -13,7 +13,7 @@ from .fetch import FetchError, fetch_and_extract_archive
 _UV_VERSION = "0.12.4"
 _UV_RELEASE_URL = f"https://github.com/astral-sh/uv/releases/download/{_UV_VERSION}"
 
-# Line-anchored to match the llama.cpp pins; update all four together with the version.
+# Update all four together with _UV_VERSION.
 _SHA256_UV_LINUX_X64 = "c8c60f47e6f88d18dbf6f33d7279fb1fbf7ae76631768152cf5578c3d65729b4"
 _SHA256_UV_LINUX_ARM64 = "49d881b3403187e1f1789720881e77e4251ad4259d86c4844862657d2a35d13f"
 _SHA256_UV_MACOS_ARM64 = "99a913b606194867b43086404412c1afe079547fee72ecfb6af7e7b0dd54b0c6"

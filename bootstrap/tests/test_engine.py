@@ -37,18 +37,16 @@ class TestPins:
         assert "mship-engine==" not in engine.read_pins(VARIANTS["thin"])
 
     def test_cluster_critical_packages_match_across_variants(self):
-        """Ray refuses to form a cluster across mismatched versions, and anything
-        crossing the Ray boundary must serialize identically on every node."""
+        """Ray refuses to form a cluster across mismatched versions."""
         pinned = _pins_by_package()
         for pkg in ("ray", "pydantic", "protobuf", "numpy", "fastapi"):
             versions = pinned[pkg]
             assert len(set(versions.values())) == 1, f"{pkg} differs across variants: {versions}"
 
     def test_only_accelerator_packages_differ_across_variants(self):
-        """uv resolves conflicting extras independently, so variants *may* diverge.
-        Pin down which ones do, so a real drift shows up as a failure here."""
-        # torch/torchvision/vllm differ by local version (+cpu vs +cu130) — that is
-        # the variant distinction. setuptools is build-time only.
+        """uv resolves conflicting extras independently, so variants may diverge."""
+        # torch/torchvision/vllm differ by local version (+cpu vs +cu130).
+        # setuptools is build-time only.
         expected = {"torch", "torchvision", "vllm", "setuptools"}
         differing = {pkg for pkg, versions in _pins_by_package().items() if len(set(versions.values())) > 1}
         assert differing == expected
