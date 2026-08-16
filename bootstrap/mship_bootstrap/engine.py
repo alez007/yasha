@@ -13,7 +13,7 @@ import sys
 from importlib import resources
 
 from . import paths
-from .variants import Variant, engine_requirement
+from .variants import VARIANTS, Variant, engine_requirement, read_recorded
 
 PYTHON_VERSION = "3.12.10"
 
@@ -44,26 +44,50 @@ def provision(variant: Variant, uv: str, version: str) -> str:
         [uv, "pip", "sync", "--python", venv, *variant.index_args, requirements],
         f"install the {variant.name} engine environment",
     )
+    # Only now — a failed sync must not leave the stamp is_current reads.
+    os.replace(requirements, paths.pins_copy(variant.name))
     return paths.venv_python(variant.name)
+
+
+def is_current(variant: Variant, version: str) -> bool:
+    """Whether this environment was built by this mship, for this variant. pins.txt's
+    last line is the engine requirement, carrying both the extras and the version."""
+    if not os.path.isfile(paths.venv_python(variant.name)):
+        return False
+    return _recorded_engine_requirement(variant) == engine_requirement(variant, version)
+
+
+def _recorded_engine_requirement(variant: Variant) -> str | None:
+    try:
+        with open(paths.pins_copy(variant.name)) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    return lines[-1].strip() if lines else None
+
+
+def describe_staleness(variant: Variant, version: str) -> str:
+    """Why `is_current` said no, and how to fix it."""
+    fix = f"\n\nRun: mship bootstrap --{variant.name}"
+    if not os.path.isfile(paths.venv_python(variant.name)):
+        others = [n for n in provisioned_variants() if n != variant.name]
+        also = f"\nProvisioned: {', '.join(others)}" if others else ""
+        return f"error: the {variant.name} environment has not been bootstrapped.{also}{fix}"
+    recorded = _recorded_engine_requirement(variant) or ""
+    built_for = recorded.partition("==")[2] or "an unknown version"
+    return f"error: the {variant.name} environment was built for mship {built_for}, but this is {version}.{fix}"
 
 
 def _write_requirements(variant: Variant, version: str) -> str:
     """The shipped pins plus the engine line, which `uv export --no-emit-project`
-    omits."""
+    omits. Staged: promoted to pins.txt once the sync succeeds."""
     body = read_pins(variant)
-    if wheel := os.environ.get("MSHIP_ENGINE_WHEEL"):
-        if not os.path.isfile(wheel):
-            raise EngineError(f"error: MSHIP_ENGINE_WHEEL={wheel!r} is not a file")
-        engine = f"{os.path.abspath(wheel)}[{','.join(variant.extras)}]"
-    else:
-        engine = engine_requirement(variant, version)
-
-    target = paths.pins_copy(variant.name)
+    target = paths.pins_staging(variant.name)
     with open(target, "w") as f:
         f.write(body)
         if not body.endswith("\n"):
             f.write("\n")
-        f.write(f"{engine}\n")
+        f.write(f"{engine_requirement(variant, version)}\n")
     return target
 
 
@@ -76,16 +100,20 @@ def _run(cmd: list[str], what: str) -> None:
         raise EngineError(f"error: failed to {what} (uv exited {e.returncode})") from e
 
 
-def describe_envs() -> list[tuple[str, str]]:
-    """(variant, human-readable size) for every provisioned environment."""
+def provisioned_variants() -> list[str]:
+    """Variants with a usable interpreter on disk. Cheap — no tree walk."""
     root = os.path.join(paths.home(), "envs")
-    if not os.path.isdir(root):
+    try:
+        names = os.listdir(root)
+    except OSError:
         return []
-    out = []
-    for name in sorted(os.listdir(root)):
-        if os.path.isfile(paths.venv_python(name)):
-            out.append((name, _human_size(_tree_size(paths.env_dir(name)))))
-    return out
+    return sorted(n for n in names if n in VARIANTS and os.path.isfile(paths.venv_python(n)))
+
+
+def describe_envs() -> list[tuple[str, str]]:
+    """(variant, human-readable size) for every provisioned environment. Sizing
+    walks the whole tree, so this stays confined to `mship info`."""
+    return [(name, _human_size(_tree_size(paths.env_dir(name)))) for name in provisioned_variants()]
 
 
 def _tree_size(path: str) -> int:
@@ -113,10 +141,12 @@ def print_info(version: str) -> None:
     print(f"python:               {sys.version.split()[0]} ({sys.executable})")
     print(f"MSHIP_HOME:           {paths.home()}")
     print(f"uv:                   {shutil.which('uv') or os.path.join(paths.bin_dir(), 'uv')}")
+    print(f"variant:              {read_recorded(paths.env_file()) or 'none recorded'}")
     envs = describe_envs()
     if not envs:
         print("environments:         none provisioned")
         return
     print("environments:")
     for name, size in envs:
-        print(f"  {name:<6} {size:>8}  {paths.env_dir(name)}")
+        stale = "" if is_current(VARIANTS[name], version) else "  (stale — re-run bootstrap)"
+        print(f"  {name:<6} {size:>8}  {paths.env_dir(name)}{stale}")

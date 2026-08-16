@@ -120,18 +120,20 @@ The response includes both `output_text` and a first-class `reasoning` output it
 
 ### Native install (no Docker)
 
-One install command everywhere, then pick the node's role at run time:
+One install command everywhere. Pick the node's role once, when you bootstrap it:
 
 ```bash
 pipx install mship          # or: uv tool install mship / pip install mship
 
-mship deploy --cuda  --config models.yaml   # NVIDIA GPU node
-mship deploy --cpu   --config models.yaml   # CPU node (includes vLLM CPU)
-mship deploy --metal --config models.yaml   # Apple Silicon
-mship deploy --thin  --config models.yaml   # coordinator/head only, no capacity
+mship bootstrap --cuda      # NVIDIA GPU node
+mship bootstrap --cpu       # CPU node (includes vLLM CPU)
+mship bootstrap --metal     # Apple Silicon
+mship bootstrap --thin      # coordinator/head only, no capacity
+
+mship deploy --config models.yaml
 ```
 
-Nothing to pin and nothing to match across machines. The first run of a variant sets itself up; after that it starts straight through. Every node lands on the same footing, so a new one joins the cluster by running the same command.
+`mship bootstrap` installs a pinned Python 3.12.10 environment for that role and records it, so `deploy` afterwards needs no variant flag and installs nothing — it starts straight through. Nothing to pin and nothing to match across machines: every node lands on the same footing, so a new one joins the cluster by running the same two commands. After a `pip install -U mship`, re-run `mship bootstrap` to move the environment with it.
 
 Platform prerequisites still apply: Xcode Command Line Tools on macOS, `build-essential`/`cmake` on Linux, plus `ninja-build` and NVIDIA's `nvcc` for `--cuda`. Alpine and other musl distros are unsupported. See [docs/installation.md](docs/installation.md) for the full list.
 

@@ -31,9 +31,19 @@ def venv_python(variant: str) -> str:
     return os.path.join(venv_dir(variant), "bin", "python")
 
 
+def env_file() -> str:
+    """Where `mship bootstrap` records the variant it built."""
+    return os.path.join(home(), "env")
+
+
 def pins_copy(variant: str) -> str:
-    """Copy of the pins that built this environment."""
+    """Copy of the pins that built this environment; written only after a
+    successful sync."""
     return os.path.join(env_dir(variant), "pins.txt")
+
+
+def pins_staging(variant: str) -> str:
+    return os.path.join(env_dir(variant), "pins.txt.partial")
 
 
 def builds_dir(variant: str) -> str:

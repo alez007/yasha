@@ -6,6 +6,8 @@ from __future__ import annotations
 import os
 from typing import NamedTuple
 
+from . import paths
+
 _PYPI_INDEX = "https://pypi.org/simple"
 _PYTORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 _PYTORCH_CU130_INDEX = "https://download.pytorch.org/whl/cu130"
@@ -72,9 +74,14 @@ VARIANT_ORDER = ("cuda", "cpu", "metal", "thin")
 
 NO_VARIANT_ERROR = (
     "error: no variant selected\n\n"
-    + "".join(f"  mship deploy --{n:<8} {VARIANTS[n].summary}\n" for n in VARIANT_ORDER)
-    + ("\nFirst use of a variant provisions a pinned Python 3.12.10 environment for it\n(several GB for --cuda).\n")
+    + "".join(f"  mship bootstrap --{n:<8} {VARIANTS[n].summary}\n" for n in VARIANT_ORDER)
+    + (
+        "\nBootstrapping provisions a pinned Python 3.12.10 environment for the variant\n"
+        "(several GB for --cuda). `mship deploy` then needs no variant flag.\n"
+    )
 )
+
+_RECORDED_HEADER = "# Written by mship bootstrap — do not edit; run 'mship bootstrap --<variant>' instead.\n"
 
 
 class VariantError(Exception):
@@ -96,10 +103,39 @@ def split_variant_flag(argv: list[str]) -> tuple[str | None, list[str]]:
     return (found[0] if found else None), rest
 
 
-def resolve(flag: str | None, env: dict[str, str] | None = None) -> Variant:
-    """Flag wins over MSHIP_VARIANT; disagreement is an error."""
+def read_recorded(path: str) -> str | None:
+    """MSHIP_VARIANT out of an env file, or None if there is none to read. No other
+    key is consumed and the file never reaches os.environ."""
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.strip() == "MSHIP_VARIANT":
+            return value.strip().strip("'\"").strip() or None
+    return None
+
+
+def write_recorded(path: str, name: str) -> None:
+    """Last bootstrap wins. Read-only so an editor warns first."""
+    tmp = f"{path}.partial"
+    with open(tmp, "w") as f:
+        f.write(f"{_RECORDED_HEADER}MSHIP_VARIANT={name}\n")
+    os.chmod(tmp, 0o444)
+    os.replace(tmp, path)
+
+
+def resolve(flag: str | None, env: dict[str, str] | None = None, recorded: str | None = None) -> Variant:
+    """Flag wins over MSHIP_VARIANT; disagreement between those two is an error.
+    `recorded` is only a default, so either overrides it silently."""
     env = os.environ if env is None else env
     from_env = (env.get("MSHIP_VARIANT") or "").strip() or None
+    recorded = (recorded or "").strip() or None
 
     if from_env is not None and from_env not in VARIANTS:
         raise VariantError(
@@ -109,6 +145,13 @@ def resolve(flag: str | None, env: dict[str, str] | None = None) -> Variant:
         raise VariantError(f"error: --{flag} conflicts with MSHIP_VARIANT={from_env}")
 
     chosen = flag or from_env
+    if chosen is None and recorded is not None:
+        if recorded not in VARIANTS:
+            raise VariantError(
+                f"error: MSHIP_VARIANT={recorded!r} in {paths.env_file()} is not a variant; "
+                f"expected one of {', '.join(VARIANT_ORDER)}"
+            )
+        chosen = recorded
     if chosen is None:
         raise VariantError(NO_VARIANT_ERROR)
     return VARIANTS[chosen]

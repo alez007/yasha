@@ -66,8 +66,18 @@ _ASSETS: dict[tuple[str, str], _Asset] = {
 
 
 def provision(variant: Variant) -> str | None:
-    """Returns the wrapper path, or None when there is no prebuilt asset for this
-    platform. Never fatal — only the llama_server loader needs it."""
+    """Downloads the build if needed. Returns the wrapper path, or None when there
+    is no prebuilt asset for this platform. Never fatal — only the llama_server
+    loader needs it."""
+    return _resolve_or_warn(variant, fetch=True)
+
+
+def locate(variant: Variant) -> str | None:
+    """Same, but never downloads: for `deploy`, which installs nothing."""
+    return _resolve_or_warn(variant, fetch=False)
+
+
+def _resolve_or_warn(variant: Variant, *, fetch: bool) -> str | None:
     if explicit := os.environ.get("MSHIP_LLAMA_SERVER_BIN"):
         return explicit
 
@@ -76,13 +86,13 @@ def provision(variant: Variant) -> str | None:
         return None
 
     try:
-        return _resolve(variant, asset)
+        return _resolve(variant, asset, fetch=fetch)
     except Exception as e:
         print(f"warning: llama-server provisioning failed: {e}", file=sys.stderr)
         return None
 
 
-def _resolve(variant: Variant, asset: _Asset) -> str:
+def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
     tag_dir = os.path.join(paths.builds_dir(variant.name), "llama.cpp", _LLAMA_CPP_TAG)
     archive_path = os.path.join(tag_dir, "archive.tar.gz")
     extract_dir = os.path.join(tag_dir, "extracted")
@@ -92,6 +102,13 @@ def _resolve(variant: Variant, asset: _Asset) -> str:
     cuda = variant.name == "cuda" and (platform.system(), platform.machine()) == ("Linux", "x86_64")
 
     if not os.path.isfile(binary) or (cuda and not os.path.isfile(os.path.join(extract_dir, _CUDA_BACKEND_SO))):
+        if not fetch:
+            print(
+                f"warning: no llama.cpp {_LLAMA_CPP_TAG} build under {tag_dir}; "
+                f"the llama_server loader will not work. Run: mship bootstrap --{variant.name}",
+                file=sys.stderr,
+            )
+            return None
         if os.path.isdir(extract_dir):
             shutil.rmtree(extract_dir, ignore_errors=True)
         print(f"mship: fetching llama.cpp {_LLAMA_CPP_TAG}", flush=True)
@@ -100,6 +117,7 @@ def _resolve(variant: Variant, asset: _Asset) -> str:
         if cuda:
             _install_cuda_backend(tag_dir, extract_dir)
 
+    # Cheap, and rewritten on both paths: it bakes in a venv-specific library path.
     _write_wrapper(wrapper_path, extract_dir, asset.lib_env, variant, cuda=cuda)
     return wrapper_path
 

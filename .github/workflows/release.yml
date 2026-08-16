@@ -157,7 +157,8 @@ jobs:
             ## Native install (Apple Silicon / homelab)
 
             ```bash
-            uv tool install "mship[metal]"
+            uv tool install mship
+            mship bootstrap --metal
             mship deploy --config models.yaml
             ```
 
