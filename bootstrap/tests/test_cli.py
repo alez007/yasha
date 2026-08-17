@@ -90,7 +90,9 @@ class TestEngineEnvironment:
         cli.main(["deploy", "--thin"])
         assert provisioned.call_args[0][2]["MSHIP_NODE_NUM_CPUS"] == "4"
 
-    def test_cache_dir_defaults_under_mship_home(self, provisioned, tmp_path):
+    def test_cache_dir_defaults_under_mship_home(self, provisioned, tmp_path, monkeypatch):
+        # The dev container exports one, and setdefault would keep it.
+        monkeypatch.delenv("MSHIP_CACHE_DIR", raising=False)
         cli.main(["deploy", "--cpu"])
         assert provisioned.call_args[0][2]["MSHIP_CACHE_DIR"] == os.path.join(str(tmp_path), "cache")
 

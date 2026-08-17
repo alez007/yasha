@@ -100,3 +100,16 @@ class TestCheckHardware:
     def test_match_passes(self):
         with patch.object(gates, "detect_accelerator", return_value="cuda"):
             gates.check_hardware("cuda")
+
+    def test_skip_env_var_bypasses_the_check(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_SKIP_HARDWARE_CHECK", "1")
+        with patch.object(gates, "detect_accelerator", return_value="cpu"):
+            gates.check_hardware("cuda")
+
+    def test_skip_env_var_is_not_truthy_by_mere_presence(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_SKIP_HARDWARE_CHECK", "")
+        with (
+            patch.object(gates, "detect_accelerator", return_value="cpu"),
+            pytest.raises(gates.GateError, match="nvidia-smi"),
+        ):
+            gates.check_hardware("cuda")
