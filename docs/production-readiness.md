@@ -59,8 +59,8 @@ Future development priorities for making Modelship production-ready, organized b
 - [ ] **Rolling update support** — configure Ray Serve's built-in rolling updates for zero-downtime deploys
 - [x] **Per-model autoscaling** — `autoscaling_config` (min/max replicas, target ongoing requests, up/downscale delays; scale-to-zero supported) scales replica count with load instead of a fixed `num_replicas`
 - [x] **Gateway HA** — `MSHIP_GATEWAY_REPLICAS > 1` runs multiple gateway replicas; routing tables stay consistent via the deploy coordinator's watch loop, and a Serve proxy on every node lets the gateway Service survive single-pod loss
-- [x] **Self-heal after cluster loss** — each deploy persists this gateway's effective config + routing registry to the configured state store (`MSHIP_STATE_STORE`: `redis://`, which the chart always sets; the `memory://` default is cluster-scoped but dies with the cluster). With Redis the gateway self-heals automatically on a head restart; after a full cluster loss `mship_deploy --reconcile` (no `--config`, run via `helm upgrade`) replays the recorded set
-- [x] **Model hot-reload** — allow `models.yaml` changes without full server restart (via `mship_deploy --reconcile`)
+- [x] **Self-heal after cluster loss** — each deploy persists this gateway's effective config + routing registry to the configured state store (`MSHIP_STATE_STORE`: `redis://`, which the chart always sets; the `memory://` default is cluster-scoped but dies with the cluster). With Redis the gateway self-heals automatically on a head restart; after a full cluster loss `mship deploy --reconcile` (no `--config`, run via `helm upgrade`) replays the recorded set
+- [x] **Model hot-reload** — allow `models.yaml` changes without full server restart (via `mship deploy --reconcile`)
 - [x] **Changelog** — track breaking changes between versions
 - [x] **Migration guide** — document config format changes between versions
 

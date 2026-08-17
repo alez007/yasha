@@ -62,7 +62,11 @@ markdown_extensions:
 nav:
   - Overview: index.md
   - Quickstart: quickstart.md
-  - Installation: installation.md
+  - Installation:
+      - Overview: installation.md
+      - Docker: install-docker.md
+      - Native: install-native.md
+      - Helm / Kubernetes: install-helm.md
   - Model Configuration: model-configuration.md
   - Guides:
       - Production Readiness: production-readiness.md

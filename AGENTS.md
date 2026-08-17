@@ -14,7 +14,7 @@ Operational notes for agents working in this repo. Read before making changes.
 ```bash
 # Install deps for development (choose cuda OR cpu, plus dev)
 uv sync --extra dev --extra cuda   # what CI uses
-uv sync --extra dev --extra cpu    # CPU-only dev
+uv sync --extra dev --extra cpu --extra vllm-cpu   # CPU-only dev (vllm-cpu pulls `openai`, which conftest needs)
 
 # The canonical dev loop (mirrored in CI and Makefile)
 make lint        # ruff check + ruff format --check + pyright  (all three MUST pass)
@@ -59,7 +59,7 @@ When in doubt, check OpenAI's reference for the exact route. Existing deviations
 3. Deploys models **additively** by default (new deployments get a random suffix, e.g. `qwen-a3f9k`). Pass `--reconcile` to instead make the cluster match the config exactly (add/remove/replace) — it never tears the cluster down.
 4. Starts a FastAPI gateway Ray Serve app named `modelship api` (override with `--gateway-name`), listening on port `8000`.
 
-The Docker image's `CMD` is `uv run --no-sync python -m modelship.launcher deploy` (against the venv baked at build time; extras selected by `--build-arg MSHIP_VARIANT=thin|cpu|cuda`), which starts its own Ray head and runs the deploy loop. The Dev Container overrides this `CMD`, so inside a Dev Container you run it manually — the `mship` console script isn't installed there (it only ships in the separate `bootstrap/` package, never synced into this repo's venv), so use `uv run mship_deploy.py` or `uv run python -m modelship.launcher deploy` (see `docs/development.md`).
+The published images are built by running the native install: `uv tool install mship==<version>` then `mship bootstrap --<variant>`, both with `UV_FIND_LINKS` pointed at the release wheels built earlier in `release.yml` (so the images are proven against the exact artifacts PyPI later receives — `pypi` is gated on `docker`). Their ENTRYPOINT prepends `mship`, so `docker run <img> deploy --config …` and `docker run <img> info` hit the same CLI as a native node. The engine lives at `/opt/mship/envs/<variant>/.venv`; there is no `/.venv` and no source tree. `MSHIP_SKIP_HARDWARE_CHECK=1` is set on the bootstrap step because the cuda images build on GPU-less runners. The `dev` target is the exception — it branches off `base`, syncs from `uv.lock` into `/.venv` with `--no-install-project`, and bakes no `llama-server`, so inside a Dev Container use `uv run mship_deploy.py` or `uv run python -m modelship.launcher deploy` (see `docs/development.md`).
 
 Right after connecting to Ray, the driver logs the cluster's observed totals (`Connected to Ray: N node(s), X GPU / Y CPU total (Xa GPU / Ya CPU schedulable now)`) — useful for telling a legitimately-waiting head (0 schedulable resources, no workers joined yet) apart from a misconfigured one.
 

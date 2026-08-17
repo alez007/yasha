@@ -74,6 +74,6 @@ request lifecycle and design.
 ## Next steps
 
 - [Quickstart](quickstart.md) — a tiny reasoning model running in a few minutes, no GPU required
-- [Installation](installation.md) — requirements, image variants, and running with a GPU
+- [Installation](installation.md) — Docker, native, and Helm install guides
 - [Model Configuration](model-configuration.md) — the full `models.yaml` reference
 - [Integrations](integrations/index.md) — connecting the OpenAI SDK, Open WebUI, Dify, n8n, and Responses-speaking agents
