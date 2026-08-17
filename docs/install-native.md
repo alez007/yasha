@@ -58,9 +58,9 @@ So upgrading is `uv tool upgrade mship` followed by `mship bootstrap`.
 To bootstrap more than one variant on a host, run `bootstrap` for each — the last
 one is the recorded default, and `mship deploy --thin` selects another explicitly.
 
-`MSHIP_SKIP_HARDWARE_CHECK=1` skips step 2, for provisioning an environment on a
-host that does not have the accelerator yet. `deploy` still checks the real
-hardware, so this only defers the failure.
+`mship bootstrap --cuda --no-hardware-check` skips step 2, to provision an
+environment on a host that does not have the accelerator yet. `deploy` still
+checks the real hardware, so this defers the failure rather than removing it.
 
 ## Platform prerequisites
 

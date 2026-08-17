@@ -131,11 +131,11 @@ RUN --mount=type=cache,target=/opt/uv/cache,uid=$UID,gid=$GID \
     UV_FIND_LINKS=/wheels uv tool install --python ${PYTHON_VERSION} "mship==${MSHIP_VERSION}"
 
 # Installs the engine env + llama.cpp and records the variant, so `mship deploy`
-# takes no variant flag at runtime. The skip is for the cuda variant, whose
-# images are built on runners with no GPU for its gate to find.
+# takes no variant flag at runtime. --no-hardware-check is for the cuda variant,
+# whose images are built on runners with no GPU for its gate to find.
 RUN --mount=type=cache,target=/opt/uv/cache,uid=$UID,gid=$GID \
     --mount=from=wheels,target=/wheels \
-    UV_FIND_LINKS=/wheels MSHIP_SKIP_HARDWARE_CHECK=1 mship bootstrap --${MSHIP_VARIANT}
+    UV_FIND_LINKS=/wheels mship bootstrap --${MSHIP_VARIANT} --no-hardware-check
 
 # =============================================================================
 # dev — deps from the lockfile into /.venv, project never installed. Branches

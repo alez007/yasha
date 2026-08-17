@@ -71,10 +71,6 @@ def _nvidia_devices_present() -> bool:
 def check_hardware(required: str | None) -> None:
     if required is None:
         return
-    # Provisioning for hardware the builder doesn't have: the images for a GPU
-    # node are built on CPU-only runners. Deploy still gates on the real thing.
-    if (os.environ.get("MSHIP_SKIP_HARDWARE_CHECK") or "").strip().lower() in ("1", "true"):
-        return
     found = detect_accelerator()
     if found == required:
         return
