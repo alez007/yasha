@@ -1,11 +1,16 @@
+import os
+import stat
+
 import pytest
 
 from mship_bootstrap.variants import (
     VARIANTS,
     VariantError,
     engine_requirement,
+    read_recorded,
     resolve,
     split_variant_flag,
+    write_recorded,
 )
 
 
@@ -61,6 +66,83 @@ class TestResolve:
     def test_empty_env_var_is_treated_as_unset(self):
         with pytest.raises(VariantError, match="no variant selected"):
             resolve(None, env={"MSHIP_VARIANT": "  "})
+
+
+class TestResolveRecorded:
+    def test_recorded_is_used_when_nothing_else_is_given(self):
+        assert resolve(None, env={}, recorded="metal").name == "metal"
+
+    def test_flag_overrides_it_silently(self):
+        assert resolve("cuda", env={}, recorded="thin").name == "cuda"
+
+    def test_env_var_overrides_it_silently(self):
+        assert resolve(None, env={"MSHIP_VARIANT": "cpu"}, recorded="thin").name == "cpu"
+
+    def test_unknown_recorded_value_is_an_error(self):
+        with pytest.raises(VariantError, match="not a variant"):
+            resolve(None, env={}, recorded="gpu")
+
+    def test_unknown_recorded_value_names_the_file(self):
+        with pytest.raises(VariantError, match="env"):
+            resolve(None, env={}, recorded="gpu")
+
+    @pytest.mark.parametrize("recorded", [None, "", "  "])
+    def test_absent_recorded_value_reads_as_unset(self, recorded):
+        with pytest.raises(VariantError, match="no variant selected"):
+            resolve(None, env={}, recorded=recorded)
+
+
+class TestRecordedFile:
+    def test_round_trip(self, tmp_path):
+        path = str(tmp_path / "env")
+        write_recorded(path, "cuda")
+        assert read_recorded(path) == "cuda"
+
+    def test_carries_a_do_not_edit_header(self, tmp_path):
+        path = str(tmp_path / "env")
+        write_recorded(path, "cpu")
+        body = open(path).read()
+        assert body.startswith("# ")
+        assert "do not edit" in body
+
+    def test_is_read_only(self, tmp_path):
+        path = str(tmp_path / "env")
+        write_recorded(path, "cpu")
+        assert not stat.S_IMODE(os.stat(path).st_mode) & stat.S_IWUSR
+
+    def test_last_bootstrap_wins(self, tmp_path):
+        path = str(tmp_path / "env")
+        write_recorded(path, "cpu")
+        write_recorded(path, "thin")
+        assert read_recorded(path) == "thin"
+
+    def test_missing_file(self, tmp_path):
+        assert read_recorded(str(tmp_path / "nope")) is None
+
+    def test_file_without_the_key(self, tmp_path):
+        path = tmp_path / "env"
+        path.write_text("# a comment\n\nHF_TOKEN=secret\n")
+        assert read_recorded(str(path)) is None
+
+    def test_other_keys_are_ignored(self, tmp_path):
+        path = tmp_path / "env"
+        path.write_text("MSHIP_RECORDED_TEST_KEY=secret\nMSHIP_VARIANT=metal\nMSHIP_HOME=/elsewhere\n")
+        before = dict(os.environ)
+        assert read_recorded(str(path)) == "metal"
+        assert os.environ == before
+
+    def test_empty_value_reads_as_unset(self, tmp_path):
+        path = tmp_path / "env"
+        path.write_text("MSHIP_VARIANT=\n")
+        assert read_recorded(str(path)) is None
+
+    def test_tolerates_quotes_and_whitespace(self, tmp_path):
+        path = tmp_path / "env"
+        path.write_text('  MSHIP_VARIANT = "cuda" \n')
+        assert read_recorded(str(path)) == "cuda"
+
+    def test_unreadable_file(self, tmp_path):
+        assert read_recorded(str(tmp_path)) is None
 
 
 class TestVariantDefinitions:

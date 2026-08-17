@@ -1,20 +1,22 @@
-"""Entry point. Resolves a variant, provisions its environment, execs the engine."""
+"""Entry point. `bootstrap` provisions a variant's environment; everything else
+resolves one, checks it is current, and execs the engine inside it."""
 
 from __future__ import annotations
 
 import os
 import sys
 
-from . import __version__, engine, gates, llama_cpp, paths, uv_binary
+from . import __version__, engine, gates, llama_cpp, paths, uv_binary, variants
 from .variants import VariantError, split_variant_flag
 from .variants import resolve as resolve_variant
 
-_COMMANDS = ("deploy", "info")
+_COMMANDS = ("bootstrap", "deploy", "info")
 
-_USAGE = """usage: mship {deploy,info} [--cuda|--cpu|--metal|--thin] [args]
+_USAGE = """usage: mship {bootstrap,deploy,info} [--cuda|--cpu|--metal|--thin] [args]
 
-  deploy   provision the node and serve models (requires a variant)
-  info     report bootstrapper state, or the engine's own report with a variant
+  bootstrap   install the engine environment for a variant (run once)
+  deploy      serve models, using the bootstrapped environment
+  info        report bootstrapper state, or the engine's own report with a variant
 """
 
 
@@ -31,28 +33,47 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(str(e))
 
     # Answerable before any variant exists.
-    if command == "info" and flag is None and not os.environ.get("MSHIP_VARIANT"):
+    if command == "info" and flag is None and not (os.environ.get("MSHIP_VARIANT") or "").strip():
         engine.print_info(__version__)
         return
 
     try:
-        variant = resolve_variant(flag)
+        variant = resolve_variant(flag, recorded=variants.read_recorded(paths.env_file()))
         gates.check_platform()
         gates.check_hardware(variant.requires_accelerator)
-        uv = uv_binary.ensure_uv()
-        python = engine.provision(variant, uv, __version__)
+        if command == "bootstrap":
+            _bootstrap(variant, rest)
+            return
+        if not engine.is_current(variant, __version__):
+            sys.exit(engine.describe_staleness(variant, __version__))
     except (VariantError, gates.GateError, uv_binary.UvError, engine.EngineError) as e:
         sys.exit(str(e))
 
+    python = paths.venv_python(variant.name)
     env = _engine_env(variant)
     os.execve(python, [python, "-m", "modelship.launcher", command, *rest], env)
+
+
+def _bootstrap(variant, rest: list[str]) -> None:
+    # Nothing here is forwarded to the engine.
+    if rest:
+        sys.exit(f"error: mship bootstrap takes no arguments besides the variant, got {' '.join(rest)}")
+
+    uv = uv_binary.ensure_uv()
+    engine.provision(variant, uv, __version__)
+    if variant.serves_models:
+        llama_cpp.provision(variant)
+    variants.write_recorded(paths.env_file(), variant.name)
+
+    print(f"\nmship {__version__} bootstrapped for --{variant.name} in {paths.env_dir(variant.name)}")
+    print(f"Recorded in {paths.env_file()}; `mship deploy` now needs no variant flag.")
 
 
 def _engine_env(variant) -> dict[str, str]:
     env = dict(os.environ)
     env.setdefault("MSHIP_CACHE_DIR", os.path.join(paths.home(), "cache"))
 
-    if variant.serves_models and (wrapper := llama_cpp.provision(variant)):
+    if variant.serves_models and (wrapper := llama_cpp.locate(variant)):
         env["MSHIP_LLAMA_SERVER_BIN"] = wrapper
         if variant.name == "cuda":
             llama_cpp.warn_if_no_cuda_device(wrapper)

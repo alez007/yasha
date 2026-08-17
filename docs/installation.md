@@ -63,28 +63,33 @@ walkthrough.
 
 ## Native install
 
-One command on every platform — the node's role is chosen at run time, not at
-install time:
+One install command on every platform, then one bootstrap to pick the node's role:
 
 ```bash
 pipx install mship          # or: uv tool install mship / pip install mship
 ```
 
-| Command | Node role |
+| Bootstrap command | Node role |
 |---|---|
-| `mship deploy --cuda --config models.yaml` | NVIDIA GPU node (vLLM, Diffusers, llama.cpp GPU offload) |
-| `mship deploy --cpu --config models.yaml` | CPU node (vLLM CPU, llama.cpp, whisper.cpp, sherpa-onnx, stable-diffusion.cpp) |
-| `mship deploy --metal --config models.yaml` | Apple Silicon (Metal offload) |
-| `mship deploy --thin --config models.yaml` | Coordinator/head only — serves nothing itself |
+| `mship bootstrap --cuda` | NVIDIA GPU node (vLLM, Diffusers, llama.cpp GPU offload) |
+| `mship bootstrap --cpu` | CPU node (vLLM CPU, llama.cpp, whisper.cpp, sherpa-onnx, stable-diffusion.cpp) |
+| `mship bootstrap --metal` | Apple Silicon (Metal offload) |
+| `mship bootstrap --thin` | Coordinator/head only — serves nothing itself |
 
-`mship deploy` with no variant is an error that lists these options; there is no
+Then, with no variant flag:
+
+```bash
+mship deploy --config models.yaml
+```
+
+Bootstrapping with no variant is an error that lists these options; there is no
 default and no auto-detection, so a node's role is always something you stated.
-`MSHIP_VARIANT` is the environment-variable equivalent, for systemd units and CI.
+`MSHIP_VARIANT` is the environment-variable equivalent, for systemd units and CI,
+and overrides the recorded role for a single command.
 
-### What the first run does
+### What `mship bootstrap` does
 
-The `mship` package is a small installer that runs on any Python 3.10+. The first
-time you use a variant it:
+The `mship` package is a small installer that runs on any Python 3.10+. Bootstrapping:
 
 1. Refuses unsupported platforms (Windows, musl/Alpine) before downloading anything.
 2. Checks the hardware matches — `--cuda` needs `nvidia-smi` to list a device — so a
@@ -92,15 +97,28 @@ time you use a variant it:
 3. Provisions `~/.modelship/envs/<variant>/` on **CPython 3.12.10**, installing from a
    hash-pinned dependency list shipped inside the package.
 4. Fetches the pinned `llama-server` build for the platform.
-5. Runs the engine inside that environment.
+5. Records the variant in `~/.modelship/env`.
 
 Every node therefore lands on an identical interpreter and dependency set, which is
 what lets a native node join a cluster of Docker nodes — Ray refuses to form a
-cluster across mismatched Python versions. Later runs re-verify the environment in
-milliseconds and start straight away.
+cluster across mismatched Python versions.
 
 A copy of the exact pinned list that built each environment is left at
 `~/.modelship/envs/<variant>/pins.txt`. `mship info` reports what is provisioned.
+
+`deploy` itself installs nothing. It stops if the environment is missing or was
+built by a different `mship` version:
+
+```
+error: the cuda environment was built for mship 0.7.12, but this is 0.7.13.
+
+Run: mship bootstrap --cuda
+```
+
+So upgrading is `pip install -U mship` followed by `mship bootstrap`.
+
+To bootstrap more than one variant on a host, run `bootstrap` for each — the last
+one is the recorded default, and `mship deploy --thin` selects another explicitly.
 
 ### Platform prerequisites
 
@@ -142,16 +160,29 @@ deploy seems slow, check `"$MSHIP_LLAMA_SERVER_BIN" --list-devices` — it print
 
 ```
 ~/.modelship/
+  env                       the variant bootstrap recorded (MSHIP_VARIANT=…)
   cache/                    models and other downloads (MSHIP_CACHE_DIR)
   envs/<variant>/           one environment per variant
   builds/<variant>/         llama-server binaries
   bin/uv                    only if uv was not already installed
 ```
 
+`~/.modelship/env` is written read-only by `bootstrap` and holds a single
+`MSHIP_VARIANT=` line. Being an ordinary env file, it drops straight into a systemd
+unit:
+
+```ini
+[Service]
+EnvironmentFile=/home/youruser/.modelship/env
+ExecStart=/home/youruser/.local/bin/mship deploy --config /etc/modelship/models.yaml
+```
+
+Change it with `mship bootstrap`, not by hand.
+
 `MSHIP_CACHE_DIR` may point at shared storage — model weights are identical on every
 node. `MSHIP_HOME` (default `~/.modelship`) must stay node-local: environments and
 binaries are platform- and variant-specific. To reset a variant, delete
-`~/.modelship/envs/<variant>/`; the next run rebuilds it and leaves your models alone.
+`~/.modelship/envs/<variant>/` and bootstrap it again; your models are untouched.
 
 ## Local development
 

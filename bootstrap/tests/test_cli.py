@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from mship_bootstrap import cli, paths
+from mship_bootstrap import cli, paths, variants
 from mship_bootstrap.variants import VARIANTS
 
 
@@ -18,7 +18,9 @@ def provisioned(tmp_path, monkeypatch):
         patch.object(cli.gates, "check_hardware"),
         patch.object(cli.uv_binary, "ensure_uv", return_value="/usr/bin/uv"),
         patch.object(cli.engine, "provision", return_value="/env/bin/python"),
+        patch.object(cli.engine, "is_current", return_value=True),
         patch.object(cli.llama_cpp, "provision", return_value="/builds/llama-server.sh"),
+        patch.object(cli.llama_cpp, "locate", return_value="/builds/llama-server.sh"),
         patch.object(cli.llama_cpp, "warn_if_no_cuda_device"),
         patch("os.execve") as execve,
     ):
@@ -50,11 +52,11 @@ class TestVariantRequired:
 
 
 class TestExec:
-    def test_execs_the_engine_via_module(self, provisioned):
+    def test_execs_the_engine_via_module(self, provisioned, tmp_path):
         cli.main(["deploy", "--cpu", "--config", "models.yaml"])
         python, args, _env = provisioned.call_args[0]
-        assert python == "/env/bin/python"
-        assert args == ["/env/bin/python", "-m", "modelship.launcher", "deploy", "--config", "models.yaml"]
+        assert python == paths.venv_python("cpu")
+        assert args == [python, "-m", "modelship.launcher", "deploy", "--config", "models.yaml"]
 
     def test_variant_flag_is_not_passed_to_the_engine(self, provisioned):
         cli.main(["deploy", "--cuda", "--reconcile"])
@@ -119,6 +121,15 @@ class TestInfo:
         cli.main(["info", "--cpu"])
         assert provisioned.call_args[0][1][-1] == "info"
 
+    def test_whitespace_only_env_var_still_answers_locally(self, tmp_path, monkeypatch, capsys):
+        """Matches resolve()'s own whitespace-as-unset handling."""
+        monkeypatch.setenv("MSHIP_HOME", str(tmp_path))
+        monkeypatch.setenv("MSHIP_VARIANT", "  ")
+        cli.main(["info"])
+        out = capsys.readouterr().out
+        assert "MSHIP_HOME" in out
+        assert "none provisioned" in out
+
 
 class TestPaths:
     def test_mship_home_relocates_everything(self, monkeypatch, tmp_path):
@@ -142,10 +153,85 @@ class TestPaths:
 
 class TestThinSkipsLlamaServer:
     def test_thin_does_not_provision_a_binary_it_cannot_use(self, provisioned):
-        cli.main(["deploy", "--thin"])
+        cli.main(["bootstrap", "--thin"])
         cli.llama_cpp.provision.assert_not_called()
-        assert "MSHIP_LLAMA_SERVER_BIN" not in provisioned.call_args[0][2]
 
     def test_serving_variants_still_provision(self, provisioned):
-        cli.main(["deploy", "--cpu"])
+        cli.main(["bootstrap", "--cpu"])
         cli.llama_cpp.provision.assert_called_once()
+
+    def test_thin_deploys_without_looking_for_one(self, provisioned):
+        cli.main(["deploy", "--thin"])
+        cli.llama_cpp.locate.assert_not_called()
+        assert "MSHIP_LLAMA_SERVER_BIN" not in provisioned.call_args[0][2]
+
+
+class TestBootstrap:
+    def test_provisions_and_does_not_exec(self, provisioned):
+        cli.main(["bootstrap", "--cpu"])
+        cli.engine.provision.assert_called_once()
+        assert not provisioned.called
+
+    def test_records_the_variant(self, provisioned, tmp_path):
+        cli.main(["bootstrap", "--metal"])
+        assert variants.read_recorded(paths.env_file()) == "metal"
+
+    def test_requires_a_variant(self):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["bootstrap"])
+        assert "no variant selected" in str(exc.value)
+
+    def test_rejects_trailing_arguments(self, provisioned):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["bootstrap", "--cpu", "--config", "models.yaml"])
+        assert "--config models.yaml" in str(exc.value)
+        cli.engine.provision.assert_not_called()
+
+    def test_a_failed_bootstrap_records_nothing(self, provisioned, tmp_path):
+        cli.engine.provision.side_effect = cli.engine.EngineError("error: boom")
+        with pytest.raises(SystemExit):
+            cli.main(["bootstrap", "--cpu"])
+        assert not os.path.exists(paths.env_file())
+
+
+class TestDeployInstallsNothing:
+    def test_deploy_never_provisions(self, provisioned):
+        cli.main(["deploy", "--cpu", "--config", "x"])
+        cli.uv_binary.ensure_uv.assert_not_called()
+        cli.engine.provision.assert_not_called()
+
+    def test_a_stale_environment_stops_the_deploy(self, provisioned):
+        cli.engine.is_current.return_value = False
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["deploy", "--cpu", "--config", "x"])
+        assert "mship bootstrap --cpu" in str(exc.value)
+        assert not provisioned.called
+
+    def test_a_stale_environment_is_not_repaired(self, provisioned):
+        cli.engine.is_current.return_value = False
+        with pytest.raises(SystemExit):
+            cli.main(["deploy", "--cpu"])
+        cli.engine.provision.assert_not_called()
+
+
+class TestRecordedVariant:
+    def test_deploy_needs_no_flag_once_bootstrapped(self, provisioned):
+        cli.main(["bootstrap", "--cuda"])
+        cli.main(["deploy", "--config", "models.yaml"])
+        assert provisioned.call_args[0][0] == paths.venv_python("cuda")
+
+    def test_a_flag_overrides_the_record(self, provisioned):
+        cli.main(["bootstrap", "--cuda"])
+        cli.main(["deploy", "--thin"])
+        assert provisioned.call_args[0][0] == paths.venv_python("thin")
+
+    def test_bootstrapping_another_variant_moves_the_record(self, provisioned):
+        cli.main(["bootstrap", "--cuda"])
+        cli.main(["bootstrap", "--cpu"])
+        assert variants.read_recorded(paths.env_file()) == "cpu"
+
+    def test_an_unknown_recorded_value_is_an_error(self, provisioned, tmp_path):
+        (tmp_path / "env").write_text("MSHIP_VARIANT=gpu\n")
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["deploy", "--config", "x"])
+        assert "not a variant" in str(exc.value)

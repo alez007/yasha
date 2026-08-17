@@ -30,7 +30,6 @@ def _local_version_pins(variant) -> list[str]:
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("MSHIP_HOME", str(tmp_path))
-    monkeypatch.delenv("MSHIP_ENGINE_WHEEL", raising=False)
     return tmp_path
 
 
@@ -66,23 +65,10 @@ class TestWriteRequirements:
         target = engine._write_requirements(VARIANTS["thin"], "0.8.0")
         assert open(target).read().splitlines()[-1] == "mship-engine[thin]==0.8.0"
 
-    def test_writes_where_an_operator_will_find_it(self, home):
+    def test_stages_rather_than_overwriting_the_success_stamp(self, home):
         os.makedirs(paths.env_dir("cpu"), exist_ok=True)
-        assert engine._write_requirements(VARIANTS["cpu"], "0.8.0") == str(home / "envs" / "cpu" / "pins.txt")
-
-    def test_engine_wheel_override(self, home, monkeypatch, tmp_path):
-        wheel = tmp_path / "mship_engine-0.8.0-py3-none-any.whl"
-        wheel.write_text("")
-        monkeypatch.setenv("MSHIP_ENGINE_WHEEL", str(wheel))
-        os.makedirs(paths.env_dir("cuda"), exist_ok=True)
-        target = engine._write_requirements(VARIANTS["cuda"], "0.8.0")
-        assert open(target).read().splitlines()[-1] == f"{wheel}[cuda]"
-
-    def test_missing_engine_wheel_is_an_error(self, home, monkeypatch):
-        monkeypatch.setenv("MSHIP_ENGINE_WHEEL", "/does/not/exist.whl")
-        os.makedirs(paths.env_dir("cpu"), exist_ok=True)
-        with pytest.raises(engine.EngineError, match="not a file"):
-            engine._write_requirements(VARIANTS["cpu"], "0.8.0")
+        assert engine._write_requirements(VARIANTS["cpu"], "0.8.0") == paths.pins_staging("cpu")
+        assert not os.path.exists(paths.pins_copy("cpu"))
 
 
 class TestProvision:
@@ -120,15 +106,90 @@ class TestProvision:
             engine.provision(VARIANTS["cpu"], "/usr/bin/uv", "0.8.0")
         assert any(call[0][0][1] == "venv" for call in run.call_args_list)
 
+    def test_syncs_the_staged_file_then_promotes_it(self, home):
+        with patch.object(engine, "_run") as run:
+            engine.provision(VARIANTS["thin"], "/usr/bin/uv", "0.8.0")
+        assert run.call_args_list[-1][0][0][-1] == paths.pins_staging("thin")
+        assert open(paths.pins_copy("thin")).read().splitlines()[-1] == "mship-engine[thin]==0.8.0"
+        assert not os.path.exists(paths.pins_staging("thin"))
+
+    def test_a_failed_sync_leaves_no_success_stamp(self, home):
+        with patch.object(engine, "_run", side_effect=[None, engine.EngineError("boom")]):
+            with pytest.raises(engine.EngineError):
+                engine.provision(VARIANTS["thin"], "/usr/bin/uv", "0.8.0")
+        assert not os.path.exists(paths.pins_copy("thin"))
+
+
+def _provision_env(name: str, version: str | None = "0.8.0") -> None:
+    python = paths.venv_python(name)
+    os.makedirs(os.path.dirname(python), exist_ok=True)
+    open(python, "w").close()
+    if version is not None:
+        with open(paths.pins_copy(name), "w") as f:
+            f.write(f"idna==3.10\n{engine.engine_requirement(VARIANTS[name], version)}\n")
+
+
+class TestIsCurrent:
+    def test_matching_version(self, home):
+        _provision_env("cpu")
+        assert engine.is_current(VARIANTS["cpu"], "0.8.0")
+
+    def test_version_skew(self, home):
+        _provision_env("cpu", "0.7.12")
+        assert not engine.is_current(VARIANTS["cpu"], "0.8.0")
+
+    def test_missing_pins(self, home):
+        _provision_env("cpu", version=None)
+        assert not engine.is_current(VARIANTS["cpu"], "0.8.0")
+
+    def test_empty_pins(self, home):
+        _provision_env("cpu", version=None)
+        open(paths.pins_copy("cpu"), "w").close()
+        assert not engine.is_current(VARIANTS["cpu"], "0.8.0")
+
+    def test_missing_venv(self, home):
+        assert not engine.is_current(VARIANTS["cpu"], "0.8.0")
+
+
+class TestDescribeStaleness:
+    def test_not_bootstrapped_names_the_command(self, home):
+        message = engine.describe_staleness(VARIANTS["cuda"], "0.8.0")
+        assert "has not been bootstrapped" in message
+        assert "mship bootstrap --cuda" in message
+
+    def test_not_bootstrapped_points_at_what_is(self, home):
+        _provision_env("cpu")
+        assert "Provisioned: cpu" in engine.describe_staleness(VARIANTS["cuda"], "0.8.0")
+
+    def test_skew_names_both_versions(self, home):
+        _provision_env("cpu", "0.7.12")
+        message = engine.describe_staleness(VARIANTS["cpu"], "0.8.0")
+        assert "built for mship 0.7.12" in message
+        assert "but this is 0.8.0" in message
+
+
+class TestProvisionedVariants:
+    def test_empty_when_nothing_provisioned(self, home):
+        assert engine.provisioned_variants() == []
+
+    def test_lists_only_complete_envs(self, home):
+        os.makedirs(paths.env_dir("cuda"), exist_ok=True)
+        _provision_env("cpu")
+        assert engine.provisioned_variants() == ["cpu"]
+
+    def test_ignores_directories_that_are_not_variants(self, home):
+        _provision_env("cpu")
+        stray = paths.venv_python("scratch")
+        os.makedirs(os.path.dirname(stray), exist_ok=True)
+        open(stray, "w").close()
+        assert engine.provisioned_variants() == ["cpu"]
+
 
 class TestDescribeEnvs:
     def test_empty_when_nothing_provisioned(self, home):
         assert engine.describe_envs() == []
 
     def test_lists_only_complete_envs(self, home):
-        for name in ("cpu", "cuda"):
-            os.makedirs(paths.env_dir(name), exist_ok=True)
-        python = paths.venv_python("cpu")
-        os.makedirs(os.path.dirname(python), exist_ok=True)
-        open(python, "w").close()
+        os.makedirs(paths.env_dir("cuda"), exist_ok=True)
+        _provision_env("cpu")
         assert [name for name, _ in engine.describe_envs()] == ["cpu"]
