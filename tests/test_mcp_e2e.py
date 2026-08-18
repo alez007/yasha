@@ -1,14 +1,9 @@
-"""End-to-end test for the MCP loop against a *real* MCP server.
+"""End-to-end test for the MCP loop against a real MCP server (an in-process
+`MCPServer` served over streamable HTTP via uvicorn), unlike test_mcp_loop.py
+which mocks list_mcp_tools/call_mcp_tool. Only the loader side is scripted.
 
-Unlike test_mcp_loop.py (which patches list_mcp_tools/call_mcp_tool with canned
-values), this spins up an actual in-process MCP server — the official SDK's
-MCPServer, served over real streamable HTTP via uvicorn on localhost — so the
-wire protocol, the official mcp client, and our client.py wrapper are all
-exercised for real. Only the loader side is scripted (there's no real model
-here); that part is exactly what test_mcp_loop.py already covers.
-
-No external network and no GPU/Ray, so this is fast and reliable enough to run
-in the default (non-integration) suite.
+No external network or GPU/Ray, so this runs in the default (non-integration)
+suite.
 """
 
 import asyncio

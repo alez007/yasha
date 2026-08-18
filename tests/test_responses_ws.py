@@ -132,8 +132,8 @@ class TestWsTurns:
 
     @pytest.mark.asyncio
     async def test_compaction_input_item_passes_through_untouched(self, api):
-        # The gateway does no input interpretation — a compaction-seeded turn (the
-        # websocket-compact-new-chain scenario) is dispatched exactly like any other.
+        # The gateway does no input interpretation — a compaction-seeded turn is
+        # dispatched exactly like any other.
         seed = [{"type": "compaction", "encrypted_content": "opaque-blob"}]
         handle = _wire(api, "m", _events(_terminal("resp_1")))
         ws = _FakeWebSocket()

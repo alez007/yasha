@@ -14,9 +14,8 @@ SERVE_STATUS_URL = "http://localhost:8265/api/serve/applications/"
 
 
 def _running_replicas(model_name: str) -> int:
-    """Count RUNNING replicas of the deployment serving `model_name`, read from
-    the Serve REST status API. The app name is `<model_name>-<fingerprint>`, so
-    match by prefix; the single inner deployment carries the replica list."""
+    """Counts RUNNING replicas of the deployment serving `model_name` via the Serve REST
+    status API; app names are `<model_name>-<fingerprint>`, matched by prefix."""
     resp = httpx.get(SERVE_STATUS_URL, timeout=10)
     resp.raise_for_status()
     apps = resp.json().get("applications", {})
@@ -52,10 +51,8 @@ def _hammer(
     messages: list[dict] | None = None,
     max_tokens: int = 256,
 ) -> None:
-    """Keep one request in flight at a time until `stop` is set. Several of these
-    running concurrently sustain enough load to push past the autoscaler's
-    per-replica setpoint (the defaults); pass a cheap messages/max_tokens pair
-    instead to just prove continuous liveness."""
+    """Keeps one request in flight until `stop` is set; run several concurrently to push
+    load past the autoscaler's per-replica setpoint, or pass a cheap prompt for liveness only."""
     messages = messages if messages is not None else _LOAD_PROMPT
     while not stop.is_set():
         try:
@@ -69,9 +66,8 @@ def _hammer(
 @pytest.mark.llama_server
 @pytest.mark.autoscaling
 class TestAutoscaling:
-    """End-to-end check that a model's autoscaling_config actually drives Ray
-    Serve: replicas scale out under sustained concurrent load (bounded by
-    max_replicas) and scale back to min_replicas once the load stops."""
+    """Replicas scale out under sustained concurrent load (bounded by max_replicas) and
+    scale back to min_replicas once the load stops."""
 
     MODEL = "autoscale-llama"
 

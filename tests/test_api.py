@@ -12,26 +12,19 @@ _ModelshipAPI = ModelshipAPI.func_or_class
 
 
 def _patch_api_metrics(api, **mocks):
-    """Patch module-level metric objects referenced by ModelshipAPI methods.
-
-    `@serve.deployment` cloudpickles the class, so `func_or_class`'s methods carry
-    a reconstructed globals dict — patching `modelship.openai.api.<NAME>` would not
-    reach them. Patch the function's own globals instead."""
+    """Patches module-level metrics through the cloudpickled method's own __globals__,
+    since patching the live module attribute wouldn't reach it."""
     return patch.dict(type(api)._handle_response.__globals__, mocks)
 
 
 @pytest.fixture
 def api():
-    """Create a ModelshipAPI instance with mocked Ray Serve context. The watch
-    loop is marked started so `_ensure_watching` is a no-op — tests drive routing
-    directly via `_apply` / `_apply_snapshot`; watch-specific tests reset it."""
+    """Creates a ModelshipAPI instance with mocked Ray Serve context; the watch loop is
+    marked started so `_ensure_watching` is a no-op (watch-specific tests reset it)."""
     with (
         patch("modelship.openai.api.serve.get_replica_context") as mock_ctx,
-        # configure_logging() mutates the global "modelship" logger (propagate=False,
-        # guarded by a module-level flag) — stub it so instantiating the gateway here
-        # doesn't leak that state into other tests' caplog assertions. The cloudpickled
-        # class carries a reconstructed globals dict (see above), so patch through a
-        # method's __globals__ rather than the live module attribute.
+        # Stubs configure_logging() so instantiating the gateway doesn't mutate the
+        # global "modelship" logger and leak into other tests' caplog assertions.
         patch.dict(_ModelshipAPI._handle_response.__globals__, {"configure_logging": lambda: None}),
     ):
         mock_ctx.return_value.app_name = "test-gateway"
@@ -41,16 +34,8 @@ def api():
 
 
 def _apply(api, models, *, expected=None, gen=1, handles=None):
-    """Apply a coordinator routing snapshot with Serve mocked — the new entry point
-    that replaced the driver's add_models/remove pushes.
-
-    - `models`: {app_name: model_name} desired routing.
-    - `gen`: snapshot generation. Removals are honored only when it advances; pass
-      a lower value than the replica's current `_gen` to simulate a coordinator
-      restart (removals suppressed).
-    - `handles`: side_effect for serve.get_app_handle (default: a fresh handle per
-      call); pass a list to control which handle each app gets.
-    """
+    """Applies a coordinator routing snapshot with Serve mocked. `gen` lower than the
+    replica's current `_gen` simulates a coordinator restart (removals suppressed)."""
     with ExitStack() as stack:
         if handles is not None:
             stack.enter_context(patch("modelship.openai.api.serve.get_app_handle", side_effect=handles))
@@ -95,9 +80,8 @@ class TestApplyRouting:
         assert len(api.model_list) == 1
 
     def test_handle_failure_raises_and_holds_generation(self, api):
-        # A transient get_app_handle failure must not be swallowed: the apply raises
-        # and _gen is left unadvanced, so the watch loop re-pulls and retries this
-        # generation instead of black-holing the (successfully deployed) model.
+        # A transient get_app_handle failure must not be swallowed: the apply raises and
+        # _gen stays unadvanced, so the watch loop re-pulls and retries this generation.
         api._gen = 0
         with pytest.raises(RuntimeError, match="not yet registerable"):
             _apply(api, {"qwen-a3f9k": "qwen"}, gen=1, handles=Exception("controller lag"))
@@ -232,9 +216,8 @@ class TestWatchReconcile:
         assert api.models == {}
 
     def test_sync_defers_when_deployment_not_ready(self, api):
-        # Snapshot fetched fine, but a deployment isn't handle-able yet: the blocking
-        # sync defers (returns False, _gen unadvanced) rather than failing the first
-        # request; the watch loop retries.
+        # Snapshot fetched fine, but a deployment isn't handle-able yet: the blocking sync
+        # defers (returns False, _gen unadvanced) rather than failing the first request.
         api._watch_task = None
         snapshot = {"models": {"qwen-aaaaaaaaaa": "qwen"}, "expected": ["qwen"], "generation": 2}
         with (
@@ -340,9 +323,8 @@ class TestImageEditRoutes:
         image_data, mask_data, request_no_file = args[0], args[1], args[2]
         assert image_data == b"IMAGE_BYTES"
         assert mask_data == b"MASK_BYTES"
-        # No UploadFile may cross the boundary; the image/mask fields are dropped
-        # to None and the bytes are passed separately. (image[] is exclude=True,
-        # so it never appears in the dump regardless.)
+        # No UploadFile may cross the boundary: image/mask are dropped to None and the
+        # bytes passed separately (image[] is exclude=True, so it never appears in the dump).
         dumped = request_no_file.model_dump()
         assert dumped.get("image") is None
         assert dumped.get("mask") is None
@@ -376,9 +358,8 @@ class TestImageEditRoutes:
 
 
 class TestImageFormDecomposition:
-    """Exercise the request models through FastAPI's real multipart/form-data
-    decomposition (not a direct model_validate), since that is what Open WebUI
-    hits and where the `image[]` array field must be picked up."""
+    """Exercises the request models through FastAPI's real multipart/form-data
+    decomposition, where the `image[]` array field (used by Open WebUI) is picked up."""
 
     @staticmethod
     def _client():
@@ -486,7 +467,6 @@ class TestHandleResponse:
         result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
 
         assert isinstance(result, JSONResponse)
-        # Check if content matches the model dump
         assert b'"model":"test"' in result.body
 
     @pytest.mark.asyncio
@@ -505,9 +485,8 @@ class TestHandleResponse:
 
     @pytest.mark.asyncio
     async def test_streaming_duration_observed_after_stream_drains(self, api):
-        """Streaming requests must record REQUEST_DURATION_SECONDS and reset
-        REQUEST_IN_PROGRESS only after the stream is fully consumed — not when
-        _handle_response returns the StreamingResponse."""
+        """Records REQUEST_DURATION_SECONDS and resets REQUEST_IN_PROGRESS only after the
+        stream fully drains, not when _handle_response returns the StreamingResponse."""
         import asyncio
 
         from fastapi.responses import StreamingResponse
@@ -546,7 +525,6 @@ class TestHandleResponse:
 
     @pytest.mark.asyncio
     async def test_non_streaming_duration_observed_on_return(self, api):
-        """Regression: non-streaming paths still time the request on return."""
         from fastapi.responses import JSONResponse
 
         async def mock_gen():
@@ -564,10 +542,8 @@ class TestHandleResponse:
 
     @pytest.mark.asyncio
     async def test_cancellation_during_first_chunk_stops_watcher(self, api):
-        """Regression: CancelledError (a BaseException, so it skips the except
-        clauses) raised while pulling the first chunk must still stop the watcher
-        in the outer finally — otherwise the DisconnectRegistry entry and the
-        watch task leak."""
+        """CancelledError is a BaseException that skips the except clauses, so the watcher
+        must still be stopped in the outer finally — else the DisconnectRegistry entry leaks."""
         import asyncio
 
         async def mock_gen():
@@ -604,9 +580,8 @@ class TestHandleResponse:
         from fastapi.responses import JSONResponse
         from ray.exceptions import RayTaskError
 
-        # Build a RayTaskError whose .cause is a ValueError subclass with a
-        # `parameter` attribute — mirrors what VLLMValidationError looks like
-        # after Ray transports it across process boundaries.
+        # .cause is a ValueError subclass with a `parameter` attribute, mirroring
+        # VLLMValidationError after Ray transports it across process boundaries.
         class _FakeValidationError(ValueError):
             def __init__(self, message: str, parameter: str) -> None:
                 super().__init__(message)

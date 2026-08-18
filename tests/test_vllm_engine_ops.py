@@ -1,16 +1,8 @@
 """Guard tests for modelship/infer/vllm/engine_ops.py, the vLLM-internal quarantine layer.
 
-Two tiers:
-- Fast, always-run unit tests for the pure branching logic (`build_vllm_request`,
-  `derive_reasoning_ended`, `make_parsers`) using real vLLM request/parser *types*
-  but no engine, no tokenizer download, no GPU.
-- `TestVllmParserAcceptsOurRequest`: real (non-mocked) vLLM render pipeline against
-  real cached tokenizers (hermes+qwen3 and mistral tool parsers — the two families
-  the A2 spike validated), built via `renderer_from_config` the same way vLLM's own
-  GPU-less render server does. No engine/weights load, so no GPU is needed, but it
-  does need the tokenizer files reachable (skips cleanly if not). This exercises the
-  actual vLLM call signatures engine_ops depends on, so a vLLM version bump that
-  renames/removes any of them fails here loudly instead of surfacing downstream.
+Fast mocked unit tests for the branching logic, plus
+`TestVllmParserAcceptsOurRequest`, which runs a real (GPU-free) vLLM render
+pipeline against cached tokenizers to catch call-signature drift.
 """
 
 import inspect
@@ -41,9 +33,8 @@ def _vllm_req(**overrides: Any) -> VllmChatCompletionRequest:
 
 class TestBuildVllmRequest:
     def test_request_chat_template_kwargs_wins_over_model_default(self):
-        # chat_template_kwargs isn't a declared ChatCompletionRequest field — it
-        # arrives as a client-supplied extra (model_config extra="allow") — so
-        # build it via model_validate rather than the constructor kwargs.
+        # chat_template_kwargs is a client-supplied extra (extra="allow"), not a
+        # declared field, so it must be built via model_validate, not kwargs.
         request = ChatCompletionRequest.model_validate(
             {
                 "model": "m",
@@ -108,11 +99,8 @@ class TestDeriveReasoningEnded:
 
 
 class TestTotalReasoningTokens:
-    """Regression: `usage.completion_tokens_details.reasoning_tokens` was never
-    populated anywhere -- always silently 0/omitted -- even though vLLM's own
-    reasoning parsers expose `count_reasoning_tokens` for exactly this. That
-    hid the common "the whole token budget went to reasoning, not the answer"
-    failure mode from API consumers."""
+    """`usage.completion_tokens_details.reasoning_tokens` sums vLLM's own
+    `count_reasoning_tokens` across choices."""
 
     def test_no_parser_returns_none(self):
         outputs = [Mock(token_ids=[1, 2, 3])]
@@ -166,9 +154,8 @@ class TestMakeParsers:
 
 
 class _TrapParser:
-    """Mirrors vLLM's parse/parse_delta split for a model that never closes its
-    reasoning: `parse_delta` streams everything as reasoning and never emits content,
-    while the authoritative full-text `parse` reads the same tokens as an answer."""
+    """Mirrors vLLM's parse/parse_delta split: parse_delta streams everything as
+    reasoning while parse reads the same tokens as content."""
 
     full_parse_result: ClassVar[tuple[str | None, str | None, Any]] = (None, "the answer", None)
     delta_tool_calls: ClassVar[list[VllmDeltaToolCall]] = []
@@ -229,11 +216,9 @@ async def _drive_stream(monkeypatch, parser_cls, *, results=None) -> list[Any]:
 
 
 class TestStreamReconcilesTrappedContent:
-    """Regression: vLLM's streaming parser engine starts in REASONING when thinking is
-    primed and never reclassifies chunks it already emitted, so a model that ends a turn
-    without its close marker leaves the whole reply in `reasoning` with empty `content` —
-    while the non-streaming `parse()` reads the same tokens as `content`. The finish
-    branch must settle that disagreement in favour of the non-streaming answer."""
+    """A model that never closes its reasoning leaves the whole streamed reply in
+    `reasoning` with empty `content`; the finish branch reconciles against the
+    non-streaming `parse()`, which reads the same tokens as `content`."""
 
     @pytest.mark.asyncio
     async def test_reasoning_only_stream_recovers_content_on_finish(self, monkeypatch):
@@ -245,12 +230,8 @@ class TestStreamReconcilesTrappedContent:
 
     @pytest.mark.asyncio
     async def test_deferred_deltas_still_reach_the_parse(self, monkeypatch):
-        # Regression: vLLM parsers return None while deferring text they haven't
-        # classified yet, and that branch `continue`s. Accumulating only on emitted
-        # deltas dropped exactly those chunks, mangling the recovered answer
-        # ("2 + 2 equals **4**." came back as "2 +2 equals4."). Also pins that the parse
-        # gets the engine's own streamed text -- a re-decode of the token ids would
-        # carry the stop token the engine drops.
+        # Deferred deltas (parse_delta returns None) must still be accumulated
+        # into the reconciled text, not dropped.
         class DeferringParser(_TrapParser):
             def parse_delta(self, *, delta_text, delta_token_ids, request, prompt_token_ids, finished):
                 if delta_text == " + ":  # deferred: consumed but not emitted
@@ -282,8 +263,8 @@ class TestStreamReconcilesTrappedContent:
 
     @pytest.mark.asyncio
     async def test_reasoning_with_no_answer_stays_empty(self, monkeypatch):
-        # Reasoning that genuinely closed with no answer: the re-parse agrees there is
-        # no content, so nothing is attached (the flags alone would have fired here).
+        # Reasoning that genuinely closed with no answer: parse() agrees there is
+        # no content, so nothing is attached.
         class NoAnswerParser(_TrapParser):
             full_parse_result = ("some reasoning", None, None)
 
@@ -307,12 +288,8 @@ class TestStreamReconcilesTrappedContent:
 
 
 class TestSignaturesGuardVllmBump:
-    """No engine/tokenizer needed — pure import-time signature checks.
-
-    These fail immediately (not silently) if a vLLM version bump renames or
-    drops a kwarg engine_ops relies on, instead of only surfacing as a runtime
-    AttributeError/TypeError deep in a real request path.
-    """
+    """Pure import-time signature checks (no engine/tokenizer) that fail loudly
+    if a vLLM bump renames or drops a kwarg engine_ops relies on."""
 
     def test_async_llm_generate_accepts_reasoning_kwargs(self):
         from vllm.v1.engine.async_llm import AsyncLLM as VllmAsyncLLM
@@ -336,14 +313,8 @@ class TestSignaturesGuardVllmBump:
 
 
 class TestVllmParserAcceptsOurRequest:
-    """Real vLLM render pipeline, real cached tokenizers, no engine/GPU.
-
-    Mirrors the A2 spike's two model families. Built via `renderer_from_config`
-    the same way vLLM's own GPU-less render server does (`init_render_app_state`
-    in vllm/entrypoints/openai/api_server.py) — this needs the tokenizer files,
-    not weights, so it stays fast and GPU-free. Skips cleanly if the tokenizer
-    can't be fetched (no network / no HF auth for gated repos).
-    """
+    """Real vLLM render pipeline and cached tokenizers, no engine/GPU. Skips
+    cleanly if the tokenizer can't be fetched."""
 
     def _build_render(
         self, model: str, *, tokenizer_mode: str = "auto", **tool_reasoning_kwargs: Any
@@ -435,11 +406,8 @@ class TestVllmParserAcceptsOurRequest:
 
     @pytest.mark.asyncio
     async def test_mistral_tool_only_no_grammar_flag(self):
-        # A2's confirmed correction: a tool-only request (no structured-outputs
-        # constraint active) takes MistralToolParser.adjust_request's early-return
-        # branch and never sets _grammar_from_tool_parser, so reasoning_ended must
-        # NOT assume the flag is reliably True whenever a mistral tool parser is
-        # in play.
+        # A tool-only request takes MistralToolParser.adjust_request's early-return
+        # branch and never sets _grammar_from_tool_parser.
         render, tokenizer = self._build_render(
             "mistralai/Mistral-7B-Instruct-v0.3", tokenizer_mode="mistral", tool_parser="mistral"
         )

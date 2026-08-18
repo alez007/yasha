@@ -10,10 +10,8 @@ import pytest
 @pytest.mark.integration
 @pytest.mark.diffusers
 class TestImage:
-    """End-to-end image generation, editing and variations through the
-    diffusers loader. One sdxl-turbo deployment backs all three endpoints
-    (text2img + img2img + inpaint, weight-shared via from_pipe). The generated
-    image is reused as the input for the edit and variation calls."""
+    """One sdxl-turbo deployment backs all three endpoints (weight-shared via
+    from_pipe); the generated image is reused as input for edit/variation calls."""
 
     SIZE = "512x512"
 

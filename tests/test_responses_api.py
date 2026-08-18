@@ -1,16 +1,14 @@
 """Route-level tests for /v1/responses, including conversation state.
 
-The route does no chat<->Responses translation: it hands the `ResponsesRequest`
-straight to `handle.respond` and threads the result through the shared
-`_handle_response`, exactly like `create_chat_completion`'s route. Feature-support
-validation (e.g. rejecting `background`) happens inside the deployment's
-`create_response` — a rejection surfaces here as an ordinary leading `ErrorResponse`
-from the handle, the same path any other loader-side error takes.
+The route hands `ResponsesRequest` straight to `handle.respond` with no
+chat<->Responses translation, threading the result through `_handle_response`
+like `create_chat_completion`'s route. Feature-support validation (e.g.
+rejecting `background`) happens inside the deployment's `create_response`,
+surfacing here as a leading `ErrorResponse` from the handle.
 
-State is the exception, and lives here rather than in the deployment: the gateway
-resolves `previous_response_id` into `input` before the Ray hop and tees the result
-into the store on the way out. GET/DELETE carry no model, so they could not be routed
-to a deployment at all.
+State is the exception: the gateway resolves `previous_response_id` into
+`input` before the Ray hop and stores the result on the way out. GET/DELETE
+carry no model, so they can't be routed to a deployment.
 """
 
 import json
@@ -90,9 +88,8 @@ class TestResponsesRoute:
 
     @pytest.mark.asyncio
     async def test_stream_true_dispatches_and_returns_event_stream(self, api):
-        # Streaming has no gateway-side translation anymore: the deployment
-        # (BaseInfer.create_response) is responsible for producing Responses event
-        # dicts directly; the route SSE-frames them (streaming.frame_sse) on the way out.
+        # The deployment (BaseInfer.create_response) produces Responses event
+        # dicts directly; the route SSE-frames them via streaming.frame_sse.
         handle = MagicMock()
 
         async def gen():
@@ -114,9 +111,8 @@ class TestResponsesRoute:
 
     @pytest.mark.asyncio
     async def test_invalid_param_returns_400_not_500(self, api):
-        # An invalid reasoning.effort fails when the deployment constructs the
-        # ChatCompletionRequest (pydantic ValidationError, not a ValueError);
-        # that must surface as a 400 ErrorResponse, not a 500.
+        # reasoning.effort validation fails in the deployment as a pydantic
+        # ValidationError; that must surface as 400, not 500.
         handle = MagicMock()
 
         async def gen():
@@ -133,9 +129,8 @@ class TestResponsesRoute:
 
     @pytest.mark.asyncio
     async def test_end_to_end_through_handle_response(self, api):
-        # Drive the real _handle_response with a mock generator yielding an
-        # already-built ResponseObject (what the deployment now returns
-        # directly, with no gateway-side chat->Responses translation left).
+        # Drives the real _handle_response with a mock generator yielding an
+        # already-built ResponseObject.
         handle = MagicMock()
 
         async def gen():
@@ -159,9 +154,8 @@ class TestResponsesRoute:
 
 
 class TestMcpRouting:
-    """Wiring only — the loop's own behavior is covered by test_mcp_loop.py.
-    Confirms create_response swaps its generator source to mcp_loop.run_mcp_response
-    when the request declares an mcp tool, and leaves handle.respond untouched."""
+    """Wiring only — behavior is covered by test_mcp_loop.py. Confirms create_response
+    swaps to mcp_loop.run_mcp_response for mcp tools, leaving handle.respond untouched."""
 
     @pytest.mark.asyncio
     async def test_mcp_tool_routes_through_mcp_loop_not_handle_respond(self, api):
@@ -253,9 +247,8 @@ class TestPreviousResponseIdResolution:
         with pytest.raises(HTTPException) as exc:
             await api.create_response(request, _raw_request())
         assert exc.value.status_code == 404
-        # ResponsesApiError (a real behavior change over a bare HTTPException): a
-        # machine-readable code, and _error_response renders the OpenAI envelope
-        # instead of FastAPI's default {"detail": ...} body.
+        # ResponsesApiError carries a machine-readable code; _error_response renders
+        # the OpenAI envelope instead of FastAPI's default {"detail": ...} body.
         assert isinstance(exc.value, ResponsesApiError)
         assert exc.value.err.error.code == "previous_response_not_found"
         assert exc.value.err.error.param == "previous_response_id"
@@ -347,7 +340,7 @@ class TestPersistence:
         request = ResponsesRequest(model="m", input="again", previous_response_id="resp_1")
         await api.create_response(request, _raw_request())
 
-        # Turn 2's snapshot embeds turn 1 — that's what makes the read O(1).
+        # Turn 2's snapshot embeds turn 1's, for O(1) reads.
         snap = api._state_store.get("responses/unscoped/resp_2")
         assert snap["input_items"] == [
             {"type": "message", "role": "user", "content": "hi"},
@@ -406,9 +399,8 @@ class TestPersistence:
 
         assert "event: response.failed" in body
         assert "event: response.completed" not in body
-        # A store-write failure still ends the SSE stream cleanly, so [DONE] follows
-        # (see streaming.frame_sse) — split on the frame boundary rather than assuming
-        # the failed event is the last thing in the body.
+        # [DONE] still follows a store-write failure (streaming.frame_sse), so split
+        # on the frame boundary rather than assuming failed is the last event.
         failed_frame = next(part for part in body.split("\n\n") if part.startswith("event: response.failed"))
         failed = json.loads(failed_frame.split("data: ", 1)[1])
         assert failed["response"]["status"] == "failed"

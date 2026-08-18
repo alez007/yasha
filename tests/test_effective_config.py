@@ -79,9 +79,8 @@ class TestReadWriteEffective:
 
 
 class TestRawRoundTrip:
-    """The reason the store holds raw dicts: a normalized vLLM config does NOT
-    round-trip (num_gpus=2 -> num_gpus=1.0/tp=2, which fails re-validation). Raw
-    dicts reload identically."""
+    """Store holds raw dicts because a normalized vLLM config does NOT round-trip
+    (num_gpus=2 -> num_gpus=1.0/tp=2, which fails re-validation); raw dicts reload identically."""
 
     def test_multi_gpu_vllm_survives_store_roundtrip(self):
         raw = {"name": "x", "model": "org/x", "usecase": "generate", "loader": "vllm", "num_gpus": 2}
@@ -154,9 +153,8 @@ class TestComputeDeployPlan:
         assert plan.registry_only_drop == []
 
     def test_dropped_effective_model_with_no_live_app_is_registry_only(self):
-        # prev effective managed a,b but the cluster is fresh (only the new app a
-        # is live); reconcile to a. b has no Serve app to delete, but its stale
-        # registry entry must still be dropped so the gateway stops routing to it.
+        # prev effective managed a,b; cluster only has a live. b has no Serve app
+        # to delete, but its stale registry entry must still be dropped.
         from modelship.deploy.strategy import compute_deploy_plan
 
         desired = to_config([_model("a")])
@@ -180,9 +178,8 @@ class TestComputeDeployPlan:
 
 
 class TestComputeDeployPlanGpuOrdering:
-    """Larger GPU footprints deploy first so they claim whole GPU units before
-    fractional models consume the pool — applies beyond vllm's tp*pp now that
-    non-vllm loaders can request a fractional num_gpus too."""
+    """Larger GPU footprints deploy first, claiming whole GPU units before
+    fractional models consume the pool."""
 
     def test_whole_gpu_llama_server_sorts_before_fractional(self):
         from modelship.deploy.strategy import compute_deploy_plan
@@ -209,8 +206,8 @@ class TestComputeDeployPlanGpuOrdering:
 
 
 class TestCase2AdditiveAccumulation:
-    """The bug this design fixes: additive deploys accumulate beyond the last
-    input, and that accumulation must survive in the effective config."""
+    """Additive deploys accumulate beyond the last input, and that
+    accumulation must survive in the effective config."""
 
     def test_additive_then_reconcile(self):
         a, b, c, d = _model("a"), _model("b"), _model("c"), _model("d")

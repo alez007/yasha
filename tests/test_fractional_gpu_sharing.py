@@ -1,14 +1,10 @@
-"""Two loaders sharing one physical GPU via fractional num_gpus.
-
-`frac-share-vllm` (num_gpus=0.6) and `frac-share-llama-server` (num_gpus=0.3)
-are deployed together — Ray's own fractional scheduling packs both fractional
-requests onto the same physical GPU. Proves preflight's share-basis sizing
-(fraction * total VRAM, not free VRAM) produces a config each engine can
-actually boot and serve from concurrently, not just a config that validates.
+"""Two loaders sharing one physical GPU via fractional num_gpus:
+`frac-share-vllm` (num_gpus=0.6) and `frac-share-llama-server` (num_gpus=0.3),
+deployed together so Ray's fractional scheduling packs both onto the same
+physical GPU.
 
 `MODEL_CONFIGS`, `_Deployer`, and the `mship_cluster`/`model_deployer`/`client`
-fixtures live in conftest.py — shared with test_integration.py so both files
-run against the same live cluster within one pytest session.
+fixtures live in conftest.py, shared with test_integration.py.
 """
 
 import concurrent.futures
@@ -46,10 +42,8 @@ class TestFractionalGpuSharing:
         assert "paris" in content.lower()
 
     def test_concurrent_requests_across_both_tenants_succeed(self, client):
-        # The real proof of co-tenancy: both engines already have their KV
-        # cache/context allocated against their own declared share. Driving
-        # both at once and getting real completions back from each confirms
-        # neither starved the other at inference time, not just at boot.
+        # Both engines already have KV cache/context allocated against their
+        # declared share; driving both at once confirms neither starves the other.
         prompts = [
             {
                 "model": "frac-share-vllm",

@@ -44,8 +44,7 @@ def test_reads_cgroup_v1_numeric_limit(tmp_path):
 
 def test_cgroup_v1_unlimited_sentinel_is_recognized_as_none(tmp_path):
     # The near-INT64_MAX "unlimited" sentinel must be treated as no-limit (None)
-    # at the source — not leaked for the caller to discard — so it's safe even
-    # without a psutil value to min() against.
+    # at the source, so it's safe even without a psutil value to min() against.
     v1 = _write(tmp_path, "memory.limit_in_bytes", str(_V1_UNLIMITED))
     assert _cgroup_memory_limit_bytes(paths=(v1,)) is None
 
@@ -129,9 +128,8 @@ def test_cgroup_v2_available_adds_back_reclaimable_cache(tmp_path):
 
 
 def test_cgroup_v1_available_uses_total_file_keys_without_double_counting(tmp_path):
-    # A real v1 memory.stat lists BOTH the per-cgroup (`*_file`) and hierarchical
-    # (`total_*_file`) lines. We must count the `total_*` pair ONLY — summing all
-    # four would double-count the reclaimable cache and overstate headroom → OOM.
+    # A real v1 memory.stat lists both per-cgroup (`*_file`) and hierarchical
+    # (`total_*_file`) lines; counting both would double-count and overstate headroom.
     limit = 8 * _GiB
     current = 5 * _GiB
     usage = _write(tmp_path, "memory.usage_in_bytes", str(current))

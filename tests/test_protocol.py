@@ -1,9 +1,6 @@
-"""Strict-OpenAI shape tests for modelship/openai/protocol.py.
-
-Covers the deviations fixed in the protocol cleanup: ErrorInfo.code retype,
-verbose response shapes, required `model` fields, and ImageGenerationRequest
-losing its Diffusers-only knobs.
-"""
+"""Strict-OpenAI shape tests for modelship/openai/protocol.py: ErrorInfo.code
+retype, verbose response shapes, required `model` fields, and
+ImageGenerationRequest without its Diffusers-only knobs."""
 
 from http import HTTPStatus
 
@@ -104,9 +101,8 @@ def test_transcription_verbose_has_optional_words_segments_usage():
 
 
 def test_transcription_verbose_has_task_field_pinned_to_transcribe():
-    # OpenAI emits `"task": "transcribe"` on this response shape (see spec's
-    # own example payload). Wire-fidelity for clients that don't tolerate
-    # unknown field absence.
+    # OpenAI emits `"task": "transcribe"` on this response shape — wire-fidelity for
+    # clients that don't tolerate unknown field absence.
     v = TranscriptionResponseVerbose(language="en", duration=10.0, text="hi")
     assert v.task == "transcribe"
     assert "task" in v.model_dump()
@@ -152,8 +148,7 @@ def test_embedding_request_model_is_required():
 
 def test_image_generation_request_drops_diffusers_knobs():
     # num_inference_steps and guidance_scale must not be declared model fields;
-    # extra="allow" still lets them through as extras but they are no longer
-    # part of the canonical shape and serving_image no longer reads them.
+    # extra="allow" still lets them through as extras, but serving_image no longer reads them.
     assert "num_inference_steps" not in ImageGenerationRequest.model_fields
     assert "guidance_scale" not in ImageGenerationRequest.model_fields
 

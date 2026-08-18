@@ -19,9 +19,8 @@ _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
 
 @pytest.fixture
 def coord():
-    # get_state_store() now returns a Ray-actor-backed client that requires a live
-    # cluster; patch it to the plain in-process dict so these tests stay
-    # cluster-free, matching every other test in this file.
+    # get_state_store() returns a Ray-actor-backed client that requires a live
+    # cluster; patch it to the plain in-process dict so these tests stay cluster-free.
     with patch.object(replica_coordinator, "get_state_store", return_value=_MemoryStore()):
         yield _Coord()
 

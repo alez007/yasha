@@ -2,9 +2,9 @@
 ``CompactRequest``/``CompactResource``/``CompactionItem`` schemas, the
 ``build_summarization_request``/``build_compaction`` builders, and the gateway route.
 
-The route dispatches to the same `handle.generate` a chat-completion request would
-(the summarization pass), then encrypts the result into a ``CompactionItem`` — it
-never persists a snapshot under the compaction id (see the compaction plan).
+The route dispatches to the same `handle.generate` a chat-completion request would,
+then encrypts the result into a ``CompactionItem`` — it never persists a snapshot
+under the compaction id.
 """
 
 import json
@@ -133,10 +133,8 @@ class TestCompactSchemas:
             CompactRequest()
 
     def test_created_by_omitted_when_unset(self):
-        # The suite's compactionBodySchema types created_by as optional-but-non-nullable
-        # (z.string().optional()) — sending it as `null` fails validation, only an
-        # absent key passes. Caught by a live compliance-suite run against a real
-        # deploy, where the failure was reported as "output.0: Invalid input".
+        # created_by must be omitted, not sent as null, to satisfy the external
+        # suite's optional-but-non-nullable schema.
         dumped = CompactionItem(encrypted_content="blob").model_dump(mode="json")
         assert "created_by" not in dumped
 
@@ -161,9 +159,8 @@ class TestCompactSchemas:
         assert set(dumped) >= {"id", "object", "output", "created_at", "usage"}
 
     def test_missing_model_is_422_from_fastapi(self):
-        # The suite's `compact-missing-model` test expects a bare 422/400 with no
-        # loader involved at all — this is FastAPI's own validation on the required
-        # `model` field, exercised end-to-end through a real ASGI request.
+        # Exercises FastAPI's own validation on the required `model` field via a
+        # real ASGI request, with no loader involved.
         app = FastAPI()
 
         @app.post("/v1/responses/compact")
@@ -254,9 +251,8 @@ class TestCompactResponseRoute:
     @pytest.mark.asyncio
     async def test_dispatches_to_generate_and_returns_compact_resource(self, api):
         handle = _wire(api, _chat_response_gen(text="the gist"))
-        # prompt_cache_key isn't a CompactRequest field (nothing in modelship hooks a
-        # cache key in) — OpenAIBaseModel's extra="allow" means an OpenAI-SDK client
-        # that still sends it is silently tolerated rather than rejected.
+        # prompt_cache_key isn't a CompactRequest field; OpenAIBaseModel's
+        # extra="allow" tolerates an OpenAI-SDK client that still sends it.
         request = CompactRequest.model_validate({"model": "m", "input": "hi", "prompt_cache_key": "k"})
 
         result = await api.compact_response(request, _raw_request())

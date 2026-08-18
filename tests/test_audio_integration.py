@@ -6,9 +6,8 @@ import pytest
 
 @pytest.mark.integration
 class TestAudio:
-    """tts-model and stt-model are both small and fit comfortably side-by-side,
-    so they share a class — `test_audio_transcription` re-uses the TTS output
-    as its input."""
+    """tts-model and stt-model are both small enough to share a class;
+    test_audio_transcription re-uses the TTS output as its input."""
 
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
@@ -16,11 +15,9 @@ class TestAudio:
 
     def test_audio_speech(self, client):
         response = client.audio.speech.create(model="tts-model", voice="af_bella", input="Hello from integration test")
-        # response.content is the binary audio data
         assert len(response.content) > 1000
 
     def test_audio_transcription(self, client, tmp_path):
-        # Generate audio first using TTS
         audio_data = client.audio.speech.create(
             model="tts-model", voice="af_bella", input="This is a test transcription."
         ).content

@@ -41,9 +41,8 @@ def _reset_logging():
     saved_lib_handlers = {name: list(logging.getLogger(name).handlers) for name in _LIB_LOGGERS}
     saved_lib_propagate = {name: logging.getLogger(name).propagate for name in _LIB_LOGGERS}
     saved_env = {k: os.environ.get(k) for k in _LIB_ENV_VARS}
-    # Clear so each test exercises a clean setdefault path. Importing mship_deploy.py
-    # in another test runs propagate_lib_log_env() and pollutes os.environ for
-    # the rest of the pytest session.
+    # Clear so each test gets a clean setdefault path; importing mship_deploy.py in
+    # another test runs propagate_lib_log_env() and leaves these vars set.
     for k in _LIB_ENV_VARS:
         os.environ.pop(k, None)
     token = request_id_var.set(None)
@@ -125,10 +124,8 @@ class TestConfigureLogging:
         for name in _LIB_LOGGERS:
             lib_logger = logging.getLogger(name)
             assert len(lib_logger.handlers) == 1
-            # Formatter is shared, but the handler instance must NOT be — code
-            # like ray.init(logging_level=...) mutates whatever handler it finds
-            # on "ray" in place, which would corrupt modelship's own formatting
-            # too if the object were shared rather than just the formatter.
+            # Formatter is shared, but the handler instance must NOT be — ray.init(...)
+            # mutates whatever handler it finds on "ray" in place.
             assert lib_logger.handlers[0] is not logging.getLogger("modelship").handlers[0]
             assert lib_logger.handlers[0].formatter is root_formatter
             assert lib_logger.propagate is False
@@ -160,22 +157,9 @@ class TestConfigureLogging:
 
 
 class TestVllmConfigureLoggingOptOut:
-    """vLLM runs logging.config.dictConfig() at import time. Python's dictConfig
-    unconditionally calls _clearExistingHandlers() -> logging.shutdown(), which
-    closes *every* live handler — including Ray Serve's MemoryHandler on the
-    `ray.serve` logger — and MemoryHandler.close() sets target=None. shutdown()
-    does NOT remove the handler from the logger, so Ray's
-    get_component_logger_file_path() later dereferences handler.target.baseFilename
-    and raises AttributeError, killing the replica's is_allocated() health check.
-
-    This only bites the vLLM loader (other loaders never import vllm) and only on
-    the head-restart recovery path: on a cold deploy is_allocated() runs before the
-    replica __init__ imports vLLM; on recovery the replica re-imports vLLM first, so
-    the nulled target is hit. We set VLLM_CONFIGURE_LOGGING=0 in propagate_lib_log_env
-    (which runs before any vLLM import, in both driver and replica) so vLLM skips its
-    dictConfig and never touches Ray's handler. Log levels are unaffected — modelship
-    sets the vllm logger level directly and via VLLM_LOGGING_LEVEL.
-    """
+    """vLLM's import-time dictConfig() call closes Ray Serve's MemoryHandler,
+    crashing replica health-checks on head-restart recovery. propagate_lib_log_env
+    sets VLLM_CONFIGURE_LOGGING=0 before any vLLM import to avoid this."""
 
     def test_disabled_by_default(self):
         with patch.dict(os.environ, {}, clear=False):
@@ -391,7 +375,6 @@ class TestSyslogLogTarget:
 
 class TestOtelSetup:
     def test_warns_when_packages_missing(self, capsys):
-        """When otel packages aren't installed, _setup_otel logs a warning and adds no handler."""
         root = logging.getLogger("modelship")
         root.handlers.clear()
         sh = logging.StreamHandler()

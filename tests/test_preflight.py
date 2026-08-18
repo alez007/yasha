@@ -62,9 +62,8 @@ def _write_model_snapshot(
 
 
 class TestGpuDiscoveryUuid:
-    """GPUInfo.uuid, populated by the pynvml/torch probes (preflight/base.py) so an
-    operator co-locating node containers on one host can verify each was actually
-    handed a distinct physical GPU (see the multi-node-docker plan's item 5b)."""
+    """GPUInfo.uuid, populated by the pynvml/torch probes, lets an operator
+    co-locating node containers on one host verify each got a distinct physical GPU."""
 
     def test_pynvml_probe_reads_uuid(self):
         from modelship.preflight import base as preflight_base
@@ -460,22 +459,17 @@ class TestRunPreflightDispatch:
 
 class TestEstimateWeightFootprint:
     def test_no_real_files_trusts_index_total(self, tmp_path):
-        # _write_model_snapshot's fixtures (used throughout this file) only ever
-        # write the index JSON, never real .safetensors files — this must keep
-        # returning the declared total_size unchanged.
+        # _write_model_snapshot only ever writes the index JSON, never real
+        # .safetensors files — this must keep returning the declared total_size unchanged.
         from modelship.preflight.vllm import _estimate_weight_footprint
 
         snapshot = _write_model_snapshot(tmp_path, config_json={}, weight_bytes=5 * 1024**3)
         assert _estimate_weight_footprint(str(snapshot)) == 5 * 1024**3
 
     def test_unindexed_safetensors_file_is_not_dropped(self, tmp_path):
-        # A vision tower/projector shipped as a separate safetensors file that
-        # the index doesn't reference (common for VLM checkpoints) must still
-        # be counted, not silently missed because the index total looked complete.
-        # The indexed shard's real on-disk size matches what the index declares
-        # for it; only the unindexed file is "extra" — so if the fix is working,
-        # the directory sum (indexed + unindexed) exceeds the index's total and
-        # wins the max().
+        # An unindexed safetensors file (e.g. a vision tower not referenced by the
+        # index) must still be counted — the directory sum then exceeds the index
+        # total and wins the max().
         from modelship.preflight.vllm import _estimate_weight_footprint
 
         snapshot = tmp_path / "snapshot"
@@ -491,8 +485,7 @@ class TestEstimateWeightFootprint:
 
     def test_path_is_a_file_not_a_directory_returns_zero(self, tmp_path):
         # os.listdir() raises NotADirectoryError (an OSError subclass, not
-        # FileNotFoundError) when model_path resolves to a file — must degrade
-        # gracefully like the missing-path case, not crash preflight.
+        # FileNotFoundError) here — must degrade gracefully like the missing-path case.
         from modelship.preflight.vllm import _estimate_weight_footprint
 
         not_a_dir = tmp_path / "not_a_directory"
@@ -516,7 +509,6 @@ class TestVllmPreflight:
         assert VllmPreflight().recommend(cfg, hw) == {}
 
     def test_constrained_budget_recommends_lower_max_model_len(self, tmp_path):
-        # Mimic the gemma4-coder failure: 31B model + small KV budget.
         snapshot = _write_model_snapshot(
             tmp_path,
             config_json={
@@ -535,7 +527,6 @@ class TestVllmPreflight:
             vllm_kwargs={"tensor_parallel_size": 2},
             num_gpus=2,
         )
-        # Two small GPUs (typical of the failure scenario)
         hw = HardwareProfile(gpus=[GPUInfo(0, 16 * 1024**3, "test"), GPUInfo(1, 16 * 1024**3, "test")])
         rec = VllmPreflight().recommend(cfg, hw)
         assert "max_model_len" in rec
@@ -562,7 +553,6 @@ class TestVllmPreflight:
         )
         hw = HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])
         rec = VllmPreflight().recommend(cfg, hw)
-        # Roomy GPU: should cap at max_position_embeddings (8192), not over-suggest.
         assert rec["max_model_len"] == 8192
 
     def test_missing_geometry_returns_empty(self, tmp_path):
@@ -597,10 +587,8 @@ class TestVllmPreflight:
         assert VllmPreflight().recommend(cfg, hw) == {}
 
     def test_fractional_num_gpus_sizes_max_model_len_to_share(self, tmp_path):
-        # The studio failure: a dense 7B at num_gpus=0.5. Normalization sets
-        # gpu_memory_utilization=0.5, and the halved budget is still too small for
-        # the full 32768 context, so preflight sizes max_model_len DOWN to fit
-        # instead of bailing (which left the model at its default → vLLM KV OOM).
+        # num_gpus=0.5 halves gpu_memory_utilization; when that budget is too small
+        # for the full context, preflight sizes max_model_len down instead of bailing.
         snapshot = _write_model_snapshot(
             tmp_path,
             config_json={
@@ -623,8 +611,7 @@ class TestVllmPreflight:
         assert rec["max_model_len"] % 16 == 0
 
     def test_fractional_share_recommends_less_than_whole_gpu(self, tmp_path):
-        # Same model, same card: a 0.5 share must yield a smaller max_model_len
-        # than the whole GPU — proving the effective util drives the estimate.
+        # Same model, same card: a 0.5 share yields a smaller max_model_len than the whole GPU.
         snapshot = _write_model_snapshot(
             tmp_path,
             config_json={
@@ -672,9 +659,8 @@ class TestVllmPreflight:
 
 
 class TestVllmPreflightFractionalGpu:
-    """0 < num_gpus < 1 shares one physical GPU; budget derives from total
-    capacity * gpu_memory_utilization (which already equals the fraction),
-    matching what the engine itself allocates — not from free VRAM."""
+    """0 < num_gpus < 1 shares one physical GPU; budget derives from total capacity
+    * gpu_memory_utilization (which equals the fraction), not from free VRAM."""
 
     def test_budget_derives_from_total_not_available(self, tmp_path):
         snapshot = _write_model_snapshot(
@@ -702,9 +688,8 @@ class TestVllmPreflightFractionalGpu:
 
 
 class TestVllmPreflightCpu:
-    """`config.num_gpus == 0` routes to `_recommend_cpu`, sized against system
-    RAM rather than VRAM. `_raw_host_ram_bytes` is patched to a fixed value so
-    the hand-checked math doesn't depend on the actual test machine's RAM."""
+    """`config.num_gpus == 0` routes to `_recommend_cpu`, sized against system RAM;
+    `_raw_host_ram_bytes` is patched so the math doesn't depend on the test machine's RAM."""
 
     _SMALL_MODEL_CFG: ClassVar[dict] = {
         "num_hidden_layers": 8,
@@ -717,10 +702,8 @@ class TestVllmPreflightCpu:
     }
 
     def test_cpu_only_node_caps_at_mpe_and_clamps_gmu(self, tmp_path):
-        # Roomy RAM: the KV budget vastly exceeds what's needed for the model's
-        # own max_position_embeddings (2048), so max_model_len caps there, and
-        # gpu_memory_utilization is sized to just the clamped 4-sequence KV
-        # budget rather than the raw (huge) headroom.
+        # Roomy RAM: max_model_len caps at max_position_embeddings (2048), and
+        # gpu_memory_utilization is sized to the clamped KV budget, not the raw headroom.
         snapshot = _write_model_snapshot(tmp_path, config_json=self._SMALL_MODEL_CFG, weight_bytes=1 * 1024**3)
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
         assert cfg.vllm_engine_kwargs.gpu_memory_utilization is None
@@ -763,8 +746,7 @@ class TestVllmPreflightCpu:
 
     def test_undiscoverable_host_ram_returns_empty(self, tmp_path):
         # _raw_host_ram_bytes reads raw psutil total independently of hw.ram_bytes
-        # (needed to match vLLM's own cgroup-blind denominator) — if that probe
-        # comes back 0, dividing by it in _recommend_cpu_auto_gmu must not raise.
+        # (matches vLLM's own cgroup-blind denominator); a 0 return must not raise on divide.
         snapshot = _write_model_snapshot(tmp_path, config_json=self._SMALL_MODEL_CFG, weight_bytes=1 * 1024**3)
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
         hw = HardwareProfile(ram_bytes=256 * 1024**3, available_ram_bytes=256 * 1024**3)
@@ -778,10 +760,9 @@ class TestVllmPreflightCpu:
 
 
 class TestDefaultGpuMemoryUtilization:
-    """`default_gpu_memory_utilization()` + the setdefault merge in
-    vllm_infer.py: the config field stays None until a fractional num_gpus
-    derivation or a preflight recommendation resolves it, and only the
-    loader-appropriate fallback (0.9 GPU / 0.4 CPU) is applied last."""
+    """`default_gpu_memory_utilization()`: the config field stays None until a
+    fractional num_gpus derivation or preflight resolves it; the loader-appropriate
+    fallback (0.9 GPU / 0.4 CPU) applies last via setdefault."""
 
     def test_gpu_deploy_default(self):
         cfg = _make_config(num_gpus=1)
@@ -865,17 +846,14 @@ class TestMultimodal:
         hw = HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])
         rec = VllmPreflight().recommend(cfg, hw)
         assert "max_num_batched_tokens" in rec
-        # 336/14 = 24 → 24² = 576 patches → 2x headroom = 1152, capped at the 8192 floor.
-        # MNBT must match the value the cudagraph budget was sized against; vLLM's
-        # chunked prefill handles prompts longer than MNBT, so it stays at the floor
-        # rather than scaling up to max_model_len.
+        # 336/14 = 24 → 576 patches → 2x headroom = 1152, capped at the 8192 floor.
+        # MNBT must match what the cudagraph budget was sized against; vLLM's chunked
+        # prefill handles longer prompts, so it stays at the floor rather than scaling up.
         assert rec["max_num_batched_tokens"] == 8192
 
     def test_nested_text_config_is_unwrapped(self, tmp_path):
-        # The point of this test is that we can READ geometry from a nested
-        # `text_config` (Gemma 3/4, LLaVA, Qwen2-VL, etc.) — sized with roomy
-        # GPUs so the budget actually produces a recommendation rather than
-        # returning `{}` for hardware reasons.
+        # Geometry is read from a nested `text_config` (Gemma 3/4, LLaVA, Qwen2-VL,
+        # etc.); GPUs are roomy so the budget produces a recommendation, not `{}`.
         snapshot = _write_model_snapshot(
             tmp_path,
             config_json={
@@ -900,7 +878,7 @@ class TestMultimodal:
         )
         hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test"), GPUInfo(1, 24 * 1024**3, "test")])
         rec = VllmPreflight().recommend(cfg, hw)
-        # Should produce a real recommendation now, not bail with `{}`.
+        # Produces a real recommendation, not `{}`.
         assert "max_model_len" in rec
         assert rec["max_model_len"] > 0
         # Also recognised as multimodal → max_num_batched_tokens is set.
@@ -972,15 +950,13 @@ class TestCudagraphEstimation:
     """Unit-level tests for `_estimate_cudagraph_bytes_per_gpu`."""
 
     def test_matches_formula_on_gemma4_measurement(self):
-        # Anchor against the Gemma-4 31B AWQ run: vLLM measured 2.23 GiB CUDA
-        # graph memory; the formula predicts 2.46 GiB (within ~10%, slight
-        # over-estimate is the safe direction).
+        # Anchored against a measured 2.23 GiB CUDA graph run; the formula predicts
+        # 2.46 GiB (within ~10%, slight over-estimate is the safe direction).
         from modelship.preflight.vllm import _estimate_cudagraph_bytes_per_gpu
 
         text_cfg = {"hidden_size": 5376, "num_hidden_layers": 60, "torch_dtype": "bfloat16"}
         cfg = _make_config()
         estimate = _estimate_cudagraph_bytes_per_gpu(text_cfg, text_cfg, cfg, 8192, 2, 1)
-        # Within 10% of vLLM's measured 2.23 GiB.
         measured = 2.23 * 1024**3
         assert 0.9 * measured <= estimate <= 1.2 * measured
 
@@ -1001,9 +977,8 @@ class TestCudagraphEstimation:
             assert _estimate_cudagraph_bytes_per_gpu(text_cfg, text_cfg, cfg, 8192, 1, 1) > 0
 
     def test_zero_when_geometry_missing(self):
-        # Without hidden_size / num_layers the formula can't run; return 0
-        # rather than guessing — the caller already over-subtracts other
-        # overheads, and a 0 here is the right "unknown" signal.
+        # Without hidden_size / num_layers the formula can't run; return 0 rather than
+        # guessing — the caller already over-subtracts other overheads.
         from modelship.preflight.vllm import _estimate_cudagraph_bytes_per_gpu
 
         cfg = _make_config()

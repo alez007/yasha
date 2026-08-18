@@ -1,6 +1,6 @@
 """Real-cluster integration tests for /v1/responses: server-side conversation
-state, reasoning, the llama_server loader's native path, and background mode
-(Phase E1). Shared cluster/model-deploy fixtures live in conftest.py."""
+state, reasoning, the llama_server loader's native path, and background mode.
+Shared cluster/model-deploy fixtures live in conftest.py."""
 
 import concurrent.futures
 import json
@@ -51,9 +51,8 @@ class TestResponsesLlamaServer:
         model_deployer.deploy("chat-llama-server")
 
     def test_basic_response_through_llama_server(self, client):
-        # `chat-llama-server` is Qwen3-0.6B (reasoning-capable) — it always
-        # emits a `<think>...` preamble first, so the token budget needs
-        # headroom for reasoning to finish, not just the one-word answer.
+        # chat-llama-server is reasoning-capable and always emits a <think>...
+        # preamble first, so the token budget needs headroom beyond the answer.
         resp = client.responses.create(
             model="chat-llama-server",
             input="Say hello in one word.",
@@ -99,8 +98,7 @@ _WEATHER_TOOL_RESPONSES = {
 @pytest.mark.vllm
 class TestResponsesEndpoint:
     """End-to-end /v1/responses over the vLLM chat pipeline. Verifies the official
-    OpenAI SDK's ``responses.create`` parses our payload and that unsupported
-    features are rejected, not silently dropped."""
+    OpenAI SDK parses our payload and unsupported features are rejected, not dropped."""
 
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
@@ -142,9 +140,8 @@ class TestResponsesEndpoint:
         assert "Paris" in function_calls[0].arguments
 
     def test_streaming_emits_event_protocol(self, client):
-        # stream=True drives the chat pipeline in streaming mode and translates
-        # its chunks into the Responses event protocol. The official SDK parses
-        # the named events and reconstructs the final response.
+        # stream=True drives the chat pipeline in streaming mode, translating chunks
+        # into the Responses event protocol that the official SDK parses.
         stream = client.responses.create(
             model="chat-capable",
             input="Say hello in one word.",
@@ -231,13 +228,7 @@ class TestResponsesEndpoint:
 @pytest.mark.vllm
 class TestResponsesState:
     """Server-side conversation state on /v1/responses, end-to-end against the real
-    store (``memory://`` — a detached Ray actor on the live cluster).
-
-    The payoff test is `test_continuation_recalls_earlier_turn`: the model answers from
-    history the client never resent, which is the whole point of the endpoint. The rest
-    pin the lifecycle (store/retrieve/delete) and the failure modes that must not
-    silently degrade.
-    """
+    store (``memory://`` — a detached Ray actor on the live cluster)."""
 
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
@@ -292,8 +283,8 @@ class TestResponsesState:
         assert completed is not None
         assert completed.store is True
 
-        # A streamed response is persisted by re-reading its terminal event, so this
-        # proves that path stores the same shape the non-streaming one does.
+        # A streamed response is persisted by re-reading its terminal event, storing
+        # the same shape as the non-streaming path.
         second = client.responses.create(
             model="chat-capable",
             input="What is my name? Reply with just the name.",
@@ -489,9 +480,9 @@ class TestResponsesState:
 @pytest.mark.integration
 @pytest.mark.vllm
 class TestResponsesBackground:
-    """`background: true` (Phase E1): queue, poll, and cancel a detached response,
-    end-to-end against the real store and the real DisconnectRegistry actor —
-    the pieces the unit suite (test_responses_background.py) mocks out."""
+    """`background: true`: queue, poll, and cancel a detached response, end-to-end
+    against the real store and DisconnectRegistry actor — the pieces the unit
+    suite mocks out."""
 
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
@@ -645,8 +636,7 @@ class TestResponsesBackground:
 @pytest.mark.vllm
 class TestResponsesReasoning:
     """Reasoning surfaces as a first-class ``reasoning`` output item on
-    /v1/responses (its spec-correct home), distinct from the off-spec
-    ``message.reasoning`` field on chat completions."""
+    /v1/responses, distinct from the off-spec ``message.reasoning`` field on chat completions."""
 
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):

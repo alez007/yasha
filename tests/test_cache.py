@@ -41,8 +41,7 @@ def test_build_cache_env_vars_custom_dir():
 
 
 def test_utils_cache_dir_default():
-    # We don't want to actually create directories in the test environment if we can avoid it,
-    # but cache_dir calls os.makedirs.
+    # os.makedirs is mocked to avoid creating real directories in the test environment.
     with mock.patch.dict(os.environ, {"MSHIP_CACHE_DIR": "/.cache"}, clear=True), mock.patch("os.makedirs"):
         assert cache_dir() == "/.cache"
 

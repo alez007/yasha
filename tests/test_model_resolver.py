@@ -62,9 +62,8 @@ class TestParseModelRef:
         assert result.selector == "path/to/file.gguf"
 
     def test_pathy_missing_absolute_path_is_still_local(self, tmp_path: Path):
-        # A pathy string (starts with /, ./, ~) is local by syntax alone, not
-        # by existence — a typo'd local path must fail with a clear
-        # FileNotFoundError, not get silently misread as an HF repo id.
+        # A pathy string (starts with /, ./, ~) is local by syntax alone, not by
+        # existence — a typo'd path must fail clearly, not get misread as an HF repo id.
         missing = tmp_path / "does-not-exist"
         result = parse_model_ref(str(missing))
         assert result.source == str(missing)
@@ -78,7 +77,7 @@ class TestParseModelRef:
         assert result.is_local is True
 
     def test_non_pathy_missing_string_is_not_local(self):
-        # No leading /, ./, or ~ — read as an HF repo id, same as today.
+        # No leading /, ./, or ~ — read as an HF repo id.
         result = parse_model_ref("definitely-not-a-real/repo-id")
         assert result.is_local is False
 
@@ -191,9 +190,8 @@ class TestResolveLocalPath:
         assert result.endswith("model-00001-of-00003.gguf")
 
     def test_local_path_missing(self, tmp_path: Path):
-        # A pathy string is local by syntax alone (see TestParseModelRef), so a
-        # missing absolute path fails clearly from the local branch — not a
-        # confusing "failed to list files for HF repo" error.
+        # A pathy string is local by syntax alone, so a missing path fails clearly
+        # from the local branch, not a confusing HF-repo error.
         with pytest.raises(FileNotFoundError, match="Local path not found"):
             resolve_model_source(str(tmp_path / "does-not-exist"))
 
@@ -269,9 +267,8 @@ class TestResolveHfRepo:
             )
 
     def test_selector_multiple_matches_returns_first_shard_path(self):
-        # Sharded GGUF: download all shards via snapshot_download, then return
-        # the first shard's full path (not the snapshot dir) so file-path
-        # loaders like llama.cpp work.
+        # Sharded GGUF: download all shards, then return the first shard's full
+        # path (not the snapshot dir) since file-path loaders like llama.cpp need it.
         files = ["model-00002-of-00002.gguf", "model-00001-of-00002.gguf"]
         with (
             patch("modelship.infer.model_resolver.model_info", return_value=_model_info(files)),
@@ -354,9 +351,8 @@ class TestPinnedSourceResolvesToGguf:
 
 class TestDownloadErrorClassification:
     def test_download_failure_is_not_wrapped_by_download_model_source(self):
-        # download_model_source itself raises whatever hf raises; wrapping into
-        # ModelDownloadError is BaseInfer.ensure_downloaded's job (it
-        # needs the model name for the message), not this function's.
+        # download_model_source raises whatever hf raises; wrapping into
+        # ModelDownloadError is BaseInfer.ensure_downloaded's job (it needs the model name).
         pinned = PinnedSource(None, "org/repo", "sha", "model.safetensors", None, None)
         with (
             patch("modelship.infer.model_resolver.hf_hub_download", side_effect=OSError("disk full")),
@@ -365,7 +361,6 @@ class TestDownloadErrorClassification:
             download_model_source(pinned)
 
     def test_model_download_error_is_a_plain_exception(self):
-        # Deliberately not a subclass of a "permanent" error type — see its
-        # docstring: ModelDeployment.__init__ special-cases this type to skip
-        # reporting a fatal error to the coordinator.
+        # Deliberately not a subclass of a "permanent" error type —
+        # ModelDeployment.__init__ special-cases it to skip reporting fatal.
         assert issubclass(ModelDownloadError, Exception)

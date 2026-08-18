@@ -1,6 +1,5 @@
 """The bootstrapper's pinned llama.cpp tag must not drift from what
-llama-cpp-build.yml actually builds. The images carry no pin of their own — they
-fetch through `mship bootstrap` like a native install."""
+llama-cpp-build.yml actually builds; images carry no pin of their own, fetching through `mship bootstrap` instead."""
 
 from pathlib import Path
 

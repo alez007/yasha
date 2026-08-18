@@ -108,7 +108,6 @@ class TestVllmRoundTrip:
         assert vllm_req.response_format.type == "json_object"
 
     def test_response_format_with_tools_and_tool_choice_none_round_trip(self):
-        """The one combination the validator allows still survives the dump."""
         vllm = pytest.importorskip("vllm.entrypoints.openai.chat_completion.protocol")
         req = ChatCompletionRequest(
             **_base_request(

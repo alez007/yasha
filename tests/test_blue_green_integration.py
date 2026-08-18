@@ -53,10 +53,8 @@ _BLUE_GREEN_SOURCE = "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf
 
 
 def _blue_green_config(n_ctx: int) -> dict:
-    # n_ctx forces a new fingerprint between "versions" without a new download.
-    # parallel must cover the 2 hammer workers below — at parallel=1 a queued
-    # (not yet dispatched) request can get orphaned by the teardown and hang
-    # until the client's own timeout instead of erroring (repro-confirmed).
+    # n_ctx forces a new fingerprint between "versions" without a new download; parallel
+    # must cover the 2 hammer workers below, or a queued request can hang until client timeout.
     return {
         "name": _BLUE_GREEN_MODEL,
         "model": _BLUE_GREEN_SOURCE,
@@ -80,9 +78,8 @@ def _app_names_for(model_name: str) -> set[str]:
 @pytest.mark.llama_server
 @pytest.mark.blue_green
 class TestBlueGreenReplace:
-    """--replace-strategy blue_green (the default) must cut a model's config
-    change over atomically: no dropped requests during the swap, and the old
-    deployment is fully torn down rather than left running as a zombie."""
+    """--replace-strategy blue_green (the default) cuts a model's config change over
+    atomically, with the old deployment fully torn down rather than left running."""
 
     def test_cutover_has_no_request_loss_and_leaves_no_zombie(self, client, model_deployer):
         model_deployer.deploy_raw([_blue_green_config(n_ctx=2048)], replace_strategy="blue_green")
@@ -100,9 +97,8 @@ class TestBlueGreenReplace:
                 for _ in range(2)
             ]
             try:
-                # This call blocks until the new deployment is live and the old one
-                # is dropped — hammering concurrently is what proves the swap never
-                # leaves a gap where the model 404s or 5xxs.
+                # Blocks until the new deployment is live and the old one is dropped; hammering
+                # concurrently exposes any gap where the model would 404 or 5xx.
                 model_deployer.deploy_raw([_blue_green_config(n_ctx=4096)], replace_strategy="blue_green")
             finally:
                 stop.set()

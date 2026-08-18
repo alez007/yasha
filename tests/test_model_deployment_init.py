@@ -37,8 +37,7 @@ class TestRejectUnsupportedDarwinLoader:
             _reject_unsupported_darwin_loader(config)  # no raise
 
     def test_darwin_allows_stable_diffusion_cpp(self):
-        # ggml's runtime backend registry picks up Metal automatically — regression
-        # test for dropping this loader from _DARWIN_UNSUPPORTED_LOADERS.
+        # ggml's runtime backend registry picks up Metal automatically.
         config = MagicMock(loader=ModelLoader.stable_diffusion_cpp, name="test-model")
         with patch("modelship.infer.model_deployment.platform.system", return_value="Darwin"):
             _reject_unsupported_darwin_loader(config)  # no raise
@@ -56,8 +55,7 @@ class TestRejectUnsupportedDarwinLoader:
 
 def _patch_init_globals(**kwargs):
     # @serve.deployment cloudpickles the class, so the unwrapped __init__ carries
-    # a reconstructed globals dict — patching the module attribute wouldn't reach
-    # it (same gotcha as test_model_deployment_metrics.py's _patch_gen_metric).
+    # a reconstructed globals dict; patching the module attribute won't reach it.
     return patch.dict(_ModelDeployment.__init__.__globals__, kwargs)
 
 
@@ -83,7 +81,7 @@ async def test_download_error_does_not_report_fatal():
     ):
         await _ModelDeployment.__init__(inst, config)
 
-    # The whole point: no coordinator lookup/report happens on this path.
+    # No coordinator lookup/report happens on this path.
     mock_get_coordinator.assert_not_called()
 
 

@@ -27,14 +27,8 @@ _WEATHER_TOOL = {
 
 
 def _collect_streaming_tool_call(stream) -> dict:
-    """Drain an OpenAI streaming response and rebuild the assistant message.
-
-    Returns a dict with: ``content`` (concatenated content deltas),
-    ``tool_calls`` (per-index dict of ``{id, name, arguments}`` — arguments
-    concatenated across all fragments), ``finish_reason``, ``name_deltas``
-    and ``args_deltas`` (counts, used to assert that streaming was actually
-    incremental rather than a single buffered emission).
-    """
+    """Drains an OpenAI streaming response, returning a dict of content,
+    tool_calls (by index), finish_reason, and content/name/args delta counts."""
     content_parts: list[str] = []
     tool_calls: dict[int, dict] = {}
     finish_reason: str | None = None
@@ -75,21 +69,16 @@ def _collect_streaming_tool_call(stream) -> dict:
 @pytest.mark.integration
 @pytest.mark.llama_server
 class TestChatLlamaServer:
-    """End-to-end chat, tool calling, reasoning, and concurrency through the
-    `llama_server` loader (a `llama-server` subprocess proxied over its
-    native OpenAI-compatible HTTP API). Reasoning and tool-call parsing is
-    llama-server's own (`--jinja --reasoning-format auto`).
-    """
+    """End-to-end chat, tool calling, reasoning, and concurrency via a real
+    llama-server subprocess (parsing via `--jinja --reasoning-format auto`)."""
 
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
         model_deployer.deploy("chat-llama-server")
 
     def test_chat_completion(self, client):
-        # This deployment is Qwen3-0.6B (reasoning-capable), unlike
-        # `chat-llama-server-plain`'s plain Qwen2.5 — it always emits a
-        # `<think>...` preamble before content, so the token budget needs
-        # headroom for reasoning to finish, not just the answer itself.
+        # chat-llama-server is reasoning-capable (Qwen3) and always emits a <think>
+        # preamble first, so max_tokens needs headroom beyond just the answer.
         completion = client.chat.completions.create(
             model="chat-llama-server",
             messages=[{"role": "user", "content": "What is the capital of France?"}],
@@ -116,9 +105,8 @@ class TestChatLlamaServer:
         assert completion.choices[0].finish_reason == "tool_calls"
 
     def test_tool_calling_streaming_llama_server_loader(self, client):
-        """Stream a tool call through llama-server and verify the delta
-        sequence matches the OpenAI streaming contract, same shape as the
-        vLLM loader streaming tests."""
+        """Stream a tool call through llama-server; verify the delta sequence
+        matches the OpenAI streaming contract."""
         stream = client.chat.completions.create(
             model="chat-llama-server",
             messages=[{"role": "user", "content": "What is the weather in Paris?"}],
@@ -142,9 +130,8 @@ class TestChatLlamaServer:
         assert collected["finish_reason"] == "tool_calls"
 
     def test_reasoning_completion_llama_server(self):
-        """Non-streaming: llama-server's own `--reasoning-format auto` routes
-        the `<think>...</think>` block to `message.reasoning`, with the final
-        answer in `message.content` and no marker leakage into either."""
+        """Non-streaming: `--reasoning-format auto` routes `<think>...</think>` to
+        `message.reasoning`, the final answer to `message.content`, no marker leakage."""
         response = httpx.post(
             f"{OPENAI_API_BASE}/chat/completions",
             json={
@@ -202,9 +189,8 @@ class TestChatLlamaServer:
         assert "</think>" not in "".join(content_parts)
 
     def test_reasoning_with_tools_llama_server(self, client):
-        """Reasoning + tool calling in one round-trip: llama-server populates
-        both `message.reasoning` and `message.tool_calls`, with
-        `finish_reason="tool_calls"`."""
+        """Reasoning + tool calling in one round-trip: llama-server populates both
+        `message.reasoning` and `message.tool_calls`, with `finish_reason="tool_calls"`."""
         completion = client.chat.completions.create(
             model="chat-llama-server",
             messages=[{"role": "user", "content": "What is the weather in Paris?"}],
@@ -224,18 +210,8 @@ class TestChatLlamaServer:
         assert completion.choices[0].finish_reason == "tool_calls"
 
     def test_tool_markers_inside_reasoning_not_double_counted_llama_server(self, client):
-        """Verifies llama-server's own parser doesn't double-count a
-        `<tool_call>...</tool_call>` illustration quoted inside `<think>`
-        reasoning as a second, real call — a bug pattern plausible for any
-        single-pass parser.
-
-        Coaxes the model into illustrating tool-call syntax inside its
-        reasoning before making one actual call, and asserts exactly one real
-        `tool_calls` entry comes out. Real models are non-deterministic; if
-        the prompt fails to produce literal markers in reasoning, the
-        marker-routing assertion is skipped rather than flaking — the
-        single-tool-call assertion still has value either way.
-        """
+        """Coaxes the model into quoting `<tool_call>` syntax inside its `<think>`
+        block, then asserts exactly one real `tool_calls` entry (no double-counting)."""
         completion = client.chat.completions.create(
             model="chat-llama-server",
             messages=[
@@ -276,9 +252,8 @@ class TestChatLlamaServer:
             )
 
     def test_response_format_with_reasoning_llama_server(self, client):
-        """llama-server handles a JSON-schema `response_format` combined with
-        reasoning natively, routing `<think>...</think>` to `message.reasoning`
-        and the schema-conforming JSON to `message.content`."""
+        """llama-server handles JSON-schema `response_format` combined with reasoning
+        natively: `<think>...</think>` routes to `message.reasoning`, JSON to `message.content`."""
         completion = client.chat.completions.create(
             model="chat-llama-server",
             messages=[{"role": "user", "content": "What is 2+2?"}],
@@ -304,20 +279,8 @@ class TestChatLlamaServer:
         assert "answer" in parsed
 
     def test_tool_choice_required_is_a_noop_on_hermes_family(self, client):
-        """Documents a real gap (A1 spike finding): `tool_choice: required` is
-        grammar-enforced on harmony-style chat templates (e.g. gpt-oss) but a
-        silent no-op on hermes-style ones — Qwen3 (this deployment) included.
-        Real grammar forcing makes the free-text branch structurally
-        unreachable (`message.content` would be empty/None); on this
-        hermes-style model it stays reachable even under `required`, proving
-        no grammar constraint was applied. (Verified against a live run: this
-        0.6B model is unstable enough to *also* emit a spurious tool call
-        alongside genuine free text on an irrelevant prompt — which is a
-        model-quality quirk, not evidence of forcing, so this asserts on
-        content reachability rather than tool_calls absence.) If llama.cpp
-        starts enforcing this for hermes models, `content` goes empty and
-        this test fails — update the docs/CLAUDE.md gap notes.
-        """
+        """`tool_choice: required` is grammar-enforced on harmony-style chat templates
+        but a silent no-op on hermes-style ones (Qwen3): `message.content` stays reachable."""
         completion = client.chat.completions.create(
             model="chat-llama-server",
             messages=[{"role": "user", "content": "Say hello in one word."}],
@@ -329,13 +292,8 @@ class TestChatLlamaServer:
         assert message.content, f"expected the free-text branch to stay reachable, got message={message!r}"
 
     def test_named_function_tool_choice_falls_back_to_auto(self, client):
-        """Documents a real gap (A1 spike finding): object-form `tool_choice`
-        (named-function forcing) is globally unsupported in llama.cpp b9859
-        (confirmed unchanged on the current b10200 pin) — it silently falls
-        back to `auto` rather than forcing the named function or erroring.
-        Same content-reachability technique and
-        irrelevant-tool prompt as the `required` gap test above — real
-        forcing would make the free-text branch structurally unreachable."""
+        """Object-form `tool_choice` (named-function forcing) is globally unsupported
+        in llama.cpp; it silently falls back to `auto` rather than forcing or erroring."""
         completion = client.chat.completions.create(
             model="chat-llama-server",
             messages=[{"role": "user", "content": "Say hello in one word."}],
@@ -347,12 +305,8 @@ class TestChatLlamaServer:
         assert message.content, f"expected the free-text branch to stay reachable, got message={message!r}"
 
     def test_concurrent_requests_are_not_serialized(self, client):
-        """The loader's headline capability: llama-server's `--parallel` slots
-        let several requests run concurrently instead of being serialized
-        behind a single lock. Time one request, then several at once, and
-        assert the concurrent batch finishes well under what full
-        serialization would take.
-        """
+        """llama-server's `--parallel` slots let requests run concurrently instead
+        of serializing behind a single lock; times one request, then several at once."""
         prompt = {
             "model": "chat-llama-server",
             "messages": [{"role": "user", "content": "Count from 1 to 50, one number per line."}],
@@ -371,9 +325,8 @@ class TestChatLlamaServer:
                 future.result()
         concurrent_elapsed = time.monotonic() - start
 
-        # Full serialization (a single-lock loader's behavior) would take
-        # roughly concurrency * baseline; llama-server's parallel slots should
-        # keep this well under that.
+        # Full serialization would take roughly concurrency * baseline; llama-server's
+        # parallel slots should keep this well under that.
         assert concurrent_elapsed < baseline * (concurrency - 0.5), (
             f"expected concurrent requests to overlap via llama-server's parallel slots "
             f"(baseline={baseline:.1f}s, {concurrency} concurrent took {concurrent_elapsed:.1f}s)"
@@ -383,32 +336,16 @@ class TestChatLlamaServer:
 @pytest.mark.integration
 @pytest.mark.llama_server
 class TestChatLlamaServerResponseFormat:
-    """response_format tests for the llama_server loader. Uses
-    `chat-llama-server-plain` (non-reasoning Qwen2.5-0.5B) rather than
-    `chat-llama-server` (Qwen3, always emits a `<think>...` preamble) —
-    response_format + reasoning together is covered separately by
-    `TestChatLlamaServer.test_response_format_with_reasoning_llama_server`.
-    """
+    """response_format tests using non-reasoning `chat-llama-server-plain`; the
+    reasoning+response_format combo is covered separately (see TestChatLlamaServer)."""
 
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
         model_deployer.deploy("chat-llama-server-plain")
 
     def test_response_format_json_object_without_schema_is_unconstrained(self, client):
-        """llama-server's own docs claim bare `{"type": "json_object"}` (no `schema` key) produces
-        "plain JSON output" like other OpenAI-inspired providers, but verified
-        directly against the b9859 binary (`curl` straight to `/v1/chat/completions`,
-        bypassing modelship; confirmed unchanged on the current b10200 pin)
-        this isn't enforced — the model answers in free
-        text with no error. Constraining does work once a `schema` key is
-        attached to the `response_format` object (an llama-server extension,
-        not in the OpenAI spec — `type: json_schema`, which modelship's
-        protocol sends for schema-constrained requests, does carry a schema
-        and IS honored — see `test_response_format_json_schema_constrains_unprompted_output`).
-        If this test starts failing (content parses as JSON), llama-server
-        started honoring plain `json_object` — update this note and
-        CLAUDE.md/AGENTS.md's llama_server gap list.
-        """
+        """Bare `{"type": "json_object"}` (no `schema` key) isn't enforced by
+        llama-server despite its docs; `type: json_schema` with a schema is honored."""
         completion = client.chat.completions.create(
             model="chat-llama-server-plain",
             messages=[{"role": "user", "content": "What is the capital of France?"}],
@@ -506,13 +443,9 @@ class TestChatLlamaServerResponseFormat:
 @pytest.mark.integration
 @pytest.mark.llama_server
 class TestChatLlamaServerGpu:
-    """End-to-end GPU offload through the llama_server loader.
-
-    Same GGUF and tool-calling shape as `TestChatLlamaServerResponseFormat`
-    (CPU), but deployed with `num_gpus=1` so the actor gets a whole GPU and
-    the loader passes `-ngl` for real offload instead of the forced `-ngl 0`
-    it uses when `num_gpus` is `0`.
-    """
+    """End-to-end GPU offload through the llama_server loader: same shape as
+    `TestChatLlamaServerResponseFormat` but deployed with `num_gpus=1`, so the
+    loader passes real `-ngl` offload instead of the forced `-ngl 0`."""
 
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
@@ -546,10 +479,8 @@ class TestChatLlamaServerGpu:
 @pytest.mark.integration
 @pytest.mark.llama_server
 def test_embeddings_llama_server(client, model_deployer):
-    """Real embeddings through a live llama-server subprocess (`--embedding`).
-    `test_embeddings` only exercises the vllm loader; this is the
-    first live-binary coverage of llama_server's B4 embeddings support
-    (previously only unit-tested against a mocked httpx transport)."""
+    """Real embeddings through a live llama-server subprocess (`--embedding`);
+    `test_embeddings` covers only the vllm loader."""
     model_deployer.deploy("embed-model-llama-server")
     response = client.embeddings.create(model="embed-model-llama-server", input=["Hello world", "Modelship is great"])
     assert len(response.data) == 2

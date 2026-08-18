@@ -17,8 +17,7 @@ from modelship.state import (
 from modelship.state import memory as memory_module
 from modelship.state.redis import RedisStateStore
 
-# The plain class behind @ray.remote — its dict logic is tested in-process,
-# without a Ray cluster, the same pattern test_replica_coordinator.py uses.
+# The plain class behind @ray.remote, tested in-process without a Ray cluster.
 _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
 
 
@@ -131,11 +130,11 @@ class TestMemoryStoreActor:
         store = _MemoryStore()
         payload = {"x": 1}
         store.set("k", payload)
-        payload["x"] = 999  # mutate the original after storing
+        payload["x"] = 999
         assert store.get("k") == {"x": 1}
         got = store.get("k")
         assert isinstance(got, dict)
-        got["x"] = 7  # mutate a returned copy
+        got["x"] = 7
         assert store.get("k") == {"x": 1}
 
     def test_ttl_expires(self, monkeypatch):
@@ -203,7 +202,7 @@ class TestMemoryStoreActorSweep:
         clock = {"t": 1000.0}
         monkeypatch.setattr("time.time", lambda: clock["t"])
         store = _MemoryStore()
-        store.set("forever", {"x": 1})  # no ttl
+        store.set("forever", {"x": 1})
         store.set("long", {"x": 2}, ttl_seconds=10_000)
 
         clock["t"] = 1000.0 + 301.0
@@ -270,8 +269,7 @@ class TestMemoryStateStoreClient:
         assert store._handle is None  # dropped so the next call re-resolves
 
     def test_get_or_create_sets_max_restarts(self, monkeypatch):
-        # A restarted actor comes back empty (see MemoryStoreActor's docstring) but
-        # must come back at all — assert the option that makes that happen.
+        # max_restarts=-1 ensures the actor is recreated after a crash.
         monkeypatch.setattr(memory_module.ray, "get_actor", MagicMock(side_effect=ValueError("absent")))
         options = MagicMock()
         options.return_value.remote.return_value = MagicMock()
@@ -285,7 +283,7 @@ class TestRedisStateStore:
         store = _fake_redis_store()
         store.set("k", {"x": 1}, ttl_seconds=100)
         assert store._sync_client.pttl("modelship/state/k") > 0
-        store.set("k2", {"x": 1})  # no ttl
+        store.set("k2", {"x": 1})
         assert store._sync_client.pttl("modelship/state/k2") == -1  # no expiry
 
     @pytest.mark.asyncio
@@ -343,8 +341,6 @@ class TestStateStoreFromUri:
             state_store_from_uri("memory:///foo")
 
     def test_file_scheme_no_longer_supported(self):
-        # The file backend was removed; a stale file:// URI must fail loudly rather
-        # than silently fall back to the ephemeral default.
         with pytest.raises(ValueError, match="unknown state-store scheme"):
             state_store_from_uri("file:///tmp/mship-state-test")
 

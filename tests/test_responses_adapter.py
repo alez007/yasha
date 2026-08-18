@@ -19,8 +19,7 @@ _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
 @pytest.fixture(autouse=True)
 def _compaction_key(monkeypatch):
     """A Ray-free stand-in for the cluster-wide store, pre-seeded the same way the
-    deploy driver seeds it before any actor starts — encrypt_items/decrypt_items
-    fail hard against an unseeded store (see test_responses_compaction.py)."""
+    deploy driver seeds it — encrypt_items/decrypt_items fail hard against an unseeded store."""
     compaction_crypto._cached_key = None
     store = _MemoryStore()
     monkeypatch.setattr("modelship.state.get_state_store", lambda: store)
@@ -65,10 +64,8 @@ class TestRequestInputTranslation:
         ]
 
     def test_developer_role_merges_with_system_like_instructions(self):
-        # Codex CLI sends `instructions`, a separate `system`-role item, AND a
-        # `developer`-role item (OpenAI's system-equivalent role for newer models) —
-        # Qwen3.5's template treats `developer` the same as `system` for its
-        # leading-message check, so it must merge in too.
+        # Codex CLI sends `instructions`, a `system`-role item, and a `developer`-role
+        # item; Qwen3.5's template treats `developer` the same as `system`, so it must merge in too.
         chat = responses_request_to_chat(
             _req(
                 instructions="be terse",
@@ -212,8 +209,7 @@ class TestRequestInputTranslation:
 
 class TestCompactionInputDecode:
     """Round-trip half of ``/v1/responses/compact``: a ``compaction`` input item is
-    decrypted back into the items it was built from and spliced into the message list,
-    exactly as ``websocket-compact-new-chain`` requires."""
+    decrypted back into the items it was built from and spliced into the message list."""
 
     def test_compaction_item_decodes_into_messages(self):
         summary_items = [{"role": "assistant", "content": "previously: the user is named Alex"}]
@@ -251,10 +247,8 @@ class TestCompactionInputDecode:
         ]
 
     def test_nested_compaction_item_is_rejected(self):
-        # A blob we mint ourselves never nests another compaction item — but the
-        # decode path must not simply trust that. Simulates a forged blob (or a
-        # future bug in build_compaction) that decrypts to one anyway: recursing
-        # into it unbounded would be a DoS vector, so it must be a clean rejection.
+        # A blob we mint ourselves never nests another compaction item, but the decode
+        # path must not trust that — an unbounded recurse into a forged one would be a DoS vector.
         nested_blob = compaction_crypto.encrypt_items(
             [{"type": "compaction", "id": "cmp_inner", "encrypted_content": "irrelevant"}]
         )
@@ -305,9 +299,8 @@ class TestRequestFieldTranslation:
         ]
 
     def test_hosted_tool_type_dropped_not_rejected(self):
-        # Codex CLI sends its own 'namespace' hosted tool unconditionally, even with
-        # no MCP servers configured (see ggml-org/llama.cpp#23041 for the same fix
-        # against the same client). Only the client-defined function tool survives.
+        # Codex CLI sends its own 'namespace' hosted tool unconditionally, even with no
+        # MCP servers configured. Only the client-defined function tool survives.
         chat = responses_request_to_chat(
             _req(
                 tools=[
@@ -340,8 +333,7 @@ class TestRequestFieldTranslation:
 
 class TestResponseEnvelopeEcho:
     """`store` / `previous_response_id` are echoed from the request. The gateway reads
-    the same `store` field to decide whether to persist, so the response can't claim
-    one thing while the store did another."""
+    the same `store` field to decide whether to persist, so they can't disagree."""
 
     def _build(self, request, **kwargs):
         return build_response_object(request, status="completed", output=[], usage=None, incomplete=None, **kwargs)
@@ -366,7 +358,7 @@ class TestResponseEnvelopeEcho:
 
 class TestResponseResourceRequiredFields:
     """The Open Responses conformance suite validates against `ResponseResource`'s
-    required-field list; these were previously missing or sent as `null`."""
+    required-field list."""
 
     def _build(self, request, **kwargs):
         return build_response_object(request, status="completed", output=[], usage=None, incomplete=None, **kwargs)
@@ -483,17 +475,16 @@ class TestMcpInputItems:
             responses_request_to_chat(_req(input=[{"type": "mcp_call", "output": "9"}]))
 
     def test_mcp_call_missing_output_and_error_rejected(self):
-        # Regression: a client-sent mcp_call with neither 'output' nor 'error' used to
-        # silently produce a tool message with content=None instead of a clear 400.
+        # A client-sent mcp_call with neither 'output' nor 'error' must be a clear 400,
+        # not a tool message with content=None.
         with pytest.raises(UnsupportedResponsesFeatureError, match=r"output.*error"):
             responses_request_to_chat(
                 _req(input=[{"type": "mcp_call", "id": "mcp_1", "name": "roll", "arguments": "{}"}])
             )
 
     def test_mcp_call_non_text_output_rejected(self):
-        # Regression: output/error used to be forwarded to the tool message verbatim,
-        # so a non-text shape (e.g. a raw dict) would reach the chat layer untouched
-        # and surface as a downstream type error (500) instead of a clean 400 here.
+        # A non-text output/error shape (e.g. a raw dict) must be a clean 400 here,
+        # not reach the chat layer untouched and surface as a downstream 500.
         with pytest.raises(UnsupportedResponsesFeatureError, match="content shape"):
             responses_request_to_chat(
                 _req(
