@@ -29,8 +29,7 @@ and overrides the recorded role for a single command.
 The `mship` package is a small installer that runs on any Python 3.10+. Bootstrapping:
 
 1. Refuses unsupported platforms (Windows, musl/Alpine) before downloading anything.
-2. Checks the hardware matches — `--cuda` needs `nvidia-smi` to list a device — so a
-   driverless box fails immediately instead of after several GB.
+2. Checks the variant's build prerequisites — `--cuda` needs `nvcc` and `ninja`.
 3. Provisions `~/.modelship/envs/<variant>/` on **CPython 3.12.10**, installing from a
    hash-pinned dependency list shipped inside the package.
 4. Fetches the pinned `llama-server` build for the platform.
@@ -58,9 +57,9 @@ So upgrading is `uv tool upgrade mship` followed by `mship bootstrap`.
 To bootstrap more than one variant on a host, run `bootstrap` for each — the last
 one is the recorded default, and `mship deploy --thin` selects another explicitly.
 
-`mship bootstrap --cuda --no-hardware-check` skips step 2, to provision an
-environment on a host that does not have the accelerator yet. `deploy` still
-checks the real hardware, so this defers the failure rather than removing it.
+Bootstrapping never checks for the accelerator itself, so `--cuda` provisions on a
+host with no GPU — a golden image, or a node whose driver is not up yet. The variant
+flag decides what to install; `deploy` is what refuses to run without the hardware.
 
 ## Platform prerequisites
 
@@ -90,6 +89,13 @@ sudo apt-get update && sudo apt-get install -y \
 `nvcc` does not need to be on `PATH` — those packages create the `/usr/local/cuda`
 symlink flashinfer looks for. The first vLLM deploy is slow while kernels compile;
 they are cached per GPU architecture under `~/.modelship/cache/flashinfer`.
+
+`mship bootstrap --cuda` refuses to run without `nvcc` and `ninja`, rather than
+letting the first vLLM deploy fail with `Could not find nvcc` after several GB have
+downloaded. The `--cuda` variant ships vLLM and Diffusers, so both are required even
+though `llama_server` GGUF offload needs neither. Being software, they are checkable
+wherever you provision — unlike the GPU, which bootstrap does not look for at all.
+`mship info` reports the same check afterwards.
 
 **Loader coverage on `--cuda`.** `vllm`, `diffusers`, and `llama_server` all get full
 GPU. `llama_server` gets a CUDA ggml backend beside the same binary every other
