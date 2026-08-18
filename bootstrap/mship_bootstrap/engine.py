@@ -12,7 +12,7 @@ import subprocess
 import sys
 from importlib import resources
 
-from . import paths
+from . import gates, paths
 from .variants import VARIANTS, Variant, engine_requirement, read_recorded
 
 PYTHON_VERSION = "3.12.10"
@@ -150,3 +150,6 @@ def print_info(version: str) -> None:
     for name, size in envs:
         stale = "" if is_current(VARIANTS[name], version) else "  (stale — re-run bootstrap)"
         print(f"  {name:<6} {size:>8}  {paths.env_dir(name)}{stale}")
+    if any(name == "cuda" for name, _ in envs):
+        gaps = gates.cuda_toolkit_gaps()
+        print(f"cuda toolkit:         {'missing ' + ' and '.join(gaps) if gaps else 'ok'}")

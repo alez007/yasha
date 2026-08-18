@@ -44,6 +44,10 @@ docker run ... -p 8001:8000 ...   # exposed on host:8001
 
 Weights are cached to `/.cache/huggingface` inside the container. Mount a persistent host directory (`-v ./models-cache:/.cache`) so subsequent runs reuse them. For large models, set a longer `docker run` timeout or pre-pull with `huggingface-cli download`.
 
+## `Could not find nvcc` on a native CUDA install
+
+flashinfer JIT-compiles its kernels when vLLM loads a model, so `mship bootstrap --cuda` requires the CUDA toolkit and `ninja` beyond the driver and refuses to run without them; install them per [Native install](install-native.md#platform-prerequisites). `nvcc` need not be on `PATH` — the apt packages create the `/usr/local/cuda` symlink that torch resolves against, and the check looks there too. `mship info` reports the same check on an already-bootstrapped host.
+
 ## `CUDA out of memory` with vLLM
 
 vLLM reserves VRAM based on `num_gpus` (fraction of one GPU). If a single model uses more than its budget, lower `num_gpus` for other deployments, or set `vllm_engine_kwargs.max_model_len` to cap KV cache size.

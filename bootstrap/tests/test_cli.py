@@ -16,6 +16,7 @@ def provisioned(tmp_path, monkeypatch):
     with (
         patch.object(cli.gates, "check_platform"),
         patch.object(cli.gates, "check_hardware"),
+        patch.object(cli.gates, "check_toolchain"),
         patch.object(cli.uv_binary, "ensure_uv", return_value="/usr/bin/uv"),
         patch.object(cli.engine, "provision", return_value="/env/bin/python"),
         patch.object(cli.engine, "is_current", return_value=True),
@@ -195,18 +196,26 @@ class TestBootstrap:
             cli.main(["bootstrap", "--cpu"])
         assert not os.path.exists(paths.env_file())
 
-    def test_checks_the_hardware_by_default(self, provisioned):
+    def test_never_checks_the_hardware(self, provisioned):
         cli.main(["bootstrap", "--cuda"])
-        cli.gates.check_hardware.assert_called_once_with("cuda")
-
-    def test_no_hardware_check_skips_it(self, provisioned):
-        cli.main(["bootstrap", "--cuda", "--no-hardware-check"])
         cli.gates.check_hardware.assert_not_called()
         cli.engine.provision.assert_called_once()
 
-    def test_no_hardware_check_is_not_a_trailing_argument(self, provisioned):
-        cli.main(["bootstrap", "--cpu", "--no-hardware-check"])
-        cli.engine.provision.assert_called_once()
+    def test_checks_the_toolchain(self, provisioned):
+        cli.main(["bootstrap", "--cuda"])
+        cli.gates.check_toolchain.assert_called_once_with("cuda")
+
+    def test_a_missing_toolchain_provisions_nothing(self, provisioned):
+        cli.gates.check_toolchain.side_effect = cli.gates.GateError("error: --cuda is missing ninja.")
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["bootstrap", "--cuda"])
+        assert "ninja" in str(exc.value)
+        cli.engine.provision.assert_not_called()
+
+    def test_an_unknown_flag_is_refused(self, provisioned):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["bootstrap", "--cpu", "--no-hardware-check"])
+        assert "takes no arguments" in str(exc.value)
 
 
 class TestDeployInstallsNothing:

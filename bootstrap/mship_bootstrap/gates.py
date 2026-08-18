@@ -7,6 +7,8 @@ import platform
 import shutil
 import subprocess
 
+CUDA_TOOLKIT_DOCS = "https://docs.model-ship.ai/install-native/#platform-prerequisites"
+
 
 class GateError(Exception):
     pass
@@ -86,3 +88,35 @@ def check_hardware(required: str | None) -> None:
             "Use --cuda for an NVIDIA host or --cpu for a CPU-only node."
         )
     raise GateError(f"error: --{required} is unavailable on this machine (detected {found}).")
+
+
+def find_nvcc() -> str | None:
+    """CUDA_HOME/CUDA_PATH, then PATH, then /usr/local/cuda — torch's own order in
+    `cpp_extension._find_cuda_home`. The CUDA apt packages leave nvcc off PATH."""
+    for var in ("CUDA_HOME", "CUDA_PATH"):
+        root = (os.environ.get(var) or "").strip()
+        if root and os.path.exists(candidate := os.path.join(root, "bin", "nvcc")):
+            return candidate
+    if found := shutil.which("nvcc"):
+        return found
+    return "/usr/local/cuda/bin/nvcc" if os.path.exists("/usr/local/cuda/bin/nvcc") else None
+
+
+def cuda_toolkit_gaps() -> list[str]:
+    """What flashinfer's JIT needs beyond the driver."""
+    gaps = []
+    if find_nvcc() is None:
+        gaps.append("nvcc (CUDA toolkit)")
+    if shutil.which("ninja") is None:
+        gaps.append("ninja")
+    return gaps
+
+
+def check_toolchain(variant_name: str) -> None:
+    if variant_name != "cuda" or not (gaps := cuda_toolkit_gaps()):
+        return
+    raise GateError(
+        f"error: --cuda is missing {' and '.join(gaps)}.\n"
+        "vLLM and Diffusers JIT-compile kernels at model load and fail without them.\n"
+        f"See {CUDA_TOOLKIT_DOCS}"
+    )
