@@ -11,12 +11,15 @@ from .variants import VariantError, split_variant_flag
 from .variants import resolve as resolve_variant
 
 _COMMANDS = ("bootstrap", "deploy", "info")
+_NO_HARDWARE_CHECK = "--no-hardware-check"
 
-_USAGE = """usage: mship {bootstrap,deploy,info} [--cuda|--cpu|--metal|--thin] [args]
+_USAGE = f"""usage: mship {{bootstrap,deploy,info}} [--cuda|--cpu|--metal|--thin] [args]
 
   bootstrap   install the engine environment for a variant (run once)
   deploy      serve models, using the bootstrapped environment
   info        report bootstrapper state, or the engine's own report with a variant
+
+  {_NO_HARDWARE_CHECK}   bootstrap for an accelerator this host does not have
 """
 
 
@@ -40,10 +43,10 @@ def main(argv: list[str] | None = None) -> None:
     try:
         variant = resolve_variant(flag, recorded=variants.read_recorded(paths.env_file()))
         gates.check_platform()
-        gates.check_hardware(variant.requires_accelerator)
         if command == "bootstrap":
             _bootstrap(variant, rest)
             return
+        gates.check_hardware(variant.requires_accelerator)
         if not engine.is_current(variant, __version__):
             sys.exit(engine.describe_staleness(variant, __version__))
     except (VariantError, gates.GateError, uv_binary.UvError, engine.EngineError) as e:
@@ -56,8 +59,14 @@ def main(argv: list[str] | None = None) -> None:
 
 def _bootstrap(variant, rest: list[str]) -> None:
     # Nothing here is forwarded to the engine.
+    check_hardware = _NO_HARDWARE_CHECK not in rest
+    rest = [arg for arg in rest if arg != _NO_HARDWARE_CHECK]
     if rest:
         sys.exit(f"error: mship bootstrap takes no arguments besides the variant, got {' '.join(rest)}")
+
+    # Deferred, not dropped: deploy still gates on the real hardware.
+    if check_hardware:
+        gates.check_hardware(variant.requires_accelerator)
 
     uv = uv_binary.ensure_uv()
     engine.provision(variant, uv, __version__)

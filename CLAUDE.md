@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 # Install (choose cuda XOR cpu, plus dev)
 uv sync --extra dev --extra cuda   # what CI uses
-uv sync --extra dev --extra cpu    # CPU-only dev
+uv sync --extra dev --extra cpu --extra vllm-cpu   # CPU-only dev (vllm-cpu pulls `openai`, which conftest needs)
 
 make lint        # ruff check + ruff format --check + pyright — all three MUST pass
 make lint-fix    # auto-fix ruff issues
@@ -35,14 +35,14 @@ When running tests on your own initiative, skip the slow integration suite: `uv 
 
 ## Running the server
 
-`mship_deploy.py` is the entry point (not a console script, not `python -m`). It:
+`mship deploy` is the entry point (`modelship/launcher.py`); `mship_deploy.py` survives as a 3-line shim for source runs. It:
 
-1. Reads `config/models.yaml` (gitignored — copy from `config/examples/`). An explicit `--config <path>` that doesn't exist is still a hard error. Absent both `--config` and the default file, `mship_deploy.py` no longer errors — it bootstraps an empty coordinator (gateway up, no models) that waits for a later `--config`/`--reconcile` redeploy or a joining node to bring capacity; this is the mode a bare `docker run modelship:thin` with no mounted config exercises.
+1. Reads `config/models.yaml` (gitignored — copy from `config/examples/`). An explicit `--config <path>` that doesn't exist is still a hard error. Absent both `--config` and the default file, it no longer errors — it bootstraps an empty coordinator (gateway up, no models) that waits for a later `--config`/`--reconcile` redeploy or a joining node to bring capacity; this is the mode a bare `docker run modelship:thin` with no mounted config exercises.
 2. Starts its **own** Ray head by default and tears it down on exit. With `--use-existing-ray-cluster` it instead connects to a cluster you manage via `ray.init(address="auto")` and deploys-and-exits without teardown — the driver must run **on** a cluster node (it can't attach from off-cluster; k8s does this via a KubeRay RayJob).
 3. Deploys models **additively** by default (each gets a random suffix like `qwen-a3f9k`). Use `--reconcile` to instead make the cluster match the config exactly (add/remove/replace) — it never tears the cluster down.
 4. Starts a FastAPI Ray Serve app named `modelship api` on port 8000. Override via `--gateway-name` (multiple gateways can coexist on one cluster).
 
-Docker's `CMD` is `uv run --no-sync mship_deploy.py` (auto-detecting CPUs/GPUs unless `MSHIP_NODE_NUM_CPUS`/`MSHIP_NODE_NUM_GPUS` set), against the prebuilt venv (extras chosen by `--build-arg MSHIP_VARIANT=thin|cpu|cuda`). The Dev Container overrides this — inside it you must `uv sync` and run `mship_deploy.py` manually. Right after connecting, the driver logs the cluster's observed node/GPU/CPU totals (total vs. currently schedulable) — the quickest way to tell a legitimately-waiting head apart from a misconfigured one.
+The images run `mship bootstrap --<variant>` at build time (the same command a native install runs, with the release wheels resolved locally via `UV_FIND_LINKS`) and their ENTRYPOINT prepends `mship`, so `docker run <img> deploy --config …` and `docker run <img> info` reach the same CLI. `--build-arg MSHIP_VARIANT=thin|cpu|cuda` picks the variant, `MSHIP_VERSION` the wheel. The engine lives at `/opt/mship/envs/<variant>/.venv` — no `/.venv`, no source tree in the image. The `dev` target is the exception: it syncs from `uv.lock` into `/.venv` and installs no project, so inside a Dev Container you `uv sync` and run `mship_deploy.py` manually. Right after connecting, the driver logs the cluster's observed node/GPU/CPU totals (total vs. currently schedulable) — the quickest way to tell a legitimately-waiting head apart from a misconfigured one.
 
 ## Architecture map
 

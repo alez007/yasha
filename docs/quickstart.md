@@ -20,7 +20,7 @@ docker run --rm --shm-size=8g \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/modelship-ai/modelship:latest-cpu
+  ghcr.io/modelship-ai/modelship:latest-cpu deploy
 ```
 
 Images are multi-arch (amd64 + arm64), so this works on Apple Silicon and ARM
@@ -60,7 +60,7 @@ docker run --rm --shm-size=8g --gpus all \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/modelship-ai/modelship:latest-cuda
+  ghcr.io/modelship-ai/modelship:latest-cuda deploy
 ```
 
 !!! note

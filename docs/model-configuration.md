@@ -4,7 +4,7 @@ Reference for `models.yaml` (default: `config/models.yaml`). Each entry under `m
 
 ## CLI Options
 
-`mship deploy` (or `mship_deploy.py` when running from source) accepts these arguments (env vars work as fallbacks; CLI wins over env):
+`mship deploy` accepts these arguments (env vars work as fallbacks; CLI wins over env):
 
 | Argument | Env Var | Default | Description |
 |---|---|---|---|
@@ -468,7 +468,7 @@ models:
 | `upscale_delay_s` | float | Seconds of sustained over-load before adding replicas. Default: Ray Serve's own |
 | `downscale_delay_s` | float | Seconds of sustained under-load before removing replicas. Default: Ray Serve's own. Raise it to avoid thrashing on models with slow GPU warm-up |
 
-Autoscaling bounds are changed in place on `mship_deploy --reconcile` (excluded from the config fingerprint) — tuning them doesn't tear down and rebuild the deployment.
+Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded from the config fingerprint) — tuning them doesn't tear down and rebuild the deployment.
 
 ## Environment Variables
 

@@ -4,7 +4,7 @@ Deploy [modelship](https://github.com/modelship-ai/modelship) — an OpenAI-comp
 multi-model inference server — on Kubernetes via [KubeRay](https://github.com/ray-project/kuberay).
 
 The chart brings up a **RayCluster** (one CPU-only head + worker groups) and a
-**RayJob** that submits `mship_deploy.py` to run **on** the cluster (KubeRay's
+**RayJob** that runs `mship deploy` **on** the cluster (KubeRay's
 supported way to run a driver against a RayCluster) and deploy the models
 declared in your `models.yaml`. Re-running (`helm upgrade`) re-applies the config
 additively, or reconciles it when `deploy.reconcile=true`.

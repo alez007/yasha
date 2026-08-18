@@ -1,5 +1,6 @@
-"""The bootstrapper's pinned llama.cpp tag must not drift from the Dockerfile's
-pins, nor from what llama-cpp-build.yml actually builds."""
+"""The bootstrapper's pinned llama.cpp tag must not drift from what
+llama-cpp-build.yml actually builds. The images carry no pin of their own — they
+fetch through `mship bootstrap` like a native install."""
 
 from pathlib import Path
 
@@ -15,14 +16,10 @@ def _build_workflow() -> dict:
     return yaml.safe_load(_BUILD_WORKFLOW.read_text())
 
 
-def test_dockerfile_pins_match_the_bootstrapper():
-    """Both fetch the same tarballs, so a drift here means the image and a native
-    node run different binaries."""
-    dockerfile = (_REPO_ROOT / "Dockerfile").read_text()
-    assert f"\nARG LLAMA_CPP_TAG={llama_cpp._LLAMA_CPP_TAG}\n" in dockerfile
-    assert f"\nARG LLAMA_CPP_SHA256_LINUX_X64={llama_cpp._SHA256_LINUX_X64}\n" in dockerfile
-    assert f"\nARG LLAMA_CPP_SHA256_LINUX_ARM64={llama_cpp._SHA256_LINUX_ARM64}\n" in dockerfile
-    assert f"\nARG LLAMA_CPP_SHA256_CUDA_X64={llama_cpp._SHA256_CUDA_X64}\n" in dockerfile
+def test_dockerfile_carries_no_pin_of_its_own():
+    """A reintroduced ARG would be a second source of truth the pin job no longer
+    rewrites."""
+    assert "LLAMA_CPP_TAG" not in (_REPO_ROOT / "Dockerfile").read_text()
 
 
 def test_asset_url_embeds_pinned_tag():
@@ -48,12 +45,11 @@ def test_makefile_triggers_the_build_workflow():
     assert f"gh workflow run {_BUILD_WORKFLOW.name}" in makefile
 
 
-def test_pin_job_rewrites_both_pinned_files():
+def test_pin_job_rewrites_the_pinned_file():
     pin = _build_workflow()["jobs"]["pin"]
     assert pin["needs"] == "publish"
     steps = " ".join(step.get("run", "") for step in pin["steps"])
     assert "bootstrap/mship_bootstrap/llama_cpp.py" in steps
-    assert "Dockerfile" in steps
 
 
 def test_cuda_backend_shares_the_linux_x64_runner():

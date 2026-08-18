@@ -100,7 +100,7 @@ docker run --rm --shm-size=8g \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/modelship-ai/modelship:latest-cpu
+  ghcr.io/modelship-ai/modelship:latest-cpu deploy
 ```
 
 Images are multi-arch (amd64 + arm64), so this works on Apple Silicon and ARM Linux hosts too.
@@ -135,7 +135,7 @@ mship deploy --config models.yaml
 
 `mship bootstrap` installs a pinned Python 3.12.10 environment for that role and records it, so `deploy` afterwards needs no variant flag and installs nothing — it starts straight through. Nothing to pin and nothing to match across machines: every node lands on the same footing, so a new one joins the cluster by running the same two commands. After a `pip install -U mship`, re-run `mship bootstrap` to move the environment with it.
 
-Platform prerequisites still apply: Xcode Command Line Tools on macOS, `build-essential`/`cmake` on Linux, plus `ninja-build` and NVIDIA's `nvcc` for `--cuda`. Alpine and other musl distros are unsupported. See [docs/installation.md](docs/installation.md) for the full list.
+Platform prerequisites still apply: Xcode Command Line Tools on macOS, `build-essential`/`cmake` on Linux, plus `ninja-build` and NVIDIA's `nvcc` for `--cuda`. Alpine and other musl distros are unsupported. See [docs/install-native.md](docs/install-native.md) for the full list.
 
 ### GPU (vLLM, Diffusers)
 
@@ -147,7 +147,7 @@ docker run --rm --shm-size=8g --gpus all \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/modelship-ai/modelship:latest-cuda
+  ghcr.io/modelship-ai/modelship:latest-cuda deploy
 ```
 
 > [!NOTE]

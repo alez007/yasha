@@ -32,7 +32,7 @@ The recommended way to develop Modelship is with VS Code Dev Containers. The con
 
 > **Why not `mship deploy`?** That console script ships only in the separate `bootstrap/` package (the `mship` installer), never synced into this repo's venv. `mship_deploy.py` and `python -m modelship.launcher deploy` are equivalent here.
 >
-> **Why the extra steps?** The Dev Container overrides the image's default `CMD` (`uv run --no-sync python -m modelship.launcher deploy`). Inside a Dev Container you sync deps and start it manually.
+> **Why the extra steps?** The `dev` target is built for source work: it syncs dependencies from `uv.lock` into `/.venv` and never installs the project, so you sync and start it yourself. The published images instead run `mship bootstrap` at build time and start at `mship deploy` — see [Docker install](install-docker.md).
 
 The Dev Container automatically:
 - Builds the dev image from `Dockerfile` (target: `dev`)
@@ -114,9 +114,9 @@ uv run mship_deploy.py
 
 ## llama-server binary (`llama_server` loader)
 
-The `llama_server` loader launches a `llama-server` subprocess and finds it via `MSHIP_LLAMA_SERVER_BIN`. Inside the Docker images (dev and prod, cpu/cuda variants) this is preconfigured: a pinned llama.cpp build lives at `/opt/llama.cpp`, and the env var points at its wrapper script. The `cuda` variant adds `libggml-cuda.so` beside that same binary, and skips it when no GPU is visible. The `thin` variant ships no binary at all — it never loads a model.
+The `llama_server` loader launches a `llama-server` subprocess and finds it via `MSHIP_LLAMA_SERVER_BIN`. `mship bootstrap` provisions it (downloaded, sha256-verified, cached under `$MSHIP_HOME/builds/<variant>/llama.cpp/`) and `mship deploy` points the env var at its wrapper script — see `bootstrap/mship_bootstrap/llama_cpp.py` and its `_ASSETS` table. These are modelship's own builds of one llama.cpp tag for every platform it ships ([`modelship-ai/llama-cpp-builds`](https://github.com/modelship-ai/llama-cpp-builds)), so every node in a cluster runs the identical binary. The `cuda` variant adds `libggml-cuda.so` beside it. The `thin` variant ships no binary at all — it never loads a model.
 
-On a native `mship` install on macOS (arm64) or Linux (x86_64/aarch64), `MSHIP_LLAMA_SERVER_BIN` is auto-provisioned (downloaded, sha256-verified, and cached under `~/.modelship/builds/<variant>/llama.cpp/`) — see `bootstrap/mship_bootstrap/llama_cpp.py` and its `_ASSETS` table. These are modelship's own builds of one llama.cpp tag for every platform it ships ([`modelship-ai/llama-cpp-builds`](https://github.com/modelship-ai/llama-cpp-builds)), which is also where the Docker images get theirs, so every node in a cluster runs the identical binary. A CUDA host additionally gets `libggml-cuda.so`. Set `MSHIP_LLAMA_SERVER_BIN` yourself to skip this and use your own binary.
+The published images run that same bootstrap at build time, so they arrive preconfigured. The `dev` target does **not** — set `MSHIP_LLAMA_SERVER_BIN` yourself, or run `mship bootstrap` inside it, to exercise the `llama_server` loader there.
 
 For a platform outside that table, or to use a different llama.cpp build than the pinned one, download a build from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) and extract it. The raw `llama-server` binary does **not** run standalone — it dynamically links the `libggml*`/`libllama*` libraries that ship as sibling files in the same archive, so point `MSHIP_LLAMA_SERVER_BIN` at a small wrapper that puts the extracted directory on the loader path:
 
@@ -136,32 +136,40 @@ export MSHIP_LLAMA_SERVER_BIN=/path/to/llama-server.sh
 Three images are published — a thin control/coordinator image (no torch/vllm) plus two accelerator
 node images:
 
-| Variant | Tag suffix | Target | Platforms |
-|---|---|---|---|
-| Thin (control/coordinator) | *(none)* — default | `prod-thin` | amd64, arm64 |
-| CUDA (GPU node) | `-cuda` | `prod` | amd64 |
-| CPU (CPU node) | `-cpu` | `prod` | amd64, arm64 |
+| Variant | Tag suffix | Platforms |
+|---|---|---|
+| Thin (control/coordinator) | *(none)* — default | amd64, arm64 |
+| CUDA (GPU node) | `-cuda` | amd64 |
+| CPU (CPU node) | `-cpu` | amd64, arm64 |
+
+All three share the `prod` target; `MSHIP_VARIANT` is what differs.
 
 Floating tags (`:latest`, `:latest-cuda`, `:latest-cpu`) are single-node only — Ray refuses to form
 a cluster across mismatched versions, so any multi-node deployment must pin every node to the same
 `:X.Y.Z` (or `-cuda`/`-cpu`) tag.
 
-To build the production images locally:
+The production images install the release wheels rather than the source tree, so build those first —
+`release.yml` does the same, from a `wheels` job the image builds depend on:
 
-**Thin:**
 ```bash
-docker build -t modelship:dev-thin --target prod-thin --build-arg MSHIP_VARIANT=thin .
+uv build -o wheels .
+uv build -o wheels bootstrap
 ```
 
-**CUDA:**
+Then, per variant (`thin` shown; swap in `cpu` or `cuda`):
+
 ```bash
-docker build -t modelship:dev-cuda --target prod .
+docker build -t modelship:dev-thin \
+  --target prod \
+  --build-arg MSHIP_VARIANT=thin \
+  --build-arg MSHIP_VERSION="$(uv version --short)" \
+  --build-context wheels=./wheels \
+  .
 ```
 
-**CPU:**
-```bash
-docker build -t modelship:dev-cpu --target prod --build-arg MSHIP_VARIANT=cpu .
-```
+`MSHIP_VERSION` must match the wheels in `./wheels` — the build resolves
+`mship==<version>` against that directory, so a stale `wheels/` from an earlier version fails to
+resolve rather than silently installing the wrong one. Rebuild the wheels after a version bump.
 
 ## Ports
 

@@ -5,16 +5,9 @@ set -e
 TARGET_UID=${MSHIP_UID:-1000}
 TARGET_GID=${MSHIP_GID:-1000}
 
-# The prod image's ENTRYPOINT bakes in a leading "--serve" marker (see Dockerfile) so
-# trailing `docker run` args land here as flags for `mship deploy`. Run via `-m` (not
-# the `mship` console script) since the image installs deps with --no-install-project,
-# so the project itself is never pip-installed into the venv. The dev image's
-# ENTRYPOINT omits the marker, keeping plain passthrough (e.g. bash by default).
-if [ "$1" = "--serve" ]; then
-    shift
-    set -- uv run --no-sync python -m modelship.launcher deploy "$@"
-fi
-
+# The prod ENTRYPOINT prepends `mship`, so `docker run` args arrive as its
+# subcommand; the dev one prepends nothing, keeping plain passthrough.
+#
 # When started as root (the standalone `docker run` path), fix up ownership for
 # any root-owned bind mount and drop privileges to the unprivileged user before
 # exec'ing the command.

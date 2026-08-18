@@ -90,7 +90,9 @@ class TestEngineEnvironment:
         cli.main(["deploy", "--thin"])
         assert provisioned.call_args[0][2]["MSHIP_NODE_NUM_CPUS"] == "4"
 
-    def test_cache_dir_defaults_under_mship_home(self, provisioned, tmp_path):
+    def test_cache_dir_defaults_under_mship_home(self, provisioned, tmp_path, monkeypatch):
+        # The dev container exports one, and setdefault would keep it.
+        monkeypatch.delenv("MSHIP_CACHE_DIR", raising=False)
         cli.main(["deploy", "--cpu"])
         assert provisioned.call_args[0][2]["MSHIP_CACHE_DIR"] == os.path.join(str(tmp_path), "cache")
 
@@ -193,8 +195,25 @@ class TestBootstrap:
             cli.main(["bootstrap", "--cpu"])
         assert not os.path.exists(paths.env_file())
 
+    def test_checks_the_hardware_by_default(self, provisioned):
+        cli.main(["bootstrap", "--cuda"])
+        cli.gates.check_hardware.assert_called_once_with("cuda")
+
+    def test_no_hardware_check_skips_it(self, provisioned):
+        cli.main(["bootstrap", "--cuda", "--no-hardware-check"])
+        cli.gates.check_hardware.assert_not_called()
+        cli.engine.provision.assert_called_once()
+
+    def test_no_hardware_check_is_not_a_trailing_argument(self, provisioned):
+        cli.main(["bootstrap", "--cpu", "--no-hardware-check"])
+        cli.engine.provision.assert_called_once()
+
 
 class TestDeployInstallsNothing:
+    def test_deploy_still_gates_on_hardware(self, provisioned):
+        cli.main(["deploy", "--cuda", "--config", "x"])
+        cli.gates.check_hardware.assert_called_once_with("cuda")
+
     def test_deploy_never_provisions(self, provisioned):
         cli.main(["deploy", "--cpu", "--config", "x"])
         cli.uv_binary.ensure_uv.assert_not_called()

@@ -46,7 +46,7 @@ docker run -d --network=host --shm-size=8g \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -e MSHIP_STATE_STORE=redis://your-redis-host:6379/0 \
-  ghcr.io/modelship-ai/modelship:0.6.5 \
+  ghcr.io/modelship-ai/modelship:0.6.5 deploy \
   --ray-auth=token --ray-port=6380
 ```
 
@@ -66,7 +66,7 @@ docker exec <head-container> cat ~/.ray/auth_token
 ```bash
 docker run -d --network=host --shm-size=8g --gpus all \
   -v ./models-cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5-cuda \
+  ghcr.io/modelship-ai/modelship:0.6.5-cuda deploy \
   --address=<vm-a-private-ip>:6380 --token=<token-from-above>
 ```
 
@@ -166,13 +166,13 @@ a separate own-head container with its own distinct ports:
 docker run -d --network=host --shm-size=8g \
   -v ./cluster-a/models.yaml:/modelship/config/models.yaml \
   -v ./cluster-a/cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5 \
+  ghcr.io/modelship-ai/modelship:0.6.5 deploy \
   --ray-port=6380 --openai-api-port=8000 --dashboard-port=8265
 
 docker run -d --network=host --shm-size=8g \
   -v ./cluster-b/models.yaml:/modelship/config/models.yaml \
   -v ./cluster-b/cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5 \
+  ghcr.io/modelship-ai/modelship:0.6.5 deploy \
   --ray-port=6381 --openai-api-port=8001 --dashboard-port=8266
 ```
 
@@ -191,12 +191,12 @@ cluster's resource ledger is independent and has no visibility into the other's:
 ```bash
 # Joins cluster A
 docker run -d --network=host --gpus device=0 \
-  ghcr.io/modelship-ai/modelship:0.6.5-cuda \
+  ghcr.io/modelship-ai/modelship:0.6.5-cuda deploy \
   --address=<cluster-a-head>:6380 --node-num-gpus=1
 
 # Joins cluster B — same physical GPU, different cluster
 docker run -d --network=host --gpus device=0 \
-  ghcr.io/modelship-ai/modelship:0.6.5-cuda \
+  ghcr.io/modelship-ai/modelship:0.6.5-cuda deploy \
   --address=<cluster-b-head>:6380 --node-num-gpus=1
 ```
 
