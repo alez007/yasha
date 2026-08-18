@@ -9,10 +9,16 @@ import importlib.util
 import os
 import platform
 import sys
+from typing import TYPE_CHECKING
+
+import yaml
 
 from modelship.deploy.capabilities import LOADER_MODULES
 from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.cache import resolve_cache_root
+
+if TYPE_CHECKING:
+    from modelship.utils.config_schema import ModelshipConfig
 
 _REQUIRED_PYTHON = (3, 12, 10)
 
@@ -38,8 +44,9 @@ def _cmd_deploy(argv: list[str]) -> None:
     os.environ.setdefault("MSHIP_CACHE_DIR", resolve_cache_root())
     _guard_python_version()
 
-    if _is_own_head_deploy():
-        _check_loader_capabilities(args.config)
+    config = _validate_config(args.config)
+    if config is not None and _is_own_head_deploy():
+        _check_loader_capabilities({m.loader.value for m in config.models})
 
     from modelship.driver import main as driver_main
 
@@ -91,14 +98,25 @@ def _advertises_no_capacity() -> bool:
     return not any(reserved)
 
 
-def _check_loader_capabilities(config_path: str | None) -> None:
-    if not config_path or not os.path.isfile(config_path):
-        return
-    import yaml
+def _validate_config(config_path: str | None) -> ModelshipConfig | None:
+    """Parse and validate models.yaml before the driver imports ray, so a bad
+    config fails in milliseconds instead of after the Ray head is up. Returns
+    None when there's no config to deploy — the driver bootstraps an empty
+    coordinator in that case."""
+    from pydantic import ValidationError
 
-    with open(config_path) as f:
-        raw = yaml.safe_load(f) or {}
-    loaders = {str(m.get("loader")) for m in raw.get("models", []) if isinstance(m, dict) and m.get("loader")}
+    from modelship.deploy.config import config_absent, load_yaml_config
+
+    if config_absent(config_path):
+        return None
+    try:
+        return load_yaml_config(config_path)
+    except (FileNotFoundError, ValidationError, yaml.YAMLError, ValueError) as e:
+        print(f"error: invalid config: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _check_loader_capabilities(loaders: set[str]) -> None:
     for loader in loaders:
         module = LOADER_MODULES.get(loader)
         if module and importlib.util.find_spec(module) is None:

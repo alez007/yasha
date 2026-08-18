@@ -4,10 +4,9 @@ from pathlib import Path
 import yaml
 from pydantic_yaml import parse_yaml_raw_as
 
-from modelship.infer.infer_config import ModelLoader, ModelshipConfig
-from modelship.infer.model_resolver import check_model_source
 from modelship.logging import get_logger
 from modelship.utils import is_pathy
+from modelship.utils.config_schema import ModelLoader, ModelshipConfig
 
 logger = get_logger("startup")
 
@@ -101,6 +100,10 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
     load time in mship_deploy.py — `huggingface_hub.HF_HOME` is latched at
     import, so setting them later doesn't take effect.
     """
+    # Deferred: pulls huggingface_hub, which the load/validate helpers above
+    # (launcher.py's pre-ray fast path) must not pay for.
+    from modelship.infer.model_resolver import check_model_source
+
     for cfg in yml_conf.models:
         if cfg.loader == ModelLoader.whispercpp and cfg.model and _is_whispercpp_builtin_ref(cfg.model):
             # pywhispercpp resolves/downloads its own built-in models; nothing to pin here.
@@ -129,3 +132,10 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
                 f"(vLLM 0.24 dropped in-tree GGUF). Use `loader: llama_server` for GGUF models, or point "
                 f"the vllm loader at a non-GGUF checkpoint (safetensors, or an AWQ/GPTQ/FP8 quant)."
             )
+
+
+def config_absent(arg_path: str | None) -> bool:
+    """True when there's nothing to load: no ``--config`` and no default file.
+    The driver bootstraps an empty coordinator in that case instead of erroring;
+    an explicit ``--config`` that doesn't exist is still a hard error."""
+    return arg_path is None and not default_config_path().exists()
