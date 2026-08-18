@@ -9,7 +9,7 @@ Reference for `models.yaml` (default: `config/models.yaml`). Each entry under `m
 | Argument | Env Var | Default | Description |
 |---|---|---|---|
 | `--config` | — | `config/models.yaml` | Path to models config file. An explicit path that doesn't exist is a hard error |
-| `--gateway-name` | `MSHIP_GATEWAY_NAME` | `modelship api` | Name for the API gateway app. Multiple gateways can coexist on one cluster |
+| `--gateway-name` | `MSHIP_GATEWAY_NAME` | `modelship` | Name for the API gateway app. Multiple gateways can coexist on one cluster, each mounted at `/<slugified-name>` (e.g. `modelship` → `/modelship/v1/...`) |
 | `--gateway-replicas` | `MSHIP_GATEWAY_REPLICAS` | `1` | Number of API gateway replicas (routing/ingress HA; replicas sync routing via the deploy coordinator) |
 | `--openai-api-port` | `MSHIP_OPENAI_API_PORT` | `8000` | Port for the OpenAI-compatible API |
 | `--use-existing-ray-cluster` | `MSHIP_USE_EXISTING_RAY_CLUSTER` | `false` | Connect to a Ray cluster you manage (driver must run **on** a cluster node) instead of starting one. Implies deploy-and-exit, no teardown |
@@ -477,7 +477,7 @@ Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded 
 | `HF_TOKEN` | HuggingFace access token | — |
 | `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace, vLLM, sherpa_onnx, etc.) | `/.cache` |
 | `MSHIP_STATE_STORE` | State-store connection URI for the effective config, deploy coordinator + `/v1/responses` conversations (see [State store](#state-store-mship_state_store)) | `memory://` |
-| `MSHIP_GATEWAY_NAME` | Name for the API gateway app | `modelship api` |
+| `MSHIP_GATEWAY_NAME` | Name for the API gateway app | `modelship` |
 | `MSHIP_GATEWAY_REPLICAS` | Number of API gateway replicas | `1` |
 | `MSHIP_OPENAI_API_PORT` | Port for the OpenAI-compatible API | `8000` |
 | `MSHIP_MAX_REQUEST_BODY_BYTES` | Maximum allowed request body size in bytes | `52428800` (50 MB) |
@@ -519,11 +519,11 @@ The Helm chart always sets `redis://…` in Kubernetes; the same Redis also back
 `/v1/responses` keeps conversations server-side, so a follow-up turn sends only the new input instead of replaying the whole history:
 
 ```bash
-curl localhost:8000/v1/responses -H 'Content-Type: application/json' \
+curl localhost:8000/modelship/v1/responses -H 'Content-Type: application/json' \
   -d '{"model": "qwen", "input": "my name is Alex"}'
 # response id comes back in `id`
 
-curl localhost:8000/v1/responses -H 'Content-Type: application/json' \
+curl localhost:8000/modelship/v1/responses -H 'Content-Type: application/json' \
   -d '{"model": "qwen", "input": "what is my name?", "previous_response_id": "resp_…"}'
 ```
 

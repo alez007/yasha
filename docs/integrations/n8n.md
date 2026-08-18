@@ -9,7 +9,7 @@ n8n's **OpenAI Chat Model** node (used by its AI Agent / LangChain nodes)
 takes an OpenAI credential with a configurable **Base URL**:
 
 1. Create a new credential of type **OpenAI API**.
-2. Set **Base URL** to `http://<modelship-host>:8000/v1`.
+2. Set **Base URL** to `http://<modelship-host>:8000/modelship/v1`.
 3. Set **API Key** to a real key if `MSHIP_API_KEYS` is configured, or any
    non-empty placeholder if not.
 4. Use that credential in the **OpenAI Chat Model** node and set **Model** to
@@ -25,7 +25,7 @@ server-side conversation state, which n8n's built-in node doesn't expose),
 use the **HTTP Request** node:
 
 - **Method:** `POST`
-- **URL:** `http://<modelship-host>:8000/v1/responses`
+- **URL:** `http://<modelship-host>:8000/modelship/v1/responses`
 - **Authentication:** Generic → Header Auth, header `Authorization` = `Bearer
   <key>` (if `MSHIP_API_KEYS` is set)
 - **Body (JSON):**

@@ -34,6 +34,19 @@ _DEFAULT_OPENAI_API_PORT = 8000
 # Not 6379 (ray-start-head's default) — that collides with the docs-recommended
 # same-host Redis state store (MSHIP_STATE_STORE=redis://) under --network=host.
 _DEFAULT_RAY_GCS_PORT = 6380
+_GATEWAY_SLUG_RE = re.compile(r"[^a-z0-9_-]+")
+
+
+def gateway_route_prefix(gateway_name: str) -> str:
+    """URL-safe HTTP path this gateway is mounted under, e.g. "llm-api" -> "/llm-api"."""
+    slug = _GATEWAY_SLUG_RE.sub("-", gateway_name.lower()).strip("-")
+    if not slug:
+        raise ValueError(
+            f"--gateway-name {gateway_name!r} has no URL-safe characters ([a-z0-9_-]) to route "
+            "on. Pick a name that isn't purely symbols/whitespace."
+        )
+    return f"/{slug}"
+
 
 # This container's own Ray node when it joined another cluster (connect_ray's
 # join branch), created in-process via ray._private.node.Node(head=False). None
@@ -446,7 +459,7 @@ def _positive_int_env(name: str, default: int) -> int:
     return value
 
 
-def start_gateway(gateway_name: str, serve_logging_config: LoggingConfig) -> None:
+def start_gateway(gateway_name: str, serve_logging_config: LoggingConfig, route_prefix: str) -> None:
     logger.info("Starting API gateway...")
     gateway_replicas = _positive_int_env("MSHIP_GATEWAY_REPLICAS", 1)
     gateway_max_ongoing = _positive_int_env("MSHIP_GATEWAY_MAX_ONGOING", 1024)
@@ -465,10 +478,13 @@ def start_gateway(gateway_name: str, serve_logging_config: LoggingConfig) -> Non
             logging_config=serve_logging_config,
         ).bind(gateway_name),
         name=gateway_name,
-        route_prefix="/",
+        route_prefix=route_prefix,
     )
     logger.info(
-        "Gateway up — /health and /readyz now serving. (replicas=%d, max_ongoing=%d)",
+        "Gateway up at %s — %s/health and %s/readyz now serving. (replicas=%d, max_ongoing=%d)",
+        route_prefix,
+        route_prefix.rstrip("/"),
+        route_prefix.rstrip("/"),
         gateway_replicas,
         gateway_max_ongoing,
     )

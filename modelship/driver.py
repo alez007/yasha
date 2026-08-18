@@ -25,7 +25,7 @@ from modelship.utils.ray_auth import resolve_ray_auth_env  # noqa: E402
 propagate_lib_log_env()
 
 logger = get_logger("startup")
-_DEFAULT_GATEWAY_NAME = "modelship api"
+_DEFAULT_GATEWAY_NAME = "modelship"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> None:
     from modelship.deploy.serve_utils import (
         connect_ray,
         delete_apps_quietly,
+        gateway_route_prefix,
         get_existing_apps,
         leave_ray_cluster,
         make_operator_id,
@@ -82,6 +83,8 @@ def main(argv: list[str] | None = None) -> None:
     # Export the resolved name so it rides along to each replica via runtime_env
     # passthrough — that's how metrics.py stamps every metric with its gateway.
     os.environ["MSHIP_GATEWAY_NAME"] = gateway_name
+    # Fail before connect_ray touches the cluster, not after.
+    route_prefix = gateway_route_prefix(gateway_name)
     # apply_args_to_env has folded --use-existing-ray-cluster/--address into these env
     # vars: own-head owns teardown, existing-cluster is one-shot, join stays resident.
     joined_cluster = bool(os.environ.get("MSHIP_ADDRESS"))
@@ -270,7 +273,7 @@ def main(argv: list[str] | None = None) -> None:
         # Start the gateway first so /health/readyz are reachable while models load.
         # Skipped for a phantom_gateway join (see the footgun guard above).
         if fresh_install and create_gateway:
-            start_gateway(gateway_name, serve_logging_config)
+            start_gateway(gateway_name, serve_logging_config, route_prefix)
 
         # Pre-flight download/validate on the driver before any deployment spins up —
         # surfaces auth/missing-repo errors here, not as an UNHEALTHY replica later.

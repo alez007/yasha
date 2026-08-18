@@ -26,11 +26,11 @@ docker run --rm --shm-size=8g \
 Images are multi-arch (amd64 + arm64), so this works on Apple Silicon and ARM
 Linux hosts too.
 
-Once the server is up (look for `Deployed app 'modelship api' successfully`),
+Once the server is up (look for `Deployed app 'modelship' successfully`),
 call the **Responses API** and watch the model think:
 
 ```bash
-curl http://localhost:8000/v1/responses \
+curl http://localhost:8000/modelship/v1/responses \
   -H "Content-Type: application/json" \
   -d '{
     "model": "reasoning-qwen",
@@ -41,8 +41,8 @@ curl http://localhost:8000/v1/responses \
 The response includes both `output_text` and a first-class `reasoning` output
 item — the same server-side conversation state (`previous_response_id`) and
 tool-calling support work here as they do on GPU-backed models.
-`/v1/chat/completions` remains available too, if that's what your client
-speaks.
+`/modelship/v1/chat/completions` remains available too, if that's what your
+client speaks.
 
 ## GPU (vLLM, Diffusers)
 
