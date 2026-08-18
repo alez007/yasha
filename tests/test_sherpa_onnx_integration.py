@@ -12,7 +12,7 @@ import pytest
 import openai
 from modelship.infer.sherpa_onnx.registry import REGISTRY
 
-OPENAI_API_BASE = "http://localhost:8000/v1"
+OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 _VOICE_NAMES = REGISTRY["kokoro-en-v0_19"].voice_names
 
 

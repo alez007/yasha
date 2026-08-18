@@ -7,7 +7,7 @@ import json
 import httpx
 import pytest
 
-OPENAI_API_BASE = "http://localhost:8000/v1"
+OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 
 
 def _collect_streaming_tool_call(stream) -> dict:

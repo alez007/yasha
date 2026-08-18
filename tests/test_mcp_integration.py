@@ -12,7 +12,7 @@ import pytest
 import uvicorn
 from mcp.server.mcpserver import MCPServer
 
-OPENAI_API_BASE = "http://localhost:8000/v1"
+OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 _PORT = 8934
 
 _TERMINAL_STATUSES = {"completed", "incomplete", "failed", "cancelled"}

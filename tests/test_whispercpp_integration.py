@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 
-OPENAI_API_BASE = "http://localhost:8000/v1"
+OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 
 # `tiny.en` has no language tokens; only `tiny` can auto-detect or translate.
 ENGLISH_ONLY_MODEL = "stt-cpp-model"

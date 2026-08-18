@@ -34,8 +34,8 @@ def neutralize_request_watcher():
 # Integration suite: real Ray cluster + real models, `@pytest.mark.integration`.
 # ---------------------------------------------------------------------------
 
-OPENAI_API_BASE = "http://localhost:8000/v1"
-HEALTH_URL = "http://localhost:8000/health"
+OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
+HEALTH_URL = "http://localhost:8000/modelship/health"
 
 # Per-model configs; Deployer.deploy(*names) writes a subset into a one-shot
 # models.yaml and runs `mship_deploy.py --reconcile` to swap the deployed set.
