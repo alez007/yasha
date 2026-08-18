@@ -669,11 +669,8 @@ class TestAutoscalingConfig:
 
 
 class TestPreRayImportChain:
-    """Config validation runs before `import ray` — launcher.py checks models.yaml
-    up front, and modelship.utils.cli parses argv, both ahead of
-    resolve_ray_auth_env(). Ray latches RAY_AUTH_MODE into a C++ singleton at
-    import, so one careless import in this chain silently breaks cluster auth.
-    Subprocess-based: by the time this suite runs, ray is already in sys.modules.
+    """These all run before resolve_ray_auth_env(), and ray latches RAY_AUTH_MODE
+    at import. Subprocess-based: ray is already in sys.modules by suite time.
     """
 
     @pytest.mark.parametrize(

@@ -100,8 +100,7 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
     load time in mship_deploy.py — `huggingface_hub.HF_HOME` is latched at
     import, so setting them later doesn't take effect.
     """
-    # Deferred: pulls huggingface_hub, which the load/validate helpers above
-    # (launcher.py's pre-ray fast path) must not pay for.
+    # Deferred: pulls huggingface_hub.
     from modelship.infer.model_resolver import check_model_source
 
     for cfg in yml_conf.models:
@@ -136,6 +135,5 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
 
 def config_absent(arg_path: str | None) -> bool:
     """True when there's nothing to load: no ``--config`` and no default file.
-    The driver bootstraps an empty coordinator in that case instead of erroring;
-    an explicit ``--config`` that doesn't exist is still a hard error."""
+    An explicit ``--config`` that doesn't exist is still a hard error."""
     return arg_path is None and not default_config_path().exists()

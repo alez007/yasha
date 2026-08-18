@@ -1,8 +1,6 @@
 """Request-path plumbing that crosses Ray process boundaries.
 
-The models.yaml schemas moved to modelship/utils/config_schema.py so config can be
-validated without importing ray; they are re-exported below so existing importers
-keep working. New ray-free callers should import from config_schema directly.
+The models.yaml schemas live in modelship/utils/config_schema.py, re-exported below.
 """
 
 import asyncio
@@ -30,7 +28,6 @@ from modelship.utils.config_schema import (
     default_gpu_memory_utilization,
 )
 
-# Re-exported for back-compat; see module docstring.
 __all__ = [
     "AutoscalingConfig",
     "ChatTemplateContentFormatOption",

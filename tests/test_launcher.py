@@ -44,9 +44,6 @@ class TestCheckLoaderCapabilities:
 
 
 class TestValidateConfig:
-    """models.yaml is validated before the driver imports ray, so a bad config
-    fails in milliseconds rather than after the Ray head is up."""
-
     def _write(self, tmp_path, body):
         path = tmp_path / "models.yaml"
         path.write_text(body)
@@ -87,8 +84,6 @@ class TestValidateConfig:
         assert [m.loader.value for m in parsed.models] == ["llama_server"]
 
     def test_validation_does_not_import_ray(self, tmp_path):
-        """The whole point of the config_schema split: launcher validates before
-        modelship.driver latches RAY_AUTH_MODE at `import ray`."""
         config = self._write(
             tmp_path, "models:\n  - name: m\n    loader: llama_server\n    model: x.gguf\n    usecase: generate\n"
         )

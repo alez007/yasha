@@ -1,10 +1,5 @@
-"""Pydantic schemas for models.yaml — ray-free, so config validates before `import ray`.
-
-Split from modelship/infer/infer_config.py, which imports ray for the request-path
-actors. Nothing reachable from here may import ray: modelship.utils.cli parses argv
-before resolve_ray_auth_env(), and ray latches RAY_AUTH_MODE at import time.
-`PinnedSource` stays behind TYPE_CHECKING — it's only a PrivateAttr annotation, and
-importing it for real pulls huggingface_hub into every config parse.
+"""Pydantic schemas for models.yaml. Must stay ray-free — ray latches
+RAY_AUTH_MODE at import, before resolve_ray_auth_env() runs.
 """
 
 import hashlib
@@ -18,6 +13,7 @@ from modelship.logging import get_logger
 from modelship.utils import is_pathy
 
 if TYPE_CHECKING:
+    # Annotation only; a real import pulls huggingface_hub.
     from modelship.infer.model_resolver import PinnedSource
 
 _logger = get_logger("config")

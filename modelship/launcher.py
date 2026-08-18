@@ -99,10 +99,8 @@ def _advertises_no_capacity() -> bool:
 
 
 def _validate_config(config_path: str | None) -> ModelshipConfig | None:
-    """Parse and validate models.yaml before the driver imports ray, so a bad
-    config fails in milliseconds instead of after the Ray head is up. Returns
-    None when there's no config to deploy — the driver bootstraps an empty
-    coordinator in that case."""
+    """Validate models.yaml before the driver imports ray. None when there is
+    no config to load."""
     from pydantic import ValidationError
 
     from modelship.deploy.config import config_absent, load_yaml_config
