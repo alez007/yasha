@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> None:
 
     from modelship.deploy.actor_options import build_deployment_options, total_gpu_reservation
     from modelship.deploy.config import (
-        default_config_path,
+        config_absent,
         load_raw_models,
         resolve_all_model_sources,
     )
@@ -193,7 +193,6 @@ def main(argv: list[str] | None = None) -> None:
 
     # No --config: self-heal (reconcile) reconciles live->effective; a join or a bare
     # bootstrap do the same no-op merge and wait for a later --config/--reconcile/join.
-    config_absent = args.config is None and not default_config_path().exists()
     if args.config is None and (mode == "reconcile" or joined_cluster):
         desired_raw = effective_raw
         logger.info(
@@ -201,7 +200,7 @@ def main(argv: list[str] | None = None) -> None:
             if not joined_cluster
             else "Join: no config given — contributing resources, reconciling to effective set."
         )
-    elif config_absent:
+    elif config_absent(args.config):
         desired_raw = effective_raw
         logger.info(
             "No --config given and no default config/models.yaml found — bootstrapping an empty "

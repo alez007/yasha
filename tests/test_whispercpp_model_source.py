@@ -54,7 +54,7 @@ def test_bare_name_skips_source_check_without_pywhispercpp(no_pywhispercpp, mode
 
 def test_repo_ref_still_resolves_as_a_source():
     cfg = _cfg("ggerganov/whisper.cpp:ggml-base.en.bin")
-    with patch("modelship.deploy.config.check_model_source", return_value=_GGML_PIN) as check:
+    with patch("modelship.infer.model_resolver.check_model_source", return_value=_GGML_PIN) as check:
         resolve_all_model_sources(ModelshipConfig(models=[cfg]))
     check.assert_called_once()
     assert cfg._pinned_source == _GGML_PIN
@@ -64,7 +64,7 @@ def test_local_path_still_resolves_as_a_source(tmp_path):
     path = tmp_path / "ggml-base.en.bin"
     path.write_bytes(b"\x00" * 4)
     cfg = _cfg(str(path))
-    with patch("modelship.deploy.config.check_model_source", return_value=_GGML_PIN) as check:
+    with patch("modelship.infer.model_resolver.check_model_source", return_value=_GGML_PIN) as check:
         resolve_all_model_sources(ModelshipConfig(models=[cfg]))
     check.assert_called_once()
 

@@ -206,6 +206,7 @@ def check_model_source(model_ref: str, trust_remote_code: bool = False) -> Pinne
             logger.info(
                 "Selector %r matched %d files in HF repo %r; will download all shards, resolving to first %s",
                 selector,
+                len(matches),
                 source,
                 matches[0],
             )

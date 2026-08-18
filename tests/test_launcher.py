@@ -22,36 +22,75 @@ class TestGuardPythonVersion:
 
 
 class TestCheckLoaderCapabilities:
-    def _write_config(self, tmp_path, loader):
-        path = tmp_path / "models.yaml"
-        path.write_text(f"models:\n  - name: m\n    loader: {loader}\n    model: x\n")
-        return str(path)
+    def test_empty_set_is_noop(self):
+        launcher._check_loader_capabilities(set())  # no raise
 
-    def test_no_config_path_is_noop(self):
-        launcher._check_loader_capabilities(None)  # no raise
-
-    def test_missing_file_is_noop(self, tmp_path):
-        launcher._check_loader_capabilities(str(tmp_path / "nope.yaml"))  # no raise
-
-    def test_llama_server_loader_never_gated(self, tmp_path):
-        config = self._write_config(tmp_path, "llama_server")
+    def test_llama_server_loader_never_gated(self):
         with patch("modelship.launcher.importlib.util.find_spec") as mock_find:
-            launcher._check_loader_capabilities(config)
+            launcher._check_loader_capabilities({"llama_server"})
         mock_find.assert_not_called()
 
-    def test_passes_when_module_importable(self, tmp_path):
-        config = self._write_config(tmp_path, "vllm")
+    def test_passes_when_module_importable(self):
         with patch("modelship.launcher.importlib.util.find_spec", return_value=MagicMock()):
-            launcher._check_loader_capabilities(config)  # no raise
+            launcher._check_loader_capabilities({"vllm"})  # no raise
 
-    def test_exits_when_module_missing(self, tmp_path):
-        config = self._write_config(tmp_path, "vllm")
+    def test_exits_when_module_missing(self):
         with (
             patch("modelship.launcher.importlib.util.find_spec", return_value=None),
             pytest.raises(SystemExit) as exc,
         ):
-            launcher._check_loader_capabilities(config)
+            launcher._check_loader_capabilities({"vllm"})
         assert exc.value.code == 1
+
+
+class TestValidateConfig:
+    def _write(self, tmp_path, body):
+        path = tmp_path / "models.yaml"
+        path.write_text(body)
+        return str(path)
+
+    def test_absent_config_returns_none(self, tmp_path):
+        with patch("modelship.deploy.config.default_config_path", return_value=tmp_path / "nope.yaml"):
+            assert launcher._validate_config(None) is None
+
+    def test_missing_explicit_config_exits(self, tmp_path):
+        with pytest.raises(SystemExit) as exc:
+            launcher._validate_config(str(tmp_path / "nope.yaml"))
+        assert exc.value.code == 1
+
+    def test_unknown_loader_exits(self, tmp_path):
+        config = self._write(tmp_path, "models:\n  - name: m\n    loader: nope\n    model: x\n")
+        with pytest.raises(SystemExit) as exc:
+            launcher._validate_config(config)
+        assert exc.value.code == 1
+
+    def test_duplicate_name_exits(self, tmp_path):
+        config = self._write(
+            tmp_path,
+            "models:\n"
+            "  - name: m\n    loader: llama_server\n    model: a.gguf\n    usecase: generate\n"
+            "  - name: m\n    loader: llama_server\n    model: b.gguf\n    usecase: generate\n",
+        )
+        with pytest.raises(SystemExit) as exc:
+            launcher._validate_config(config)
+        assert exc.value.code == 1
+
+    def test_valid_config_returns_parsed_models(self, tmp_path):
+        config = self._write(
+            tmp_path, "models:\n  - name: m\n    loader: llama_server\n    model: x.gguf\n    usecase: generate\n"
+        )
+        parsed = launcher._validate_config(config)
+        assert parsed is not None
+        assert [m.loader.value for m in parsed.models] == ["llama_server"]
+
+    def test_validation_does_not_import_ray(self, tmp_path):
+        config = self._write(
+            tmp_path, "models:\n  - name: m\n    loader: llama_server\n    model: x.gguf\n    usecase: generate\n"
+        )
+        with patch.dict(sys.modules):
+            sys.modules.pop("ray", None)
+            launcher._validate_config(config)
+            assert "ray" not in sys.modules
 
 
 class TestIsOwnHeadDeploy:
@@ -103,6 +142,7 @@ class TestCmdDeploy:
             patch.dict(os.environ, {}, clear=True),
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
             patch.object(launcher, "detect_accelerator", return_value="cpu"),
+            patch.object(launcher, "_validate_config", return_value=MagicMock(models=[])),
             patch.object(launcher, "_check_loader_capabilities") as mock_gate,
             patch.object(launcher, "_guard_python_version") as mock_guard,
             patch("modelship.driver.main") as mock_driver_main,
@@ -119,6 +159,7 @@ class TestCmdDeploy:
             patch.dict(os.environ, {}, clear=True),
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
             patch.object(launcher, "detect_accelerator", return_value="cpu"),
+            patch.object(launcher, "_validate_config", return_value=MagicMock(models=[])),
             patch.object(launcher, "_check_loader_capabilities") as mock_gate,
             patch.object(launcher, "_guard_python_version"),
             patch("modelship.driver.main"),
@@ -132,6 +173,7 @@ class TestCmdDeploy:
             patch.dict(os.environ, {}, clear=True),
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
             patch.object(launcher, "detect_accelerator", return_value="cpu"),
+            patch.object(launcher, "_validate_config", return_value=MagicMock(models=[])),
             patch.object(launcher, "_check_loader_capabilities") as mock_gate,
             patch.object(launcher, "_guard_python_version"),
             patch("modelship.driver.main"),
@@ -144,6 +186,7 @@ class TestCmdDeploy:
             patch.dict(os.environ, {}, clear=True),
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
             patch.object(launcher, "detect_accelerator", return_value="cpu"),
+            patch.object(launcher, "_validate_config", return_value=MagicMock(models=[])),
             patch.object(launcher, "_check_loader_capabilities") as mock_gate,
             patch.object(launcher, "_guard_python_version"),
             patch("modelship.driver.main"),

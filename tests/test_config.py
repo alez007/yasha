@@ -1,5 +1,8 @@
 """Tests for Modelship model configuration parsing and validation."""
 
+import subprocess
+import sys
+
 import pytest
 from pydantic import ValidationError
 
@@ -663,3 +666,23 @@ class TestAutoscalingConfig:
         b = self._model(autoscaling_config={"min_replicas": 3, "max_replicas": 9})
         plain = self._model()
         assert a.fingerprint() == b.fingerprint() == plain.fingerprint()
+
+
+class TestPreRayImportChain:
+    """These all run before resolve_ray_auth_env(), and ray latches RAY_AUTH_MODE
+    at import. Subprocess-based: ray is already in sys.modules by suite time.
+    """
+
+    @pytest.mark.parametrize(
+        "module",
+        [
+            "modelship.utils.config_schema",
+            "modelship.utils.cli",
+            "modelship.deploy.config",
+            "modelship.launcher",
+        ],
+    )
+    def test_import_does_not_pull_ray(self, module):
+        code = f"import sys; import {module}; print('ray' in sys.modules)"
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+        assert result.stdout.strip() == "False", f"{module} imports ray"

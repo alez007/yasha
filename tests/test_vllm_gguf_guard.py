@@ -49,21 +49,21 @@ class TestVllmGgufGuard:
     def test_vllm_gguf_rejected(self):
         cfg = _make_cfg(loader=ModelLoader.vllm)
         with (
-            patch("modelship.deploy.config.check_model_source", return_value=_GGUF_PIN),
+            patch("modelship.infer.model_resolver.check_model_source", return_value=_GGUF_PIN),
             pytest.raises(ValueError, match="GGUF"),
         ):
             resolve_all_model_sources(ModelshipConfig(models=[cfg]))
 
     def test_llama_server_gguf_allowed(self):
         cfg = _make_cfg(loader=ModelLoader.llama_server, num_gpus=0)
-        with patch("modelship.deploy.config.check_model_source", return_value=_GGUF_PIN):
+        with patch("modelship.infer.model_resolver.check_model_source", return_value=_GGUF_PIN):
             resolve_all_model_sources(ModelshipConfig(models=[cfg]))
         assert cfg._pinned_source == _GGUF_PIN
         assert _GGUF_PIN.resolves_to_gguf
 
     def test_vllm_non_gguf_allowed(self):
         cfg = _make_cfg(loader=ModelLoader.vllm, model="some/fp8-repo")
-        with patch("modelship.deploy.config.check_model_source", return_value=_SNAPSHOT_PIN):
+        with patch("modelship.infer.model_resolver.check_model_source", return_value=_SNAPSHOT_PIN):
             resolve_all_model_sources(ModelshipConfig(models=[cfg]))
         assert cfg._pinned_source == _SNAPSHOT_PIN
         assert not _SNAPSHOT_PIN.resolves_to_gguf
