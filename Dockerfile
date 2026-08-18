@@ -97,6 +97,13 @@ ARG MSHIP_VERSION
 ARG UID
 ARG GID
 
+# First, so a missing arg fails in seconds rather than as an opaque `mship==`
+# resolution error after the apt layers.
+RUN [ -n "${MSHIP_VERSION}" ] || { \
+    echo "error: this target needs --build-arg MSHIP_VERSION=<version> and"; \
+    echo "       --build-context wheels=<dir>. See docs/development.md."; \
+    exit 1; }
+
 RUN if [ "$MSHIP_VARIANT" = "cuda" ]; then \
     apt-get update -y && \
     apt-get install -y --no-install-recommends gnupg && \

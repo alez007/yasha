@@ -136,32 +136,40 @@ export MSHIP_LLAMA_SERVER_BIN=/path/to/llama-server.sh
 Three images are published — a thin control/coordinator image (no torch/vllm) plus two accelerator
 node images:
 
-| Variant | Tag suffix | Target | Platforms |
-|---|---|---|---|
-| Thin (control/coordinator) | *(none)* — default | `prod-thin` | amd64, arm64 |
-| CUDA (GPU node) | `-cuda` | `prod` | amd64 |
-| CPU (CPU node) | `-cpu` | `prod` | amd64, arm64 |
+| Variant | Tag suffix | Platforms |
+|---|---|---|
+| Thin (control/coordinator) | *(none)* — default | amd64, arm64 |
+| CUDA (GPU node) | `-cuda` | amd64 |
+| CPU (CPU node) | `-cpu` | amd64, arm64 |
+
+All three share the `prod` target; `MSHIP_VARIANT` is what differs.
 
 Floating tags (`:latest`, `:latest-cuda`, `:latest-cpu`) are single-node only — Ray refuses to form
 a cluster across mismatched versions, so any multi-node deployment must pin every node to the same
 `:X.Y.Z` (or `-cuda`/`-cpu`) tag.
 
-To build the production images locally:
+The production images install the release wheels rather than the source tree, so build those first —
+`release.yml` does the same, from a `wheels` job the image builds depend on:
 
-**Thin:**
 ```bash
-docker build -t modelship:dev-thin --target prod-thin --build-arg MSHIP_VARIANT=thin .
+uv build -o wheels .
+uv build -o wheels bootstrap
 ```
 
-**CUDA:**
+Then, per variant (`thin` shown; swap in `cpu` or `cuda`):
+
 ```bash
-docker build -t modelship:dev-cuda --target prod .
+docker build -t modelship:dev-thin \
+  --target prod \
+  --build-arg MSHIP_VARIANT=thin \
+  --build-arg MSHIP_VERSION="$(uv version --short)" \
+  --build-context wheels=./wheels \
+  .
 ```
 
-**CPU:**
-```bash
-docker build -t modelship:dev-cpu --target prod --build-arg MSHIP_VARIANT=cpu .
-```
+`MSHIP_VERSION` must match the wheels in `./wheels` — the build resolves
+`mship==<version>` against that directory, so a stale `wheels/` from an earlier version fails to
+resolve rather than silently installing the wrong one. Rebuild the wheels after a version bump.
 
 ## Ports
 
