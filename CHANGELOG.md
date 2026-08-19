@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.13] - 2026-08-19
+
+### Added
+- deploy a single model from CLI flags instead of models.yaml
+- gate bootstrap --cuda on the CUDA toolchain, not the GPU
+- split provisioning into `mship bootstrap`
+
+### Fixed
+- reject --model with --config at parse time, not after Ray starts
+- point integration test base URLs at the /modelship route prefix
+- pass the missing match count to the sharded-GGUF log call
+
+### Changed
+- lead the README with an agentic hero and a real quickstart
+- trim the comments added with the model flags
+- trim verbose comments across the test suite
+- trim the comments added by the config_schema split
+- split the models.yaml schemas out of infer_config
+- require MSHIP_VERSION explicitly in the image build
+- drop the stale docker entry-point note from AGENTS.md
+- make the bootstrap hardware gate a flag, not an env var
+- split installation by method and drop stale entry points
+- install the release wheel in the images
+- audit and trim docs for accuracy and brevity
+
 ## [0.7.12] - 2026-08-15
 
 ### Added
