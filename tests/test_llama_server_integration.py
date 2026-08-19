@@ -494,7 +494,7 @@ def test_embeddings_llama_server(client, model_deployer):
 @pytest.mark.llama_server
 def test_deploy_with_inferred_model_name(client, model_deployer):
     """`--model` with no `--name`: the name inferred from the ref is what the
-    gateway serves under. Every other CLI-routed test passes --name explicitly."""
+    gateway serves under."""
     ref = MODEL_CONFIGS["chat-llama-server-plain"]["model"]
     model_deployer.deploy_cli("--model", ref, "--loader", "llama_server", "--usecase", "generate", "--num-cpus", "1")
 

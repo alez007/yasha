@@ -142,8 +142,8 @@ def config_absent(arg_path: str | None) -> bool:
 
 
 def validate_models(raw_models: list[dict]) -> ModelshipConfig:
-    """Validate raw model dicts into a ModelshipConfig. The single validation
-    entry point: models.yaml and the ``--model`` flags both land here."""
+    """Validate raw model dicts into a ModelshipConfig. Both models.yaml and the
+    ``--model`` flags land here."""
     return ModelshipConfig.model_validate({"models": raw_models})
 
 

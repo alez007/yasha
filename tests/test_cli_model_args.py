@@ -1,5 +1,5 @@
 """The `--model` flags must produce a models.yaml entry indistinguishable from the
-hand-written one, so a single schema validates both surfaces."""
+hand-written one."""
 
 import subprocess
 import sys
@@ -156,9 +156,8 @@ class TestFailsBeforeRay:
 
 
 class TestIntegrationCliRouting:
-    """The integration suite sends a lone CLI-expressible model through --model.
-    Pin the entries that actually take that route, so a later nested block added to
-    one of them shows up here instead of silently dropping CLI coverage."""
+    """conftest sends a lone CLI-expressible model through --model. Pin the entries
+    that take that route: a nested block added to one fails here, not silently."""
 
     def test_single_model_call_sites_stay_cli_expressible(self):
         from tests.conftest import MODEL_CONFIGS, cli_expressible
@@ -174,7 +173,7 @@ class TestIntegrationCliRouting:
 
     def test_flags_round_trip_back_to_the_config(self):
         """conftest builds argv from a MODEL_CONFIGS entry; parsing it back must
-        reproduce that entry, or the CLI-routed tests deploy something else."""
+        reproduce that entry."""
         from tests.conftest import MODEL_CONFIGS, _model_flags
 
         config = MODEL_CONFIGS["chat-llama-server-gpu"]

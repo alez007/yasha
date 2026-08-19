@@ -216,9 +216,8 @@ MODEL_CONFIGS: dict[str, dict] = {
 
 
 def cli_expressible(config: dict) -> bool:
-    """Whether `--model` and friends can express this entry. The CLI surfaces only
-    the root-level scalars, so anything with a nested tuning block deploys from a
-    file. `MODEL_ARG_KEYS` is the CLI's own list, so this can't drift from it."""
+    """Whether the model flags can express this entry: they carry only the
+    root-level scalars, so a nested tuning block means a config file."""
     return set(config) <= set(MODEL_ARG_KEYS)
 
 
@@ -231,11 +230,8 @@ def _model_flags(config: dict) -> list[str]:
 
 class _Deployer:
     """Runs `mship_deploy.py --reconcile` against the running gateway to swap the
-    deployed set; re-deploying the same set is a no-op.
-
-    Deploys a lone CLI-expressible model through the `--model` flags and everything
-    else through a one-shot models.yaml, so both input surfaces are exercised by the
-    same tests rather than by a separate CLI-only suite.
+    deployed set; re-deploying the same set is a no-op. A lone CLI-expressible model
+    goes through the `--model` flags, everything else through a one-shot models.yaml.
     """
 
     def __init__(self, tmp_dir: Path) -> None:
@@ -266,8 +262,8 @@ class _Deployer:
         self._run(["--config", str(config_path)], slug, replace_strategy)
 
     def deploy_cli(self, *flags: str) -> None:
-        """Deploy straight from `--model` flags, for cases MODEL_CONFIGS can't name
-        (an inferred model name). Resets the by-name cache like deploy_raw."""
+        """Deploy straight from `--model` flags. Resets the by-name cache, as
+        deploy_raw does."""
         self._current = frozenset()
         self._run(list(flags), "cli", "stop_start")
 
