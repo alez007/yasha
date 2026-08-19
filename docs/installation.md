@@ -38,6 +38,7 @@ image tag, a bootstrap flag, or a chart value.
 
 ## Next
 
-- [Quickstart](quickstart.md) — a copy-pasteable `models.yaml` and walkthrough
+- [Quick start](index.md#quick-start) — one command per hardware target, then a first request
+- [Model Configuration](model-configuration.md) — the full `models.yaml` reference
 - [Multi-node without Kubernetes](multi-node-docker.md) — joining hosts with plain `docker run`
 - [Development Setup](development.md) — building from source and the Dev Container

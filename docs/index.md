@@ -1,44 +1,126 @@
 # Modelship
 
-Modelship runs the AI stack your agents call — chat, the **Responses API** with
-server-side conversation state (durable with Redis), universal **tool calling**,
-and **reasoning**, alongside embeddings, speech, and image generation — behind
-one OpenAI-compatible endpoint on your own GPUs (or CPU).
+**Your agents already speak OpenAI. Give them a `/v1/responses` backend you own.**
 
-Built on [Ray Serve](https://docs.ray.io/en/latest/serve/index.html): state is
-shared across gateway replicas, deploys are declarative, and everything is
-observable. Point the OpenAI SDK at it and your agent runs unchanged — private,
-with no per-token bill.
+Modelship serves the whole agentic surface — reasoning, tool calling,
+server-side conversation state, and MCP servers the gateway calls for you — and
+scores **17/17** on the independent
+[Open Responses](https://github.com/openresponses/openresponses) conformance
+suite. Embeddings, speech, and image generation ride the same `/v1`. Change the
+base URL and your agent runs unchanged, on hardware you control.
 
-[Get started :material-arrow-right:](quickstart.md){ .md-button .md-button--primary }
+[Quick start :material-arrow-right:](#quick-start){ .md-button .md-button--primary }
 [View on GitHub :fontawesome-brands-github:](https://github.com/modelship-ai/modelship){ .md-button }
+
+## Quick start
+
+One command, one model. Pick your hardware.
+
+=== "CPU"
+
+    Linux, Windows, or macOS via Docker. Images are multi-arch (amd64 + arm64).
+
+    ```bash
+    docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
+      ghcr.io/modelship-ai/modelship:latest-cpu deploy \
+      --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
+      --usecase generate --num-cpus 4
+    ```
+
+=== "NVIDIA GPU"
+
+    Needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
+
+    ```bash
+    docker run --rm --shm-size=8g --gpus all -p 8000:8000 -v modelship-cache:/.cache \
+      ghcr.io/modelship-ai/modelship:latest-cuda deploy \
+      --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
+      --usecase generate --num-gpus 1
+    ```
+
+=== "Apple Silicon"
+
+    Native install, with Metal offload.
+
+    ```bash
+    uv tool install mship && mship bootstrap --metal
+    mship deploy --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
+      --usecase generate --num-gpus 1
+    ```
+
+Wait for `Deployed app 'modelship' successfully`, then talk to it — this hits
+the **Responses API** and streams the model's reasoning as it thinks:
+
+```bash
+uvx --with httpx llm openai endpoint http://localhost:8000/modelship/v1 \
+  -m qwen3-8b --responses "Which is larger, 9.11 or 9.9?"
+```
+
+Add `--chat` for an interactive session, `-T` to hand it a tool, or `--models`
+to list what's deployed.
+
+The model serves as `qwen3-8b`, inferred from the reference. It pulls ~5 GB and
+wants ~8 GB of free RAM; `--num-cpus 4` reserves four cores for it, so lower it
+if the container has fewer (the deploy waits for resources it can't get). On a
+small box, swap in `lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf`.
+
+Deploying several models at once, or tuning the nested config blocks, uses a
+`models.yaml` instead — see [Model Configuration](model-configuration.md).
+Hitting an error? Check [Troubleshooting](troubleshooting.md).
+
+??? note "Prefer `curl`?"
+
+    ```bash
+    curl http://localhost:8000/modelship/v1/responses \
+      -H "Content-Type: application/json" \
+      -d '{"model": "qwen3-8b", "input": "Which is larger, 9.11 or 9.9?"}'
+    ```
+
+    The response carries both `output_text` and a first-class `reasoning`
+    output item. `/modelship/v1/chat/completions` is there too, if that's what
+    your client speaks.
+
+!!! tip
+    Always set `--shm-size=8g` (or higher) — Ray falls back to slower
+    disk-backed storage instead of `/dev/shm` if the container's shared memory
+    is too small for the object store.
+
+## Open Responses conformance
+
+`/v1/responses` is tested against the independent
+[Open Responses](https://github.com/openresponses/openresponses) compliance
+suite (`bun run test:compliance`), which drives the endpoint over real HTTP
+against a live deployment rather than mocks.
+
+**Latest result: 17/17** — every core, compaction, vision, and WebSocket test
+(`Qwen3-VL-8B-Instruct` AWQ, vLLM, 2026-07-24).
+
+Fourteen cluster guarantees — zero-downtime model cutover, load-driven
+autoscaling, engine crash recovery, fractional-GPU multi-tenancy, server-side
+MCP tool loops — are likewise asserted end-to-end against a live cluster with
+real models over real HTTP. See
+[Verified cluster behaviour](production-readiness.md#verified-cluster-behaviour).
 
 ## Why Modelship?
 
-- **Agent state that isn't siloed per replica** — the `/v1/responses` API with
-  reasoning, universal tool/function calling, and server-side conversation
-  state (`previous_response_id`) live in one pluggable store shared by every
-  gateway replica — in-memory by default, or Redis for durability across
-  restarts and node failure. Works across both the vLLM and llama.cpp
-  (`llama_server`) loaders.
-- **Everything an agent app calls, one endpoint** — chat, embeddings for RAG,
-  speech-to-text, text-to-speech, and image generation, all behind a single
-  OpenAI-compatible `/v1` surface. No juggling separate services for each
-  modality.
-- **Drop-in OpenAI, on your hardware** — any OpenAI SDK client works out of
-  the box. Point it at Modelship instead of the OpenAI API and your agent
-  code doesn't change — it just runs privately, on infrastructure you
-  control.
-- **GPU memory control** — allocate exact GPU fractions per model (e.g. 70%
-  for the LLM, 5% for TTS) so a full stack fits on hardware you already own.
-- **Mix and match backends** — vLLM for high-throughput GPU or CPU inference,
-  llama.cpp for efficient quantized GGUF models, Diffusers for images,
-  sherpa-onnx for TTS, and whisper.cpp for STT — in the same deployment.
+- **Conversations that survive the replica that started them** — `previous_response_id`,
+  reasoning, and tool state live in one store every gateway replica shares: a
+  Ray actor by default, Redis when you want it to outlive the cluster. Scale
+  the gateway out without sharding your users onto specific replicas.
+- **One endpoint for the whole app** — chat, embeddings for RAG,
+  speech-to-text, text-to-speech, and image generation on a single
+  OpenAI-compatible `/v1`, instead of a service per modality.
+- **A stack that fits the hardware you have** — allocate GPU fractions per
+  model (70% for the LLM, 5% for TTS), or run the same model CPU-only. vLLM,
+  llama.cpp, Diffusers, sherpa-onnx, and whisper.cpp coexist in one deployment.
+- **Changes you can ship on a Tuesday** — edit the model set and reconcile:
+  models are added, replaced, or dropped incrementally, with a blue-green
+  cutover per model and no gateway restart.
 
 ## Architecture
 
-![Modelship architecture: an agent app calls the Modelship gateway's OpenAI-compatible API, which exposes chat, embeddings, audio, and image endpoints plus a Responses API backed by a shared conversation-state store, routing to Ray Serve deployments across GPU and CPU cluster nodes.](assets/architecture-light.svg#only-light)
-![Modelship architecture: an agent app calls the Modelship gateway's OpenAI-compatible API, which exposes chat, embeddings, audio, and image endpoints plus a Responses API backed by a shared conversation-state store, routing to Ray Serve deployments across GPU and CPU cluster nodes.](assets/architecture-dark.svg#only-dark)
+![Modelship architecture: an agent app calls Modelship over HTTP; one Ray Serve HTTP proxy on port 8000 fronts any number of replicated gateways, each at its own route prefix with its own model set, sharing one conversation-state store and routing each request by model name to Ray Serve deployments across GPU and CPU cluster nodes.](assets/architecture-light.svg#only-light)
+![Modelship architecture: an agent app calls Modelship over HTTP; one Ray Serve HTTP proxy on port 8000 fronts any number of replicated gateways, each at its own route prefix with its own model set, sharing one conversation-state store and routing each request by model name to Ray Serve deployments across GPU and CPU cluster nodes.](assets/architecture-dark.svg#only-dark)
 
 Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html)
 deployment with its own lifecycle, health checks, and resource budget.
@@ -54,8 +136,9 @@ deployment with its own lifecycle, health checks, and resource budget.
 Models can be deployed across multiple GPUs or run on CPU-only. A model name
 maps to one deployment, which scales horizontally with `num_replicas`
 (Ray Serve load-balances across its own replicas); the gateway itself scales
-with `--gateway-replicas`. See [Architecture](architecture.md) for the full
-request lifecycle and design.
+with `--gateway-replicas`, and several gateways can share one cluster and one
+port (`--gateway-name`), each mounted at `/<name>/v1` with its own model set.
+See [Architecture](architecture.md) for the full request lifecycle and design.
 
 ## Supported OpenAI Endpoints
 
@@ -73,7 +156,7 @@ request lifecycle and design.
 
 ## Next steps
 
-- [Quickstart](quickstart.md) — a tiny reasoning model running in a few minutes, no GPU required
 - [Installation](installation.md) — Docker, native, and Helm install guides
 - [Model Configuration](model-configuration.md) — the full `models.yaml` reference
 - [Integrations](integrations/index.md) — connecting the OpenAI SDK, Open WebUI, Dify, n8n, and Responses-speaking agents
+- [Production Readiness](production-readiness.md) — verified cluster behaviour and the hardening roadmap

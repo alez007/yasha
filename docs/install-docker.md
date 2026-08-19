@@ -30,7 +30,7 @@ CPU, no GPU required:
 ```bash
 docker run --rm --shm-size=8g \
   -v ./models.yaml:/modelship/config/models.yaml \
-  -v ./models-cache:/.cache \
+  -v modelship-cache:/.cache \
   -p 8000:8000 \
   ghcr.io/modelship-ai/modelship:latest-cpu deploy
 ```
@@ -41,16 +41,23 @@ GPU, with the NVIDIA Container Toolkit installed:
 docker run --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token_here \
   -v ./models.yaml:/modelship/config/models.yaml \
-  -v ./models-cache:/.cache \
+  -v modelship-cache:/.cache \
   -p 8000:8000 \
   ghcr.io/modelship-ai/modelship:latest-cuda deploy
 ```
 
 `deploy` reads `/modelship/config/models.yaml` by default; pass `--config` for
-another path, and any other [CLI flag](model-configuration.md) after it.
+another path, and any other [CLI flag](model-configuration.md) after it. A
+single model needs no config file at all — see
+[Quick start](index.md#quick-start).
 
-See [Quickstart](quickstart.md) for a full copy-pasteable `models.yaml` and
-walkthrough.
+!!! note "Named volume vs. bind mount for the cache"
+    `-v modelship-cache:/.cache` lets Docker create the volume and inherit the
+    image's ownership of `/.cache`, so nothing has to be chowned first. To keep
+    the weights in a directory you can browse, bind-mount instead
+    (`-v ./models-cache:/.cache`) and create it up front — a bind-mounted host
+    directory keeps its own ownership, and Docker creates it as `root` if it
+    does not exist yet.
 
 !!! tip
     Always set `--shm-size=8g` (or higher) — Ray falls back to slower

@@ -13,216 +13,74 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Docs](https://img.shields.io/badge/docs-docs.model--ship.ai-0E7C86.svg)](https://docs.model-ship.ai/)
 
-Modelship runs the AI stack your agents call — chat, the **Responses API** with server-side conversation state (durable with Redis), universal **tool calling**, and **reasoning**, alongside embeddings, speech, and image generation — behind one OpenAI-compatible endpoint on your own GPUs (or CPU). Built on [Ray Serve](https://docs.ray.io/en/latest/serve/index.html): state is shared across gateway replicas, deploys are declarative, and everything is observable. Point the OpenAI SDK at it and your agent runs unchanged — private, with no per-token bill.
+**Your agents already speak OpenAI. Give them a `/v1/responses` backend you own.**
 
-## Why Modelship?
-
-- **Agent state that isn't siloed per replica** — the `/v1/responses` API with reasoning, universal tool/function calling, and server-side conversation state (`previous_response_id`) live in one pluggable store shared by every gateway replica — in-memory by default, or Redis for durability across restarts and node failure. Works across both the vLLM and llama.cpp (`llama_server`) loaders.
-- **Everything an agent app calls, one endpoint** — chat, embeddings for RAG, speech-to-text, text-to-speech, and image generation, all behind a single OpenAI-compatible `/v1` surface. No juggling separate services for each modality.
-- **Drop-in OpenAI, on your hardware** — any OpenAI SDK client works out of the box. Point it at Modelship instead of the OpenAI API and your agent code doesn't change — it just runs privately, on infrastructure you control.
-- **GPU memory control** — allocate exact GPU fractions per model (e.g. 70% for the LLM, 5% for TTS) so a full stack fits on hardware you already own
-- **Mix and match backends** — vLLM for high-throughput GPU or CPU inference, llama.cpp for efficient quantized GGUF models, Diffusers for images, sherpa-onnx for TTS, and whisper.cpp for STT — in the same deployment
-
-## Architecture
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/architecture-light.svg">
-  <img alt="Modelship architecture: an agent app calls the Modelship gateway's OpenAI-compatible API, which exposes chat, embeddings, audio, and image endpoints plus a Responses API backed by a shared conversation-state store, routing each request by model name to Ray Serve deployments across GPU and CPU cluster nodes." src="docs/assets/architecture-light.svg">
-</picture>
-
-Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Several inference backends are available:
-
-| Backend | Best for | GPU required |
-|---|---|---|
-| **vLLM** | High-throughput chat, embeddings, transcription | No — installs on GPU or CPU |
-| **llama.cpp** (`llama_server`) | High-efficiency quantized GGUF models (chat, embeddings, vision) | No |
-| **Diffusers** | Image generation | Yes |
-| **sherpa-onnx** | TTS (Kokoro) | No |
-| **whisper.cpp** | STT | No |
-
-Models can be deployed across multiple GPUs or run on CPU-only. A model name maps to exactly one deployment — swapping GPU/CPU or backend replaces it with a blue-green cutover rather than adding a second one alongside it. Each deployment scales horizontally with `num_replicas`, load-balanced by Ray Serve.
-
-## Requirements
-
-- **Docker** (or Python 3.12+ with `uv` for local development)
-- **NVIDIA GPU** (optional) — 16 GB+ VRAM recommended for a full stack (LLM + TTS + STT + embeddings) via vLLM; 8 GB is sufficient for lighter setups. Not required when using the vLLM or llama.cpp backends on CPU
-- **[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)** — required only when running GPU models in Docker
-- **HuggingFace token** for gated models
-
-## Features
-
-- **Multi-model, multi-GPU** — run chat, embedding, STT, TTS, and image generation models simultaneously across one or more GPUs with tunable per-model GPU memory allocation
-- **CPU-only support** — run models without a GPU using the vLLM or llama.cpp (`llama_server`) backends (chat, embeddings, transcription, vision). Useful for development, testing, or small models that don't need GPU acceleration
-- **Multiple inference backends** — vLLM for high-throughput GPU or CPU inference, llama.cpp for efficient quantized GGUF models on CPU or GPU, Diffusers for image generation, sherpa-onnx for TTS, and whisper.cpp for STT
-- **Zero-downtime hot-reloads** — modify your `models.yaml` and run a cluster reconcile; changes are applied incrementally without interrupting the API gateway or unchanged models
-- **Advanced agentic capabilities** — native support for DeepSeek-style reasoning (`<think>` blocks parsed into `reasoning_content`) and universal tool/function calling across the vLLM and GGUF (`llama_server`) backends
-- **Server-side MCP tool execution** — point `/v1/responses` at any self-hosted MCP server (`tools: [{"type": "mcp", ...}]`) and the gateway discovers its tools, calls them, and loops — with an approval flow (`require_approval`) client-driven tool calling doesn't have
-- **Per-model isolated deployments** — each model runs in its own Ray Serve deployment with independent lifecycle, health checks, failure isolation, and configurable replica count
-- **OpenAI-compatible API** — drop-in replacement for any OpenAI SDK client
-- **Streaming** — SSE streaming for chat completions and TTS audio
-- **Multi-GPU & hybrid deploys** — assign models to specific GPUs or run them on CPU-only; full tensor parallelism support for large models spanning multiple GPUs
-- **Client disconnect detection** — cancels in-flight inference when the client disconnects, freeing GPU resources immediately
-- **Security** — gateway API-key authentication (`MSHIP_API_KEYS`), Ray cluster token auth (`--ray-auth=token`), and configurable request payload/concurrency limits
-- **Built-in observability** — Prometheus metrics, custom `modelship:*` metrics, vLLM engine stats, Ray cluster metrics, structured JSON logging, and OpenTelemetry log export; pre-built Grafana dashboard and alerting rules included
-
-## Supported OpenAI Endpoints
-
-| Endpoint | Usecase |
-|---|---|
-| `POST /v1/chat/completions` | Chat / text generation (streaming and non-streaming) |
-| `POST /v1/responses` | Responses API — text, reasoning, client-driven tool calls, server-side MCP tool execution, and stored conversations (streaming and non-streaming) |
-| `GET`/`DELETE /v1/responses/{id}` | Fetch or drop a stored response (`/input_items` lists its input); `background: true` on create + `POST .../cancel` for queued/pollable runs |
-| `POST /v1/embeddings` | Text embeddings |
-| `POST /v1/audio/transcriptions` | Speech-to-text |
-| `POST /v1/audio/translations` | Audio translation |
-| `POST /v1/audio/speech` | Text-to-speech (SSE streaming or single-response) |
-| `POST /v1/images/generations` | Image generation |
-| `GET /v1/models` | List available models |
+Modelship serves the whole agentic surface — reasoning, tool calling, server-side conversation state, and MCP servers the gateway calls for you — and scores **17/17** on the independent [Open Responses](https://github.com/openresponses/openresponses) conformance suite. Embeddings, speech, and image generation ride the same `/v1`. Change the base URL and your agent runs unchanged, on hardware you control.
 
 ## Quick Start
 
-The fastest way to try Modelship: run a tiny reasoning model on a laptop — no GPU required. Copy-paste this block and you'll have an OpenAI-compatible API on `http://localhost:8000` in a few minutes.
+One command, one model. Pick your hardware:
+
+**CPU** — Linux, Windows, or macOS via Docker (images are multi-arch: amd64 + arm64):
 
 ```bash
-mkdir -p models-cache && cat > models.yaml <<'EOF'
-models:
-  - name: reasoning-qwen
-    model: "lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf"
-    usecase: generate
-    loader: llama_server
-    num_cpus: 3
-    llama_server_config:
-      n_ctx: 4096  # Give reasoning space to think
-EOF
-
-docker run --rm --shm-size=8g \
-  -v ./models.yaml:/modelship/config/models.yaml \
-  -v ./models-cache:/.cache \
-  -p 8000:8000 \
-  ghcr.io/modelship-ai/modelship:latest-cpu deploy
+docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
+  ghcr.io/modelship-ai/modelship:latest-cpu deploy \
+  --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
+  --usecase generate --num-cpus 4
 ```
 
-Images are multi-arch (amd64 + arm64), so this works on Apple Silicon and ARM Linux hosts too.
+**NVIDIA GPU** — needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html):
 
-Once the server is up (look for `Deployed app 'modelship' successfully`), call the **Responses API** and watch the model think:
+```bash
+docker run --rm --shm-size=8g --gpus all -p 8000:8000 -v modelship-cache:/.cache \
+  ghcr.io/modelship-ai/modelship:latest-cuda deploy \
+  --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
+  --usecase generate --num-gpus 1
+```
+
+**Apple Silicon** — native, with Metal offload:
+
+```bash
+uv tool install mship && mship bootstrap --metal
+mship deploy --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
+  --usecase generate --num-gpus 1
+```
+
+Wait for `Deployed app 'modelship' successfully`, then talk to it — this hits the **Responses API** and streams the model's reasoning as it thinks:
+
+```bash
+uvx --with httpx llm openai endpoint http://localhost:8000/modelship/v1 \
+  -m qwen3-8b --responses "Which is larger, 9.11 or 9.9?"
+```
+
+Add `--chat` for an interactive session, `-T` to hand it a tool, or `--models` to list what's deployed.
+
+The model serves as `qwen3-8b`, inferred from the reference. It pulls ~5 GB and wants ~8 GB of free RAM; `--num-cpus 4` reserves four cores for it, so lower it if the container has fewer (the deploy waits for resources it can't get). On a small box, swap in `lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf`.
+
+Deploying several models at once, or tuning the nested config blocks, uses a `models.yaml` instead — see [Model Configuration](docs/model-configuration.md). Hitting an error? Check [Troubleshooting](docs/troubleshooting.md).
+
+<details>
+<summary>Prefer <code>curl</code>?</summary>
 
 ```bash
 curl http://localhost:8000/modelship/v1/responses \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "reasoning-qwen",
-    "input": "Which is larger, 9.11 or 9.9?"
-  }'
+  -d '{"model": "qwen3-8b", "input": "Which is larger, 9.11 or 9.9?"}'
 ```
 
-The response includes both `output_text` and a first-class `reasoning` output item — the same server-side conversation state (`previous_response_id`) and tool-calling support work here as they do on GPU-backed models. `/modelship/v1/chat/completions` remains available too, if that's what your client speaks.
+The response carries both `output_text` and a first-class `reasoning` output item. `/modelship/v1/chat/completions` is there too, if that's what your client speaks.
 
-### Native install (no Docker)
+</details>
 
-One install command everywhere. Pick the node's role once, when you bootstrap it:
+## Open Responses conformance
 
-```bash
-pipx install mship          # or: uv tool install mship / pip install mship
+`/v1/responses` is tested against the independent [Open Responses](https://github.com/openresponses/openresponses) compliance suite (`bun run test:compliance`), which drives the endpoint over real HTTP against a live deployment rather than mocks.
 
-mship bootstrap --cuda      # NVIDIA GPU node
-mship bootstrap --cpu       # CPU node (includes vLLM CPU)
-mship bootstrap --metal     # Apple Silicon
-mship bootstrap --thin      # coordinator/head only, no capacity
+**Latest result: 17/17** — every core, compaction, vision, and WebSocket test (`Qwen3-VL-8B-Instruct` AWQ, vLLM, 2026-07-24).
 
-mship deploy --config models.yaml
-```
-
-For a single model, skip the config file — the root-level fields have matching flags, validated by the same schema:
-
-```bash
-mship deploy --model "lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf" \
-             --loader llama_server --usecase generate --num-cpus 3
-```
-
-It serves as `qwen3-0.6b`, inferred from the reference. Several models, or the nested tuning blocks, still need a `models.yaml` — see [Single-model deploys](docs/model-configuration.md#single-model-deploys-no-config-file).
-
-`mship bootstrap` installs a pinned Python 3.12.10 environment for that role and records it, so `deploy` afterwards needs no variant flag and installs nothing — it starts straight through. Nothing to pin and nothing to match across machines: every node lands on the same footing, so a new one joins the cluster by running the same two commands. After a `pip install -U mship`, re-run `mship bootstrap` to move the environment with it.
-
-Platform prerequisites still apply: Xcode Command Line Tools on macOS, `build-essential`/`cmake` on Linux, plus `ninja-build` and NVIDIA's `nvcc` for `--cuda`. Alpine and other musl distros are unsupported. See [docs/install-native.md](docs/install-native.md) for the full list.
-
-### GPU (vLLM, Diffusers)
-
-For high-throughput GPU inference, use the `-cuda` image and add `--gpus all`. You'll also need the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) and an `HF_TOKEN` for gated models. Example `models.yaml` entries for vLLM, Diffusers, and multi-GPU setups live in [docs/model-configuration.md](docs/model-configuration.md); ready-to-run configs are in [config/examples/](config/examples/).
-
-```bash
-docker run --rm --shm-size=8g --gpus all \
-  -e HF_TOKEN=your_token_here \
-  -v ./models.yaml:/modelship/config/models.yaml \
-  -v ./models-cache:/.cache \
-  -p 8000:8000 \
-  ghcr.io/modelship-ai/modelship:latest-cuda deploy
-```
-
-> [!NOTE]
-> `ghcr.io/modelship-ai/modelship:latest` (bare tag, no suffix) is the **thin** control/coordinator image — no torch/vllm, for a driver/head role only. It cannot serve models by itself; always use `-cuda` or `-cpu` to actually run inference. See [docs/development.md](docs/development.md) for the full three-image breakdown.
-
-> [!TIP]
-> Always set `--shm-size=8g` (or higher) — Ray falls back to slower disk-backed storage without enough shared memory.
-
-Hitting an error? Check [docs/troubleshooting.md](docs/troubleshooting.md).
-
-## Documentation
-
-Full docs are hosted at **[docs.model-ship.ai](https://docs.model-ship.ai/)**. The same source files are also browsable directly in this repo:
-
-- [Development](docs/development.md) — dev environment setup, building, and running locally
-- [Model Configuration](docs/model-configuration.md) — full `models.yaml` reference, GPU pinning, environment variables
-- [Multi-node without Kubernetes](docs/multi-node-docker.md) — join VMs into one Ray cluster with plain `docker run`, no orchestrator
-- [Architecture](docs/architecture.md) — system design, request lifecycle, loaders
-- [Monitoring & Logging](docs/monitoring.md) — Prometheus metrics, Grafana dashboard, structured logging, health checks
-- [Troubleshooting](docs/troubleshooting.md) — common first-run errors and fixes
-
-## Monitoring
-
-Modelship exposes Prometheus metrics (Ray cluster, Ray Serve, vLLM, and custom `modelship:*` metrics) through a single scrape endpoint on port 8079. Metrics are **enabled by default** — set `MSHIP_METRICS=false` to disable. A pre-built [Grafana dashboard](docs/grafana-dashboard.json) and [Prometheus alerting rules](docs/prometheus-alerts.yml) are included in the repository.
-
-Logging supports structured JSON output (`MSHIP_LOG_FORMAT=json`) and request ID correlation across Ray actor boundaries. Logs can be shipped to a remote syslog server (`--log-target syslog://host:514`) or an OpenTelemetry collector (`--otel-endpoint http://collector:4317`). Set `MSHIP_LOG_LEVEL` to `TRACE` for full request/response payloads, or `DEBUG` for detailed diagnostics without payloads.
-
-See [Monitoring & Logging](docs/monitoring.md) for full details.
-
-## Production Readiness
-
-Modelship is actively used and designed for stability in multi-tenant setups. Key guarantees include:
-
-- **Mutex-backed deployments:** A cluster-wide deploy coordinator prevents VRAM exhaustion by ensuring models are never loaded concurrently if resources are tight.
-- **Comprehensive HTTP-level tests:** The `tests/test_*_integration.py` suites validate chat, reasoning, tool-calling, and streaming across all loaders using real (small) models — plus the cluster behaviour below.
-- **Security:** Gateway API-key auth, opt-in Ray cluster token auth, and payload/concurrency limits (`MSHIP_MAX_REQUEST_BODY_BYTES`) guard against unauthenticated or oversized requests.
-- **Observability:** Deep integration with Prometheus, OpenTelemetry, and structured logging, with a pre-built Grafana dashboard and Prometheus alerting rules included.
-
-### Verified cluster behaviour
-
-Every row below is asserted end-to-end against a **live cluster with real models over real HTTP** — no mocks, no stubs. Run them with `pytest tests/ -m integration` (or a single area via its marker, e.g. `-m blue_green`).
-
-| Capability | What the cluster guarantees | Proven by |
-|---|---|---|
-| **Zero-downtime model cutover** | Change a live model's config and the swap is atomic: traffic is hammered continuously through the cutover with **zero failed requests**, and the old deployment is fully torn down rather than left as a zombie | [`test_blue_green_integration.py`](tests/test_blue_green_integration.py) |
-| **Load-driven autoscaling** | Replicas scale out under sustained concurrency (bounded by `max_replicas`) and scale back to `min_replicas` once load stops — no errors on the way up or down | [`test_autoscaling_integration.py`](tests/test_autoscaling_integration.py) |
-| **Multi-replica gateway convergence** | With multiple gateway replicas, a deploy or removal converges on *every* replica — a removed model 404s on all of them instead of routing into a torn-down deployment | [`test_gateway_ha_integration.py`](tests/test_gateway_ha_integration.py) |
-| **Engine crash recovery** | `SIGKILL` the vLLM engine-core subprocess and the replica respawns and serves again on its own — no operator action, no cluster restart | [`test_crash_recovery_integration.py`](tests/test_crash_recovery_integration.py) |
-| **Authenticated node join / clean leave** | A node joining with a missing or wrong token is rejected; with the right token it joins, and `SIGTERM` removes only that node — the head and its other nodes are untouched | [`test_cluster_join.py`](tests/test_cluster_join.py) |
-| **Fractional GPU multi-tenancy** | Two *different* engines (vLLM at `num_gpus: 0.6`, llama-server at `0.3`) share one physical GPU and serve concurrent traffic without starving each other | [`test_fractional_gpu_sharing.py`](tests/test_fractional_gpu_sharing.py) |
-| **Cross-process disconnect cancellation** | A dropped client socket cancels in-flight inference across the Ray process boundary and frees the GPU; other requests on the same replica are unaffected | [`test_disconnect_integration.py`](tests/test_disconnect_integration.py) |
-| **Per-identity prefix-cache isolation** | An identical prompt from a different identity never hits another identity's KV-cache entry — the cross-tenant timing side channel is closed by construction | [`test_vllm_integration.py`](tests/test_vllm_integration.py) |
-| **Resumable background runs** | A client can disconnect mid-stream; the run continues server-side and the client reconnects with `starting_after` to replay from where it left off through to completion | [`test_responses_integration.py`](tests/test_responses_integration.py) |
-| **Durable conversation state** | Stored `/v1/responses` chains survive deletion of a parent turn, fan out into independent concurrent branches from one parent, and a cancel stays cancelled | [`test_responses_integration.py`](tests/test_responses_integration.py) |
-| **Server-side MCP tool loop** | Real MCP server, discovered and called by the model — including the `require_approval` round trip, background mode, mid-flight cancel that sticks, and an unreachable server surfacing as a `failed` response rather than a 5xx | [`test_mcp_integration.py`](tests/test_mcp_integration.py) |
-| **Real in-replica concurrency** | llama-server `parallel` slots serve concurrent requests genuinely in parallel — N at once complete in well under N× the single-request time, not serialized behind a lock | [`test_llama_server_integration.py`](tests/test_llama_server_integration.py) |
-| **Hot reconcile of the model set** | The entire integration suite swaps the deployed model set repeatedly via `--reconcile` against one long-lived gateway process that is never restarted | [`tests/conftest.py`](tests/conftest.py) |
-| **Cross-loader pipelines** | TTS audio generated by one deployment is fed straight back in as STT input to another, through the same gateway | [`test_audio_integration.py`](tests/test_audio_integration.py) |
-
-We are currently hardening the Kubernetes/KubeRay path (a Helm chart ships in [`helm/`](helm/modelship/); GPU-aware probes and gateway-level rate-limiting are next). See the full [Production Readiness Plan](docs/production-readiness.md) for the scorecard and roadmap.
-
-## Open Responses Conformance
-
-`/v1/responses` is also tested against the independent [Open Responses](https://github.com/openresponses/openresponses) compliance suite (`bun run test:compliance`), which exercises the endpoint over real HTTP against a live deployment rather than mocks.
-
-**Latest result: 17/17** (`Qwen3-VL-8B-Instruct` AWQ, vLLM, 2026-07-24), including the full WebSocket transport suite:
+<details>
+<summary>Full test breakdown</summary>
 
 | Test | Category | Status |
 |---|---|---|
@@ -243,6 +101,116 @@ We are currently hardening the Kubernetes/KubeRay path (a Helm chart ships in [`
 | WebSocket Missing Previous Response | WebSocket | ✅ Pass |
 | WebSocket Failed Continuation Evicts Cache | WebSocket | ✅ Pass |
 | WebSocket Compact New Chain | WebSocket | ✅ Pass |
+
+</details>
+
+Fourteen cluster guarantees — zero-downtime model cutover, load-driven autoscaling, engine crash recovery, fractional-GPU multi-tenancy, server-side MCP tool loops — are likewise asserted end-to-end against a live cluster with real models over real HTTP. See [Verified cluster behaviour](docs/production-readiness.md#verified-cluster-behaviour).
+
+## Why Modelship
+
+- **Conversations that survive the replica that started them.** `previous_response_id`, reasoning, and tool state live in one store every gateway replica shares — a Ray actor by default, Redis when you want it to outlive the cluster. Scale the gateway out without sharding your users onto specific replicas.
+- **One endpoint for the whole app.** Chat, embeddings for RAG, speech-to-text, text-to-speech, and image generation on a single OpenAI-compatible `/v1` — instead of a service per modality.
+- **A stack that fits the hardware you have.** Allocate GPU fractions per model (70% for the LLM, 5% for TTS), or run the same model CPU-only. vLLM, llama.cpp, Diffusers, sherpa-onnx, and whisper.cpp coexist in one deployment.
+- **Changes you can ship on a Tuesday.** Edit the model set and reconcile: models are added, replaced, or dropped incrementally, with a blue-green cutover per model and no gateway restart.
+
+<details>
+<summary>Full feature list</summary>
+
+- **Multi-model, multi-GPU** — chat, embedding, STT, TTS, and image models running at once across one or more GPUs, with tunable per-model GPU memory allocation
+- **CPU-only support** — vLLM or llama.cpp (`llama_server`) without a GPU (chat, embeddings, transcription, vision)
+- **Multiple inference backends** — vLLM, llama.cpp, Diffusers, sherpa-onnx, whisper.cpp, stable-diffusion.cpp
+- **Zero-downtime hot-reloads** — reconcile a changed model set incrementally, without interrupting the gateway or unchanged models
+- **Reasoning and tool calling** — `<think>`-style reasoning parsed into first-class output, and universal tool/function calling across the vLLM and GGUF (`llama_server`) backends
+- **Server-side MCP tool execution** — point `/v1/responses` at any self-hosted MCP server (`tools: [{"type": "mcp", ...}]`) and the gateway discovers its tools, calls them, and loops — with an approval flow (`require_approval`) client-driven tool calling doesn't have
+- **Multiple gateways per cluster** — `--gateway-name` mounts each gateway at its own route prefix on the same port, with its own model set
+- **Per-model isolated deployments** — independent lifecycle, health checks, failure isolation, and replica count per model
+- **Streaming** — SSE for chat completions, responses, and TTS audio
+- **Client disconnect detection** — cancels in-flight inference when the client goes away, freeing the GPU immediately
+- **Security** — gateway API-key auth (`MSHIP_API_KEYS`), Ray cluster token auth (`--ray-auth=token`), payload and concurrency limits
+- **Built-in observability** — Prometheus metrics, custom `modelship:*` metrics, vLLM engine stats, structured JSON logging, OpenTelemetry export, plus a pre-built Grafana dashboard and alerting rules
+
+</details>
+
+## Supported OpenAI endpoints
+
+| Endpoint | Usecase |
+|---|---|
+| `POST /v1/chat/completions` | Chat / text generation (streaming and non-streaming) |
+| `POST /v1/responses` | Responses API — text, reasoning, client-driven tool calls, server-side MCP tool execution, and stored conversations (streaming and non-streaming) |
+| `GET`/`DELETE /v1/responses/{id}` | Fetch or drop a stored response (`/input_items` lists its input); `background: true` on create + `POST .../cancel` for queued/pollable runs |
+| `POST /v1/embeddings` | Text embeddings |
+| `POST /v1/audio/transcriptions` | Speech-to-text |
+| `POST /v1/audio/translations` | Audio translation |
+| `POST /v1/audio/speech` | Text-to-speech (SSE streaming or single-response) |
+| `POST /v1/images/generations` | Image generation |
+| `GET /v1/models` | List available models |
+
+## Architecture
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/architecture-light.svg">
+  <img alt="Modelship architecture: an agent app calls Modelship over HTTP; one Ray Serve HTTP proxy on port 8000 fronts any number of replicated gateways, each at its own route prefix with its own model set, sharing one conversation-state store and routing each request by model name to Ray Serve deployments across GPU and CPU cluster nodes." src="docs/assets/architecture-light.svg">
+</picture>
+
+Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Several inference backends are available:
+
+| Backend | Best for | GPU required |
+|---|---|---|
+| **vLLM** | High-throughput chat, embeddings, transcription | No — installs on GPU or CPU |
+| **llama.cpp** (`llama_server`) | High-efficiency quantized GGUF models (chat, embeddings, vision) | No |
+| **Diffusers** | Image generation | Yes |
+| **sherpa-onnx** | TTS (Kokoro) | No |
+| **whisper.cpp** | STT | No |
+
+A model name maps to exactly one deployment — swapping GPU/CPU or backend replaces it with a blue-green cutover rather than adding a second one alongside it. Each deployment scales horizontally with `num_replicas`, load-balanced by Ray Serve. Multiple gateways can share one cluster and one port (`--gateway-name`), each mounted at `/<name>/v1` with its own model set.
+
+## More ways to run
+
+**Several models at once** — a `models.yaml` replaces the flags and unlocks the nested tuning blocks (`vllm_engine_kwargs`, `llama_server_config`, `autoscaling_config`):
+
+```bash
+docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
+  -v ./models.yaml:/modelship/config/models.yaml \
+  ghcr.io/modelship-ai/modelship:latest-cpu deploy
+```
+
+`deploy` reads `config/models.yaml` by default; `--config <path>` picks another.
+
+See [Model Configuration](docs/model-configuration.md) for the full reference, and [config/examples/](config/examples/) for working files per backend.
+
+**Native install, any node role** — one install command everywhere; pick the role once, at bootstrap:
+
+```bash
+uv tool install mship      # or: pipx install mship / pip install mship
+
+mship bootstrap --cuda     # NVIDIA GPU node
+mship bootstrap --cpu      # CPU node (includes vLLM CPU)
+mship bootstrap --metal    # Apple Silicon
+mship bootstrap --thin     # coordinator/head only, no capacity
+
+mship deploy --config models.yaml
+```
+
+`mship bootstrap` installs a pinned Python 3.12.10 environment for that role and records it, so `deploy` afterwards needs no variant flag and installs nothing. A new node joins the cluster by running the same two commands. Platform prerequisites apply — see [Native install](docs/install-native.md).
+
+**High-throughput GPU serving** — use `--loader vllm` with safetensors or AWQ/GPTQ/FP8 weights instead of GGUF, and set `HF_TOKEN` for gated models. **Multi-node** — join hosts into one Ray cluster with plain `docker run`, or deploy on Kubernetes with the [Helm chart](helm/modelship/).
+
+> [!TIP]
+> Always set `--shm-size=8g` (or higher) — Ray falls back to slower disk-backed storage without enough shared memory.
+
+## Documentation
+
+Full docs are hosted at **[docs.model-ship.ai](https://docs.model-ship.ai/)**. The same source files are browsable in this repo:
+
+- [Installation](docs/installation.md) — requirements, node roles, and the Docker / native / Helm guides
+- [Model Configuration](docs/model-configuration.md) — full `models.yaml` reference, GPU pinning, environment variables
+- [Architecture](docs/architecture.md) — system design, request lifecycle, loaders
+- [Production Readiness](docs/production-readiness.md) — verified cluster behaviour and the hardening roadmap
+- [Monitoring & Logging](docs/monitoring.md) — Prometheus metrics on port 8079, Grafana dashboard, structured logging, health checks
+- [Multi-node without Kubernetes](docs/multi-node-docker.md) — join VMs into one Ray cluster with plain `docker run`
+- [Development](docs/development.md) — dev environment setup, building, and running locally
+- [Troubleshooting](docs/troubleshooting.md) — common first-run errors and fixes
 
 ## Contributing
 

@@ -6,8 +6,8 @@ already talks to OpenAI — an SDK, a chat UI, a low-code agent builder — can
 point at Modelship instead by changing its base URL.
 
 All of these guides assume a running Modelship gateway reachable at
-`http://<host>:8000` (see [Quickstart](../quickstart.md) if you don't have
-one yet), and use `Authorization: Bearer <key>` for auth if `MSHIP_API_KEYS`
+`http://<host>:8000` (see [Quick start](../index.md#quick-start) if you don't
+have one yet), and use `Authorization: Bearer <key>` for auth if `MSHIP_API_KEYS`
 is set — otherwise any non-empty string works as the API key, since most
 OpenAI-compatible clients require *some* value in that field even when the
 server doesn't check it.
