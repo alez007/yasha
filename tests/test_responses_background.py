@@ -1,6 +1,6 @@
-"""Route-level tests for `background:true` on /v1/responses (Phase E1). The drain
-task runs detached, so most tests call `_drain_background_tasks(api)` after
-triggering the route before asserting on the stored snapshot."""
+"""Route-level tests for `background:true` on /v1/responses. The drain task runs
+detached, so most tests call `_drain_background_tasks(api)` after triggering the
+route before asserting on the stored snapshot."""
 
 import asyncio
 import json
@@ -33,8 +33,7 @@ def _fake_disconnect_registry():
 
 class _FakeHeartbeatRegistry:
     """Stand-in for the HeartbeatRegistry actor handle, backed by a real
-    _HeartbeatStore. `.remote()` mimics Ray actor-method dispatch, same pattern as
-    `_FakeRegistry` in test_disconnect_registry.py."""
+    _HeartbeatStore; `.remote()` mimics Ray actor-method dispatch."""
 
     def __init__(self):
         self._store = _HeartbeatStore(ttl_seconds=3600.0)
@@ -151,8 +150,7 @@ def _background_gen_factory(text="hello background!", status="completed"):
 
 def _completes_after_callback_factory(callback, text="hello background!"):
     """Like `_background_gen_factory`, but runs `callback()` between the `created`
-    and `completed` events — deterministically races a genuine completion against
-    whatever `callback` does (e.g. cancel/delete) landing in the store first."""
+    and `completed` events, racing it against the completion write."""
 
     def _make_gen(*args, **kwargs):
         response_id = args[5] if len(args) > 5 else kwargs.get("response_id")
@@ -181,8 +179,7 @@ def _completes_after_callback_factory(callback, text="hello background!"):
 
 def _hanging_gen_factory(started: asyncio.Event, release: asyncio.Event):
     """A fake remote-call side effect that yields one event, signals `started`, then
-    blocks on `release` — simulating a run still in flight, so a test can cancel or
-    delete it mid-run before letting it wind down."""
+    blocks on `release`, simulating a run still in flight."""
 
     def _make_gen(*args, **kwargs):
         response_id = args[5] if len(args) > 5 else kwargs.get("response_id")
@@ -242,11 +239,8 @@ class TestBackgroundCreate:
 
 
 class TestMcpBackgroundWiring:
-    """Wiring only — mcp_loop's own behavior is covered by test_mcp_loop.py.
-    Confirms run_background routes through mcp_loop.run_mcp_response (with the
-    already-minted response_id) instead of handle.respond when the request
-    declares an mcp tool, and that an mcp_approval_request in its output persists
-    (background mode completes the response even with a pending approval)."""
+    """Wiring only — behavior covered by test_mcp_loop.py. Confirms run_background
+    routes through mcp_loop.run_mcp_response and persists an mcp_approval_request."""
 
     @pytest.mark.asyncio
     async def test_background_mcp_routes_through_loop_and_persists_approval_request(self, api):
@@ -357,9 +351,8 @@ class TestCancel:
 
     @pytest.mark.asyncio
     async def test_cancel_wins_race_against_a_genuine_completion(self, api):
-        # A cancel that lands in the store while the generation is still mid-flight
-        # must not be clobbered by that generation's own later, unconditional-looking
-        # completion write.
+        # A cancel that lands mid-flight must not be clobbered by the generation's
+        # own later, unconditional completion write.
         async def _cancel_mid_stream(response_id):
             await api.cancel_response(response_id, _raw_request())
 
@@ -397,9 +390,8 @@ class TestCancel:
 
     @pytest.mark.asyncio
     async def test_cancel_store_outage_writing_cancelled_snapshot_is_503(self, api):
-        # Regression: the write of the cancelled snapshot wasn't wrapped, so a store
-        # outage there bubbled as a raw StateStoreUnavailableError (500) instead of
-        # the intended 503 ResponsesApiError every other store write in this module produces.
+        # A store outage writing the cancelled snapshot must surface as 503, not a
+        # raw StateStoreUnavailableError.
         await _stored_background(api, "resp_1", status="in_progress")
 
         with (
@@ -472,9 +464,8 @@ class TestOrphanDetection:
 
     @pytest.mark.asyncio
     async def test_store_outage_writing_failed_snapshot_is_503(self, api, heartbeat_registry):
-        # Regression: reconcile_staleness's write of the orphaned-failure snapshot
-        # wasn't wrapped, so a store outage there bubbled as a raw
-        # StateStoreUnavailableError (500) instead of the documented 503.
+        # A store outage in reconcile_staleness's snapshot write must surface as
+        # the documented 503, not a raw StateStoreUnavailableError.
         await _stored_background(api, "resp_stale", status="in_progress")
         heartbeat_registry.expire("unscoped", "resp_stale")
 
@@ -487,8 +478,8 @@ class TestOrphanDetection:
 
     @pytest.mark.asyncio
     async def test_store_outage_on_post_write_readback_is_503(self, api, heartbeat_registry):
-        # Regression: reconcile_staleness's final read-back (after the write succeeds)
-        # also wasn't wrapped, for the same reason as the write above.
+        # reconcile_staleness's final read-back after a successful write must also
+        # surface a store outage as 503.
         await _stored_background(api, "resp_stale", status="in_progress")
         heartbeat_registry.expire("unscoped", "resp_stale")
 
@@ -612,9 +603,8 @@ class TestBackgroundStream:
 
     @pytest.mark.asyncio
     async def test_get_stream_on_terminal_response_synthesizes_terminal_event(self, api):
-        # A fresh stream (no starting_after, i.e. never having seen anything) always
-        # gets a response.created first, even when nothing was ever buffered for it —
-        # matching what a live connection would have seen.
+        # A fresh stream (no starting_after) always gets a response.created first,
+        # even when nothing was ever buffered for it.
         await _stored_background(api, "resp_done", status="completed")
 
         result = await api.get_response("resp_done", _raw_request(), stream=True)
@@ -626,11 +616,8 @@ class TestBackgroundStream:
 
     @pytest.mark.asyncio
     async def test_synthesized_created_for_fresh_tail_has_in_progress_envelope(self, api):
-        # Regression: the synthesized response.created for a fresh tail (buffer
-        # already drained-and-discarded before the first poll) used to reuse the
-        # terminal response dict verbatim, so the "opening" event carried a
-        # completed status and the full output — contradicting a real
-        # response.created, which is always status=in_progress, output=[].
+        # The synthesized response.created for a fresh tail must carry
+        # status=in_progress, output=[] — not the terminal response's fields.
         response = {
             "id": "resp_done",
             "object": "response",

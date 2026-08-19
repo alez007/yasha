@@ -7,17 +7,14 @@ import json
 import httpx
 import pytest
 
-OPENAI_API_BASE = "http://localhost:8000/v1"
+OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 
 
 def _collect_streaming_tool_call(stream) -> dict:
     """Drain an OpenAI streaming response and rebuild the assistant message.
 
-    Returns a dict with: ``content`` (concatenated content deltas),
-    ``tool_calls`` (per-index dict of ``{id, name, arguments}`` — arguments
-    concatenated across all fragments), ``finish_reason``, ``name_deltas``
-    and ``args_deltas`` (counts, used to assert that streaming was actually
-    incremental rather than a single buffered emission).
+    Returns content, per-index tool_calls ({id, name, arguments}), finish_reason,
+    and name/args delta counts (to confirm streaming was incremental, not buffered).
     """
     content_parts: list[str] = []
     tool_calls: dict[int, dict] = {}
@@ -114,11 +111,6 @@ class TestChatCapable:
         assert completion.choices[0].message.tool_calls[0].function.name == "get_weather"
 
     def test_tool_calling_streaming_vllm_loader(self, client):
-        """Smoke-test that vLLM streaming + tool calling still works through
-        the gateway. vLLM emits its own per-token deltas; we only verify that
-        the gateway forwards them and that the final assistant message rebuilds
-        correctly.
-        """
         stream = client.chat.completions.create(
             model="chat-capable",
             messages=[{"role": "user", "content": "What is the weather in Paris?"}],
@@ -137,10 +129,8 @@ class TestChatCapable:
         assert collected["finish_reason"] == "tool_calls"
 
     def test_response_format_json_object_constrains_unprompted_output(self, client):
-        """Prompt asks a natural-language question with no JSON hint. A
-        passing test means the grammar constraint — not the prompt — produced
-        a JSON object instead of prose.
-        """
+        """No JSON hint in the prompt — a pass means the grammar constraint, not
+        the prompt, produced the JSON object."""
         completion = client.chat.completions.create(
             model="chat-capable",
             messages=[{"role": "user", "content": "What is the capital of France?"}],
@@ -153,9 +143,7 @@ class TestChatCapable:
         assert isinstance(parsed, dict)
 
     def test_response_format_json_schema_constrains_unprompted_output(self, client):
-        """Same intent for json_schema: prompt is natural-language, success
-        proves the schema constraint is doing the work.
-        """
+        """Same intent as the json_object test above, for json_schema."""
         schema = {
             "type": "object",
             "properties": {
@@ -210,10 +198,8 @@ class TestChatCapable:
         assert isinstance(parsed["answer"], str) and parsed["answer"]
 
     def test_response_format_coexists_with_tool_choice_none(self, client):
-        """OpenAI allows response_format alongside tool definitions; with
-        tool_choice="none" the model must produce schema-constrained text
-        instead of calling the tool. vLLM honors both natively.
-        """
+        """response_format alongside tools is allowed when tool_choice="none": the
+        model must produce schema-constrained text, not call the tool."""
         schema = {
             "type": "object",
             "properties": {"city": {"type": "string"}, "country": {"type": "string"}},
@@ -238,12 +224,8 @@ class TestChatCapable:
         assert set(parsed.keys()) == {"city", "country"}
 
     def test_n_greater_than_one_returns_independent_choices(self, client):
-        """n>1 needs its own parser instance per choice (see
-        engine_ops.make_parsers) — a shared instance would corrupt state
-        across choices. Sampling is non-greedy by default so choices should
-        actually differ; this also guards against a regression that
-        silently collapses every choice onto the same output.
-        """
+        """n>1 needs its own parser instance per choice (engine_ops.make_parsers);
+        a shared instance would corrupt state across choices."""
         completion = client.chat.completions.create(
             model="chat-capable",
             messages=[{"role": "user", "content": "Say one random word."}],
@@ -256,8 +238,7 @@ class TestChatCapable:
 
     def test_logprobs_returns_choice_logprobs(self, client):
         """logprobs must be built from the engine's own RequestOutput.logprobs
-        (engine_ops.build_chat_logprobs), not silently dropped by the
-        non-stream rewire."""
+        (engine_ops.build_chat_logprobs), not dropped by the non-stream rewire."""
         completion = client.chat.completions.create(
             model="chat-capable",
             messages=[{"role": "user", "content": "Say hello."}],
@@ -274,10 +255,8 @@ class TestChatCapable:
         assert all(isinstance(tl.token, str) and isinstance(tl.logprob, float) for tl in first.top_logprobs)
 
     def test_streaming_n_greater_than_one_returns_independent_choices(self, client):
-        """Streaming counterpart of the n>1 test above — each choice needs its
-        own `Parser` instance (`engine_ops.stream_chat_completion`'s per-choice
-        `make_parsers` call), or every choice after the first corrupts onto a
-        shared stream state."""
+        """Streaming counterpart of the n>1 test above: each choice needs its own
+        `Parser` instance or later choices corrupt onto shared stream state."""
         stream = client.chat.completions.create(
             model="chat-capable",
             messages=[{"role": "user", "content": "Say one random word."}],
@@ -297,9 +276,8 @@ class TestChatCapable:
         assert all(content_by_index[i] for i in range(3))
 
     def test_streaming_logprobs_returns_choice_logprobs(self, client):
-        """Streaming counterpart of the logprobs test above — logprobs must be
-        built per-delta from `RequestOutput.logprobs`, not just on the final
-        non-streamed response."""
+        """Streaming counterpart of the logprobs test above: logprobs must be built
+        per-delta from `RequestOutput.logprobs`, not only on the final response."""
         stream = client.chat.completions.create(
             model="chat-capable",
             messages=[{"role": "user", "content": "Say hello."}],
@@ -359,11 +337,8 @@ class TestChatReasoning:
         model_deployer.deploy("chat-reasoning")
 
     def test_reasoning_completion(self):
-        """Non-streaming: vLLM's deepseek_r1 reasoning parser routes the
-        `<think>...</think>` block to `message.reasoning` and leaves the
-        final answer in `message.content`. Verifies end-to-end wiring of
-        `reasoning_parser` through the modelship gateway.
-        """
+        """Non-streaming: the deepseek_r1 reasoning parser routes `<think>...</think>`
+        to `message.reasoning`, leaving the final answer in `message.content`."""
         # Use httpx so we read the raw `reasoning` field — the OpenAI Python
         # SDK doesn't always surface it as a typed attribute.
         response = httpx.post(
@@ -383,10 +358,6 @@ class TestChatReasoning:
         assert "<think>" not in message["reasoning"]
 
     def test_reasoning_streaming(self):
-        """Streaming: at least one delta carries `reasoning` and the
-        concatenated reasoning text is non-empty when the stream ends.
-        Markers must not leak into either field.
-        """
         with httpx.stream(
             "POST",
             f"{OPENAI_API_BASE}/chat/completions",
@@ -467,7 +438,6 @@ class TestChatVlm:
         assert completion.choices[0].message.content
 
     def test_image_url_streaming(self, client):
-        """Streaming + image input through the gateway end-to-end."""
         stream = client.chat.completions.create(
             model="chat-vlm",
             messages=[

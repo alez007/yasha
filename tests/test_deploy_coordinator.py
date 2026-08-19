@@ -1,9 +1,5 @@
-"""Tests for the deploy coordinator's cross-operator mutex actor factory.
-
-The routing-registry concern lives on a separate actor (see
-tests/test_replica_coordinator.py); this file only covers what's left on
-DeployCoordinator. The reserve/release/liveness paths currently have no unit
-coverage."""
+"""Tests for the deploy coordinator's cross-operator mutex actor factory; routing-registry
+concerns live in test_replica_coordinator.py. Reserve/release/liveness paths are untested."""
 
 from unittest.mock import MagicMock, patch
 

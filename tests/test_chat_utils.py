@@ -122,7 +122,6 @@ def test_build_from_parsed_multi_choice_and_dto():
     ]
     usage = UsageInfo(prompt_tokens=10, completion_tokens=20, total_tokens=30)
 
-    # Test single string finish_reason
     res1 = build_from_parsed(
         request_id="test_req_1",
         model_name="test_model",
@@ -148,7 +147,6 @@ def test_build_from_parsed_multi_choice_and_dto():
     assert len(res1.choices[1].message.tool_calls) == 0
     assert res1.choices[1].finish_reason == "length"
 
-    # Test automatic finish_reason derivation
     res2 = build_from_parsed(
         request_id="test_req_2",
         model_name="test_model",
@@ -159,7 +157,6 @@ def test_build_from_parsed_multi_choice_and_dto():
     assert res2.choices[0].finish_reason == "tool_calls"
     assert res2.choices[1].finish_reason == "stop"
 
-    # Test list finish_reasons
     res3 = build_from_parsed(
         request_id="test_req_3",
         model_name="test_model",

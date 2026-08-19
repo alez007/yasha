@@ -32,9 +32,8 @@ class _Segment:
 
 
 class _StubModel:
-    """Stand-in for a `pywhispercpp.model.Model`. Records the decode kwargs
-    each `transcribe` call received; `abort_callback` (if given) is polled
-    between segments, matching real whisper.cpp's per-segment check."""
+    """Stand-in for a `pywhispercpp.model.Model`. Records decode kwargs per
+    `transcribe` call; polls `abort_callback` between segments like real whisper.cpp."""
 
     def __init__(self, segments: list[_Segment], detected: tuple[str, float] = ("es", 0.9)):
         self._segments = segments
@@ -86,7 +85,7 @@ def _translation_request(**overrides) -> TranslationRequest:
 
 
 class TestDecodeKwargs:
-    """Gap 1: prompt/temperature must reach whisper.cpp's transcribe() call."""
+    """prompt/temperature must reach whisper.cpp's transcribe() call."""
 
     def test_prompt_and_temperature_forwarded(self):
         infer = _infer(_StubModel([]))
@@ -130,7 +129,7 @@ class TestTranscribeOnce:
 
     @pytest.mark.asyncio
     async def test_verbose_json_detects_real_language_when_unset(self):
-        """Gap 2: no language given -> the real detected language, not a fabricated value."""
+        """No language given -> the real detected language, not a fabricated value."""
         model = _StubModel([_Segment("hola")], detected=("es", 0.87))
         infer = _infer(model)
         result = await infer._transcribe_once(

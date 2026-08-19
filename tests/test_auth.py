@@ -121,11 +121,8 @@ class TestApiKeyMiddleware:
 
 
 def _make_ws_app() -> FastAPI:
-    """A minimal app whose one websocket route enforces auth itself via
-    check_ws_auth — BaseHTTPMiddleware (ApiKeyMiddleware included) never runs for
-    websocket connections, so there's no middleware to add here. check_ws_auth reads
-    keys via get_api_keys() (env-backed), same as ApiKeyMiddleware — tests patch that
-    directly rather than threading a parameter through the route."""
+    """Enforces auth via check_ws_auth directly, since BaseHTTPMiddleware never runs for
+    websocket connections; check_ws_auth reads keys via get_api_keys(), which tests patch."""
     app = FastAPI()
 
     @app.websocket("/ws")

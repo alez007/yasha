@@ -1,16 +1,11 @@
-"""Integration test for client-disconnect propagation against a *real* Ray
+"""Integration test for client-disconnect propagation against a real Ray
 cluster: RequestWatcher -> DisconnectRegistry (real detached actor) -> the
 BaseInfer per-replica batched pump (real `is_set_many` RPC) ->
 run_cancellable/run_cancellable_stream.
 
-Every other test in the suite stubs `get_disconnect_registry()` out (see
-conftest.py) precisely so it doesn't need a Ray cluster — that's correct for
-exercising the polling/cancellation *logic* in isolation, but it means the
-actual cross-process wiring (the shared named actor, the batched RPC, the
-gateway-side watcher recording a disconnect the deployment-side pump then
-observes) is otherwise never exercised end-to-end. No model/GPU is needed —
-this is pure plumbing, so it runs against a small local Ray instance rather
-than a full `mship_deploy` cluster.
+Other tests stub `get_disconnect_registry()` out (see conftest.py); this one
+exercises the actual cross-process wiring against a small local Ray instance
+rather than a full `mship_deploy` cluster.
 """
 
 import asyncio
@@ -30,9 +25,9 @@ from modelship.infer.infer_config import (
 
 
 class _FakeClientRequest:
-    """Stands in for the real FastAPI Request RequestWatcher watches on the
-    gateway side. `disconnect()` flips `is_disconnected()` to True, the same
-    transition a dropped client socket drives in production."""
+    """Stands in for the real FastAPI Request RequestWatcher watches;
+    `disconnect()` flips `is_disconnected()` to True, as a dropped client
+    socket would."""
 
     def __init__(self) -> None:
         self._disconnected = False
@@ -84,9 +79,8 @@ def real_ray_cluster():
 
 
 def _raw_request(request_id: str) -> RawRequestProxy:
-    """Mirrors production: the deployment side resolves its own handle to the
-    shared named actor rather than reusing a Python reference from the
-    gateway side."""
+    """Mirrors production: resolves its own handle to the shared named actor
+    rather than reusing a Python reference from the gateway side."""
     return RawRequestProxy(get_disconnect_registry(), {}, request_id)
 
 
@@ -132,7 +126,7 @@ async def test_stream_disconnect_propagates_end_to_end_through_real_registry():
         async with asyncio.timeout(3.0):
             async for item in infer.run_cancellable_stream(slow_stream(), _raw_request(request_id)):
                 received.append(item)
-                client_request.disconnect()  # disconnect right after the first item
+                client_request.disconnect()
 
     assert received == ["first"]
     assert infer.aborted == 1
@@ -142,10 +136,8 @@ async def test_stream_disconnect_propagates_end_to_end_through_real_registry():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_concurrent_requests_share_one_pump_and_stay_isolated():
-    """The whole point of the batched pump: N concurrent requests on one
-    replica share a single background poller (and thus a single real RPC per
-    interval) instead of each spinning its own — and a disconnect on one
-    request must not affect the others sharing that pump."""
+    """N concurrent requests on one replica share a single background poller
+    (one RPC per interval); a disconnect on one must not affect the others."""
     infer = _Infer()
     request_ids = [f"integration-req-concurrent-{i}" for i in range(3)]
 
@@ -164,7 +156,7 @@ async def test_concurrent_requests_share_one_pump_and_stay_isolated():
     assert pump_task is not None and not pump_task.done()
 
     registry = get_disconnect_registry()
-    await registry.set.remote(request_ids[1])  # disconnect only the middle request, for real
+    await registry.set.remote(request_ids[1])  # disconnect only the middle request
 
     with pytest.raises(ClientDisconnectedError):
         await asyncio.wait_for(tasks[1], timeout=3.0)

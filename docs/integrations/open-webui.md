@@ -6,7 +6,7 @@ qualifies without any special support on either side.
 
 1. In Open WebUI, go to **Settings → Admin Settings → Connections → OpenAI
    API**.
-2. Set the **API Base URL** to `http://<modelship-host>:8000/v1`.
+2. Set the **API Base URL** to `http://<modelship-host>:8000/modelship/v1`.
 3. Set the **API Key** to a real key if `MSHIP_API_KEYS` is configured, or any
    non-empty placeholder if not.
 4. Save — Open WebUI queries `GET /v1/models` to populate the model picker
@@ -16,7 +16,7 @@ Or via environment variables if you're running Open WebUI in Docker:
 
 ```bash
 docker run -d \
-  -e OPENAI_API_BASE_URL=http://<modelship-host>:8000/v1 \
+  -e OPENAI_API_BASE_URL=http://<modelship-host>:8000/modelship/v1 \
   -e OPENAI_API_KEY=your-key-or-placeholder \
   -p 3000:8080 \
   ghcr.io/open-webui/open-webui:main

@@ -1,20 +1,5 @@
-"""Unit tests for BaseInfer.run_cancellable / run_cancellable_stream, the
-generic disconnect guards.
-
-Non-streaming Ray Serve calls don't get a socket to watch (unlike streaming,
-where Starlette's own StreamingResponse races disconnect against the body
-iterator and cancellation propagates all the way down automatically).
-run_cancellable races an arbitrary coroutine against the shared per-replica
-disconnect pump (BaseInfer._disconnect_pump) and cancels whichever loses,
-calling the on_generation_aborted() hook so a loader can free engine-side
-resources. run_cancellable_stream does the same thing per-item for an async
-generator, so a loader can opt into explicit disconnect handling for
-streaming too instead of relying solely on the ASGI layer's own
-cancellation-on-disconnect. No GPU/Ray needed — the pump's registry lookup
-(_poll_disconnected_ids) is overridden to consult plain fakes instead of the
-real DisconnectRegistry actor, so both race participants stay plain asyncio
-coroutines/generators against a minimal BaseInfer subclass.
-"""
+"""Unit tests for BaseInfer.run_cancellable / run_cancellable_stream, which race work
+against the shared disconnect pump and call on_generation_aborted() on cancellation."""
 
 import asyncio
 import itertools
@@ -30,9 +15,8 @@ _request_id_counter = itertools.count()
 
 
 class _FakeRawRequest:
-    """Registers itself in a class-level id -> instance map so `_Infer`'s
-    overridden `_poll_disconnected_ids` can consult it by id, the same way the
-    real pump consults the DisconnectRegistry actor by id."""
+    """Registers itself in a class-level id -> instance map so `_Infer`'s overridden
+    `_poll_disconnected_ids` can look it up by id, mirroring the real DisconnectRegistry."""
 
     _by_id: ClassVar[dict[str, "_FakeRawRequest"]] = {}
 
@@ -75,11 +59,8 @@ class _Infer(BaseInfer):
 
 @pytest.mark.asyncio
 async def test_poll_disconnected_ids_degrades_on_unexpected_registry_exception(monkeypatch):
-    """The real (un-overridden) _poll_disconnected_ids must swallow more than
-    just RayActorError: it's called from the shared per-replica pump, so an
-    unhandled exception here would kill disconnect detection for every
-    concurrent request on the replica, not just break one request's poll the
-    way the old per-request loop did."""
+    """_poll_disconnected_ids must swallow more than RayActorError: an unhandled exception
+    here would kill disconnect detection for every concurrent request on the replica."""
 
     class _BrokenRemote:
         def remote(self, request_ids):
@@ -133,10 +114,8 @@ async def test_disconnect_cancels_work_and_calls_abort_hook():
 
 @pytest.mark.asyncio
 async def test_outer_cancellation_during_wait_cancels_work_without_leaking():
-    """If the task driving run_cancellable is itself cancelled from outside
-    (e.g. replica shutdown) while suspended in the internal asyncio.wait,
-    `work` must not be left running unobserved in the background — it has to
-    be cancelled too, same as an explicit client disconnect would do."""
+    """If the task driving run_cancellable is cancelled from outside while suspended in
+    asyncio.wait, `work` must be cancelled too, not left running unobserved."""
     work_cancelled = asyncio.Event()
 
     async def slow_work():
@@ -273,10 +252,8 @@ async def test_stream_disconnect_poll_interval_does_not_starve_fast_stream():
 
 @pytest.mark.asyncio
 async def test_consumer_closing_outer_generator_early_closes_work():
-    """If the consumer stops iterating (e.g. Starlette aclose()s the response
-    generator mid-stream) before any disconnect is detected, `work` must still
-    be closed — not left for the event loop to finalize whenever it gets
-    around to it."""
+    """If the consumer stops iterating (e.g. Starlette aclose()s mid-stream) before any
+    disconnect is detected, `work` must still be closed, not left for GC to finalize."""
     work_closed = asyncio.Event()
 
     async def gen():
@@ -302,12 +279,8 @@ async def test_consumer_closing_outer_generator_early_closes_work():
 
 @pytest.mark.asyncio
 async def test_task_cancelled_while_suspended_in_asyncio_wait_does_not_raise():
-    """If the task driving this generator is cancelled while suspended in the
-    internal `asyncio.wait` (rather than at the `yield`), the loop's `next_item`
-    task is still in flight and still owns `work`'s frame. Calling
-    `work.aclose()` before cancelling and awaiting `next_item` first raises
-    `RuntimeError: aclose(): asynchronous generator is already running`
-    instead of letting `CancelledError` propagate cleanly."""
+    """If cancelled while suspended in asyncio.wait (not at yield), `next_item` still owns
+    `work`'s frame — aclose() before awaiting it raises "already running", not CancelledError."""
     work_closed = asyncio.Event()
 
     async def gen():

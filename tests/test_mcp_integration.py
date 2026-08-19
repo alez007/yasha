@@ -1,10 +1,7 @@
 """Real-cluster integration test for server-side MCP tool execution: a real
-deployed model (via the shared `mship_cluster`/`model_deployer` fixtures in
-conftest.py) firing real /v1/responses requests with an `mcp` tool against a
-real in-process MCP server (the official SDK's MCPServer, served over
-streamable HTTP on localhost) — the gateway subprocess reaches it exactly like
-it would reach any self-hosted MCP server. No mocking anywhere in this file.
-"""
+deployed model (via the `mship_cluster`/`model_deployer` fixtures) hits
+/v1/responses with an `mcp` tool against an in-process MCP server over
+streamable HTTP. No mocking in this file."""
 
 import asyncio
 import threading
@@ -15,7 +12,7 @@ import pytest
 import uvicorn
 from mcp.server.mcpserver import MCPServer
 
-OPENAI_API_BASE = "http://localhost:8000/v1"
+OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 _PORT = 8934
 
 _TERMINAL_STATUSES = {"completed", "incomplete", "failed", "cancelled"}
@@ -96,11 +93,9 @@ class TestMcpIntegration:
         mcp_call_item = next(item for item in resp.output if item.type == "mcp_call")
         assert mcp_call_item.name == "roll"
         assert mcp_call_item.status == "completed"
-        # Real tool execution against the real dice server, not a mock.
         assert mcp_call_item.output == "total: 6"
         assert mcp_call_item.server_label == "dice"
 
-        # The model's final answer should reflect the real tool result.
         assert resp.output_text.strip()
 
     def test_streaming_model_discovers_and_calls_real_mcp_tool(self, client, dice_server):
@@ -129,7 +124,6 @@ class TestMcpIntegration:
         assert completed is not None
         mcp_call_item = next(item for item in completed.output if item.type == "mcp_call")
         assert mcp_call_item.output == "total: 9"
-        # Streamed argument fragments must reconstruct the final call's arguments.
         assert "".join(arg_deltas) == mcp_call_item.arguments
 
     def test_require_approval_round_trip_via_previous_response_id(self, client, dice_server):
@@ -179,14 +173,11 @@ class TestMcpIntegration:
         assert "mcp_call" in types
         mcp_call_item = next(item for item in completed.output if item.type == "mcp_call")
         assert mcp_call_item.status == "completed"
-        # Real tool execution against the real dice server, same as the foreground case.
         assert mcp_call_item.output == "total: 6"
         assert completed.output_text.strip()
 
     def test_background_mode_cancel_mid_flight_stays_cancelled(self, client, dice_server):
-        # Fired immediately (no poll delay), same pattern as the non-MCP background
-        # cancel test — gives the cancel a real window against the MCP loop's own
-        # discovery + tool-call turns before they'd otherwise finish on their own.
+        # No poll delay: gives the cancel a window before the turn finishes on its own.
         resp = client.responses.create(
             model="chat-capable",
             input="Use the roll tool to roll 2 dice, then tell me the total.",

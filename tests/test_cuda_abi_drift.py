@@ -1,7 +1,5 @@
-"""Every extension module's libcudart/libcublas/libcublasLt must link against the
-same CUDA major as torch. Those three track the toolkit major in lockstep; libcurand/
-libcusparse/libcusolver/libcufft don't, so they're excluded to avoid false positives.
-"""
+"""Every extension module's libcudart/libcublas/libcublasLt must match torch's CUDA major;
+libcurand/libcusparse/libcusolver/libcufft are excluded since they don't track it in lockstep."""
 
 import re
 import shutil

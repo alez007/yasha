@@ -55,7 +55,6 @@ async def test_streaming_generation_observed_after_drain():
 
 @pytest.mark.asyncio
 async def test_non_streaming_generation_observed_once():
-    """Non-streaming results are observed exactly once and still yielded."""
     infer = MagicMock()
     infer.create_chat_completion = MagicMock(return_value=_awaitable("full-response"))
 

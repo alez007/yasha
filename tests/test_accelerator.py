@@ -4,10 +4,8 @@ from modelship.utils.accelerator import detect_accelerator
 
 
 def _fake_torch(*, cuda_version=None, hip_version=None, device_count=0, has_xpu=False, xpu_available=False):
-    """A MagicMock standing in for the `torch` module, with just enough shape for
-    `detect_accelerator`'s probes. `has_xpu=False` deletes the auto-vivified
-    `.xpu` attribute so `hasattr(torch, "xpu")` is actually False, matching a
-    torch build without Intel XPU support."""
+    """A MagicMock standing in for `torch`, shaped for `detect_accelerator`'s probes.
+    `has_xpu=False` deletes the auto-vivified `.xpu` attribute so `hasattr(torch, "xpu")` is False."""
     mock_torch = MagicMock()
     mock_torch.version.cuda = cuda_version
     mock_torch.version.hip = hip_version
@@ -46,8 +44,7 @@ class TestDetectAcceleratorTorchBuild:
             assert detect_accelerator() == "cpu"
 
     def test_cpu_image_with_nvidia_smi_on_path_must_return_cpu(self):
-        """The cpu image's NVIDIA container toolkit injects nvidia-smi even though
-        the installed torch wheel is CPU-only — the wheel's own build must win."""
+        """torch's own build wins over nvidia-smi merely being on PATH."""
         mock_torch = _fake_torch()
         with (
             patch.dict("sys.modules", {"torch": mock_torch}),
@@ -57,8 +54,6 @@ class TestDetectAcceleratorTorchBuild:
             assert detect_accelerator() == "cpu"
 
     def test_cuda_build_but_no_gpus_visible_returns_cpu(self):
-        """cuda image run without --gpus: torch.version.cuda is set but no CUDA
-        device is visible — falls through to cpu, not cuda."""
         mock_torch = _fake_torch(cuda_version="12.4", device_count=0)
         with (
             patch.dict("sys.modules", {"torch": mock_torch}),

@@ -37,9 +37,8 @@ def _make_cfg(**overrides) -> ModelshipModelConfig:
 
 
 class TestClassifyToolTemplate:
-    """``classify_tool_template`` must return names that match vLLM's own
-    ``ToolParserManager`` registry exactly — ``resolve_tool_parser``
-    validates auto-detected names against it directly."""
+    """``classify_tool_template`` must return names matching vLLM's own
+    ``ToolParserManager`` registry, which ``resolve_tool_parser`` validates against."""
 
     def test_no_tool_markers_returns_none(self):
         assert classify_tool_template("plain template with no markers") is None
@@ -48,11 +47,7 @@ class TestClassifyToolTemplate:
         assert classify_tool_template("{% if tools %}<|tool_call>{% endif %}") == "gemma4"
 
     def test_function_gemma_marker_matches_vllm_name(self):
-        # Regression: vLLM registers this parser as "functiongemma" (no
-        # underscore); modelship's own class used to be named "function_gemma"
-        # and this detector returned that mismatched name, which would fail
-        # validation against vLLM's real registry (or, worse, be handed
-        # straight to vLLM's OnlineRenderer and fail there instead).
+        # vLLM registers this parser as "functiongemma" (no underscore).
         assert classify_tool_template("{% if tools %}<start_function_call>{% endif %}") == "functiongemma"
 
     def test_qwen3_coder_function_marker_routes_ahead_of_hermes(self):
@@ -145,11 +140,8 @@ class TestDiscoverTemplateVars:
 
 
 class TestDetectBooleanDefaults:
-    """A chat template's own default for a boolean toggle is recovered by rendering
-    it forced on vs off and seeing which the no-kwarg base render matches. This is
-    the generic replacement for the old hardcoded parser-name list: it derives each
-    template's intent behaviorally, so Gemma (thinking opt-in) and Qwen (opt-out)
-    are handled by the same code with no per-model knowledge."""
+    """A chat template's boolean-toggle default is recovered by rendering it
+    forced on vs off and matching against the no-kwarg base render."""
 
     @staticmethod
     def _render_for(src: str):
@@ -186,10 +178,9 @@ class TestDetectBooleanDefaults:
 
 
 class TestDetectTemplateToggleDefaults:
-    """Orchestrator: renders through a tokenizer-like ``apply_chat_template`` and
-    must exclude that method's own signature params — pinning e.g.
-    ``add_generation_prompt`` into ``chat_template_kwargs`` would collide with
-    vLLM's explicit argument at request time (``TypeError: multiple values``)."""
+    """Must exclude ``apply_chat_template``'s own signature params (e.g.
+    ``add_generation_prompt``), which would otherwise collide with vLLM's
+    explicit argument at request time."""
 
     def test_signature_params_are_excluded(self):
         class FakeTokenizer:
@@ -206,7 +197,7 @@ class TestDetectTemplateToggleDefaults:
 
 
 class TestResolveToolParsersStoresExplicit:
-    """Regression: explicit `tool_call_parser` must be returned as-is."""
+    """Explicit `tool_call_parser` must be returned as-is."""
 
     def test_vllm_explicit_stored(self):
         cfg = _make_cfg(vllm_engine_kwargs=VllmEngineConfig(tool_call_parser="hermes"))

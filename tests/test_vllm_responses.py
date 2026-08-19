@@ -1,11 +1,8 @@
 """Unit tests for VllmInfer.create_response's own wiring: gating, request
 translation error mapping, and pre-generation-vs-mid-stream error handling.
 
-Full DTO-shaping correctness (render_and_params -> build_choices/stream_chat_completion
-against a real tokenizer) is covered by test_vllm_engine_ops.py's GPU-free
-real-pipeline tests and by a manual end-to-end run against a real engine (the
-parser-migration roadmap's standing convention for each phase) — this file
-mocks `engine_ops` out entirely to isolate VllmInfer.create_response's own logic.
+`engine_ops` is mocked out entirely; full DTO-shaping correctness is covered
+by test_vllm_engine_ops.py instead.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,8 +23,7 @@ from modelship.openai.protocol import (
 
 class _FakeRawRequest:
     """Never disconnects — is_watchable=False keeps it out of BaseInfer's
-    per-replica disconnect pump entirely (same as RawRequestProxy(registry=None)),
-    which also sidesteps needing a real DisconnectRegistry actor in these tests."""
+    disconnect pump, so no real DisconnectRegistry actor is needed."""
 
     request_id = "req-1"
     is_watchable = False
@@ -90,9 +86,8 @@ async def test_invalid_reasoning_effort_returns_400():
 
 @pytest.mark.asyncio
 async def test_stream_prevalidation_error_returns_plain_error_not_generator():
-    """A VllmValidationError from render_and_params must short-circuit to a
-    plain ErrorResponse before any generator is created — the client gets a
-    400 body, not a broken/empty event stream."""
+    """A VllmValidationError from render_and_params must short-circuit to a plain
+    ErrorResponse before any generator is created, not a broken/empty stream."""
     infer = _make_infer()
     request = ResponsesRequest(model="m", input="hi", stream=True)
 

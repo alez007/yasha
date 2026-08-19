@@ -94,10 +94,8 @@ class TestValidateConfig:
 
 
 class TestIsOwnHeadDeploy:
-    """The driver-local capability gate is only meaningful when this process IS
-    the node the model will run on — the join and existing-cluster paths hand
-    scheduling to Ray's own capability resources instead (see
-    modelship/deploy/capabilities.py)."""
+    """The driver-local capability gate only applies to the own-head path —
+    join and existing-cluster paths hand scheduling to Ray's own capability resources."""
 
     def test_bare_own_head_returns_true(self):
         with patch.dict(os.environ, {}, clear=True):

@@ -106,7 +106,7 @@ an external LB/Ingress health check). Port-forward for local access, or set
 
 ```bash
 kubectl port-forward svc/<release>-modelship-gateway 8000:8000
-curl http://localhost:8000/v1/models
+curl http://localhost:8000/modelship/v1/models
 ```
 
 ## Redis (required)

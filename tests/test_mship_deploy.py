@@ -218,10 +218,8 @@ class TestApplyArgsToEnv:
         assert "MSHIP_RAY_DASHBOARD_PORT" not in os.environ
 
     def test_address_sets_env(self):
-        # patch.dict (not monkeypatch.delenv) so the env write is reverted on exit
-        # — MSHIP_ADDRESS actively changes connect_ray's branch, so a leak here
-        # would silently flip every later TestConnectRay(Join) test onto the join
-        # path (same hazard test_prune_ray_sessions_*_sets_env guards against).
+        # patch.dict reverts the env write on exit; monkeypatch.delenv wouldn't undo
+        # it here. A leaked MSHIP_ADDRESS would flip later TestConnectRay(Join) tests.
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("MSHIP_ADDRESS", None)
             apply_args_to_env(parse_args(["--address", "mship-head:6380"]))
@@ -254,11 +252,8 @@ class TestApplyArgsToEnv:
         assert "MSHIP_NODE_NUM_CPUS" not in os.environ
 
     def test_node_num_gpus_sets_env(self):
-        # patch.dict (not monkeypatch.delenv) so the env write is reverted on exit —
-        # monkeypatch.delenv on an already-absent var registers no cleanup, so a
-        # leaked "2" here would fail every later TestValidateNodeGpuReservation/
-        # TestConnectRay case that assumes no GPU reservation (same hazard
-        # test_address_sets_env's comment documents).
+        # patch.dict (not monkeypatch.delenv) reverts the env write on exit —
+        # delenv on an already-absent var registers no cleanup, leaking "2" into later tests.
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("MSHIP_NODE_NUM_GPUS", None)
             apply_args_to_env(parse_args(["--node-num-gpus", "2"]))
@@ -429,9 +424,8 @@ class TestBuildDeploymentOptions:
         assert opts["ray_actor_options"]["num_gpus"] == 0
 
     def test_stable_diffusion_cpp_honors_num_gpus_on_darwin(self):
-        # ggml picks up Metal via its own runtime backend registry regardless of
-        # what Ray thinks — forcing 0 here would just make Ray co-schedule
-        # another GPU actor onto the same physical GPU.
+        # ggml picks up Metal via its own runtime backend registry regardless of Ray —
+        # forcing 0 here would let Ray co-schedule another GPU actor onto the same GPU.
         config = ModelshipModelConfig(
             name="test-model",
             model="some-model",
@@ -481,9 +475,8 @@ class TestBuildDeploymentOptions:
         assert "MSHIP_PREFLIGHT" not in env_vars
 
     def test_log_level_in_passthrough_and_deployment_env(self):
-        # The gateway-replica bug: MSHIP_LOG_LEVEL must flow through the shared
-        # passthrough helper and into a model deployment's runtime_env alongside
-        # the cache vars (which the gateway path omits but the model path keeps).
+        # MSHIP_LOG_LEVEL must flow through the shared passthrough helper into a model
+        # deployment's runtime_env, alongside cache vars (which the gateway path omits).
         with patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "TRACE"}, clear=True):
             assert build_passthrough_env_vars()["MSHIP_LOG_LEVEL"] == "TRACE"
 
@@ -501,9 +494,8 @@ class TestBuildDeploymentOptions:
                 assert key in env_vars
 
     def test_pipeline_parallel_uses_placement_group(self):
-        # num_gpus=2 + pp=2 satisfies the world_size==num_gpus invariant; the
-        # outer actor sits in bundle 0 with no GPU and vLLM workers claim the
-        # rest via the inherited placement group.
+        # num_gpus=2 + pp=2 satisfies world_size==num_gpus; the outer actor sits in
+        # bundle 0 with no GPU, and vLLM workers claim the rest via the inherited placement group.
         config = ModelshipModelConfig(
             name="test-model",
             model="some-model",
@@ -680,9 +672,8 @@ class TestRemoveApps:
         ):
             serve_utils.remove_apps(apps, replica_coordinator, "gw")
 
-        # Each app is dropped from the replica coordinator's registry (which bumps
-        # the gateway generation so replicas stop routing) before serve.delete tears
-        # it down.
+        # Each app is dropped from the replica coordinator's registry (bumping the
+        # gateway generation so replicas stop routing) before serve.delete tears it down.
         replica_coordinator.unregister_deployment.remote.assert_any_call("gw", "qwen-aaaaaaaaaa")
         replica_coordinator.unregister_deployment.remote.assert_any_call("gw", "kokoro-bbbbbbbbbb")
         mock_get.assert_called_once()  # batched ray.get over the unregister calls
@@ -714,8 +705,13 @@ class TestStartGateway:
             patch.object(serve_utils.ModelshipAPI, "options", options),
             patch.object(serve_utils.serve, "run") as mock_run,
         ):
-            serve_utils.start_gateway("gw", logging_config)
+            serve_utils.start_gateway("gw", logging_config, "/gw")
         return options, mock_run
+
+    def test_route_prefix_forwarded_to_serve_run(self):
+        _, mock_run = self._run({"MSHIP_GATEWAY_REPLICAS": "1", "MSHIP_GATEWAY_MAX_ONGOING": "1024"})
+        _, kwargs = mock_run.call_args
+        assert kwargs["route_prefix"] == "/gw"
 
     def test_defaults(self):
         # Ensure no leftover env from the ambient process leaks the assertion.
@@ -758,7 +754,7 @@ class TestStartGateway:
             patch.object(serve_utils.ModelshipAPI, "options", options),
             patch.object(serve_utils.serve, "run"),
         ):
-            serve_utils.start_gateway("edge", MagicMock())
+            serve_utils.start_gateway("edge", MagicMock(), "/edge")
         _, kwargs = options.call_args
         assert kwargs["ray_actor_options"]["runtime_env"]["env_vars"]["MSHIP_GATEWAY_NAME"] == "edge"
 
@@ -776,11 +772,24 @@ class TestStartGateway:
             self._run({name: value})
 
 
+class TestGatewayRoutePrefix:
+    def test_slugifies_name(self):
+        from modelship.deploy import serve_utils
+
+        assert serve_utils.gateway_route_prefix("modelship api") == "/modelship-api"
+        assert serve_utils.gateway_route_prefix("llm-api") == "/llm-api"
+        assert serve_utils.gateway_route_prefix("Edge_2") == "/edge_2"
+
+    def test_no_url_safe_chars_raises(self):
+        from modelship.deploy import serve_utils
+
+        with pytest.raises(ValueError):
+            serve_utils.gateway_route_prefix("!!!")
+
+
 class TestValidateNodeGpuReservation:
-    """--node-num-gpus must not exceed what this container can actually see (item
-    5a of the multi-node-docker co-location plan) — an inflated value would make
-    Ray advertise phantom GPU capacity and fail much later, at a replica's model
-    load, instead of here at startup."""
+    """--node-num-gpus must not exceed what this container can actually see — an
+    inflated value would surface much later, at a replica's model load, instead of at startup."""
 
     def _fake_gpus(self, count):
         from modelship.preflight import GPUInfo
@@ -899,8 +908,8 @@ class TestConnectRay:
         assert kwargs["_metrics_export_port"] == 8079
 
     def test_own_cluster_cuda_multi_gpu_left_unset_for_autodetect(self):
-        """Regression test: a cuda/rocm/xpu node must NOT be pinned to 1 GPU when
-        MSHIP_NODE_NUM_GPUS is unset — Ray autodetects the real device count."""
+        """A cuda/rocm/xpu node must not be pinned to 1 GPU when MSHIP_NODE_NUM_GPUS
+        is unset — Ray autodetects the real device count."""
         from modelship.deploy import serve_utils
 
         with patch.object(serve_utils, "detect_accelerator", return_value="cuda"):
@@ -908,8 +917,7 @@ class TestConnectRay:
         assert "num_gpus" not in kwargs
 
     def test_own_cluster_cpu_accelerator_forces_zero_gpus(self):
-        """Closes the cpu-image-run-with-`--gpus` hole: a torch CPU build must
-        advertise 0 GPUs even if nvidia-smi/NVML sees hardware."""
+        """A torch CPU build must advertise 0 GPUs even if nvidia-smi/NVML sees hardware."""
         from modelship.deploy import serve_utils
 
         with patch.object(serve_utils, "detect_accelerator", return_value="cpu"):
@@ -1095,9 +1103,8 @@ class TestConnectRay:
 
 @pytest.fixture
 def _reset_join_node():
-    """_join_ray_cluster assigns the module-level _join_node global as soon as
-    Node() succeeds, so every test that goes through it leaves that global set
-    unless reset — otherwise isolation would depend on test-definition order."""
+    """_join_ray_cluster sets the module-level _join_node global as soon as Node()
+    succeeds; tests that go through it must reset it or isolation depends on test order."""
     from modelship.deploy import serve_utils
 
     serve_utils._join_node = None
@@ -1106,11 +1113,9 @@ def _reset_join_node():
 
 
 class TestJoinRayCluster:
-    """_join_ray_cluster starts THIS container's node in-process via
-    ray._private.node.Node(head=False) — the same path `ray start --address`
-    takes internally — instead of shelling out. These tests mock that
-    Ray-internal surface (and so double as the loud-failure guard for a Ray
-    bump that moves it); TestClusterJoin exercises it for real."""
+    """_join_ray_cluster starts this container's node in-process via
+    ray._private.node.Node(head=False) instead of shelling out; these tests mock
+    that Ray-internal surface. TestClusterJoin exercises it for real."""
 
     @pytest.fixture(autouse=True)
     def _reset(self, _reset_join_node):
@@ -1225,10 +1230,8 @@ class TestJoinRayCluster:
         assert kw["memory"] == 10 * 1024**3 - kw["object_store_memory"]
 
     def test_metrics_export_port_always_none(self):
-        # A joining node never pins its metrics port, even if RAY_METRICS_EXPORT_PORT is set
-        # (e.g. inherited from a shared .env with the head) — only the head's port needs to
-        # be fixed/predictable; forcing the same fixed value onto a join node sharing the
-        # head's network namespace (Docker --network=host) would just collide with it.
+        # A joining node never pins its metrics port — only the head's port needs to be
+        # fixed/predictable; the same fixed value under --network=host would collide with it.
         kw = self._join({"MSHIP_METRICS": "true", "RAY_METRICS_EXPORT_PORT": "9999"})["params_kwargs"]
         assert kw["metrics_export_port"] is None
 
@@ -1293,8 +1296,8 @@ class TestConnectRayJoinBranch:
                 serve_utils.connect_ray(20)
             mock_join.assert_called_once_with("head:6380")
             mock_prune.assert_called_once()
-            # R2: address="auto", not a bare init — a bare init would silently
-            # form a split-brain cluster if local discovery somehow failed.
+            # address="auto", not a bare init — a bare init would silently form a
+            # split-brain cluster if local discovery somehow failed.
             assert mock_init.call_args.kwargs["address"] == "auto"
 
     def test_address_and_existing_cluster_mutually_exclusive_raises(self):
@@ -1375,9 +1378,9 @@ class TestSuperviseJoinNode:
 
 
 class TestResolveRayAuthEnv:
-    """resolve_ray_auth_env front-runs Ray's import-time RAY_AUTH_MODE latch:
-    it translates the MSHIP_* auth/join vars into RAY_AUTH_MODE/RAY_AUTH_TOKEN
-    before mship_deploy imports ray. Runs with a clean auth env each time."""
+    """resolve_ray_auth_env front-runs Ray's import-time RAY_AUTH_MODE latch,
+    translating MSHIP_* auth/join vars into RAY_AUTH_MODE/RAY_AUTH_TOKEN before
+    mship_deploy imports ray."""
 
     def _resolve(self, env):
         from modelship.utils import ray_auth
@@ -1424,9 +1427,8 @@ class TestResolveRayAuthEnv:
 
 
 class TestPruneRaySessions:
-    """`prune_ray_sessions` resolves the temp root via Ray's own
-    `get_ray_temp_dir()`, which returns `<RAY_TMPDIR>/ray` — so pointing
-    RAY_TMPDIR at a tmp dir fully isolates these tests from the real /tmp/ray."""
+    """`prune_ray_sessions` resolves the temp root via Ray's own `get_ray_temp_dir()`
+    (`<RAY_TMPDIR>/ray`), so pointing RAY_TMPDIR at a tmp dir isolates these tests."""
 
     def _temp_root(self, tmp_path):
         root = tmp_path / "ray"
@@ -1491,10 +1493,10 @@ class TestPruneRaySessions:
             patch.object(serve_utils, "_pid_alive", return_value=False),
         ):
             serve_utils.prune_ray_sessions()
-        assert not dead.exists()  # the real session dir is removed
-        assert latest.is_symlink()  # the symlink itself survives (now dangling)
-        assert marker.exists()  # non-session files untouched
-        assert unrelated.exists()  # non-matching dirs untouched
+        assert not dead.exists()
+        assert latest.is_symlink()  # survives, now dangling
+        assert marker.exists()
+        assert unrelated.exists()
 
     def test_disabled_via_env_keeps_everything(self, tmp_path):
         from modelship.deploy import serve_utils

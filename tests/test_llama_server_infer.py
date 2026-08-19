@@ -133,10 +133,8 @@ class TestSubprocessLifecycle:
             (0, {"n_gpu_layers": 24}, "0"),
             (1, {}, "-1"),  # llama-server auto-fit default
             (1, {"n_gpu_layers": 24}, "24"),
-            # Any negative value hits llama-server's own auto-fit code path
-            # (verified against b9859, unconfirmed on b10200: `params.n_gpu_layers < 0`
-            # gates the call regardless of exactly how negative) — this
-            # loader just passes the configured int through verbatim.
+            # Any negative n_gpu_layers hits llama-server's own auto-fit code path
+            # (`params.n_gpu_layers < 0`); this loader passes the configured int through verbatim.
             (2, {"n_gpu_layers": -2}, "-2"),
         ],
     )
@@ -263,11 +261,9 @@ class TestSubprocessLifecycle:
         infer.shutdown()
         end_time = time.monotonic()
 
-        # Verify that shutdown returned immediately (did not block for the timeout)
         assert end_time - start_time < 0.5
         assert infer._proc is None
 
-        # Wait for the background thread to finish and call wait and kill
         assert wait_called.wait(timeout=2.0)
         assert kill_called.wait(timeout=2.0)
 
@@ -288,12 +284,8 @@ def _request(**kwargs) -> ChatCompletionRequest:
 
 
 class _DisconnectingRawRequest:
-    """A RawRequestProxy stand-in whose is_disconnected() flips to True after
-    `disconnect_after` seconds, for exercising BaseInfer.run_cancellable.
-
-    Self-registers by id so a patched BaseInfer._poll_disconnected_ids (the
-    shared per-replica pump's registry lookup) can consult it directly instead
-    of hitting a real DisconnectRegistry actor."""
+    """A RawRequestProxy stand-in whose is_disconnected() flips True after
+    `disconnect_after` seconds; self-registers by id for a patched _poll_disconnected_ids."""
 
     _by_id: ClassVar[dict[str, _DisconnectingRawRequest]] = {}
 
@@ -380,10 +372,8 @@ class TestNonStreamingProjection:
 
     @pytest.mark.asyncio
     async def test_drops_logprobs_fields_not_yet_supported(self):
-        # Regression test: ChatCompletionRequest defaults top_logprobs to 0
-        # (not None), so a naive exclude_none dump still forwards it —
-        # llama-server rejects any request carrying top_logprobs unless
-        # logprobs=true, even when it's the falsy default of 0.
+        # ChatCompletionRequest defaults top_logprobs to 0 (not None), so a naive
+        # exclude_none dump forwards it; llama-server rejects that unless logprobs=true.
         captured = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -421,9 +411,8 @@ class TestNonStreamingProjection:
 
     @pytest.mark.asyncio
     async def test_disconnect_aborts_inflight_request_without_waiting_for_response(self):
-        # A client disconnect should cancel the in-flight httpx call to
-        # llama-server (freeing its GPU/CPU slot) rather than waiting out
-        # a response nobody will receive.
+        # A client disconnect cancels the in-flight httpx call to llama-server
+        # (freeing its GPU/CPU slot) rather than waiting for a response.
         handler_finished = False
 
         async def handler(request: httpx.Request) -> httpx.Response:
@@ -504,9 +493,8 @@ class TestStreamingProjection:
         result = await infer.create_chat_completion(_request(stream=True), RawRequestProxy(None, {}))
         chunks = [chunk async for chunk in result]
         assert any("boom" in c for c in chunks)
-        # A well-behaved SSE stream always terminates with [DONE], even on an
-        # in-band error — clients that wait for it rather than connection
-        # close would otherwise hang.
+        # An SSE stream always terminates with [DONE], even on an in-band error,
+        # so clients waiting for it (rather than connection close) don't hang.
         assert chunks[-1] == "data: [DONE]\n\n"
 
     @pytest.mark.asyncio
@@ -524,7 +512,6 @@ class TestStreamingProjection:
 
     @pytest.mark.asyncio
     async def test_stage_b4_embedding_support(self, tmp_path, monkeypatch):
-        # Verify launch args has --embedding when usecase: embed
         binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
 
@@ -544,7 +531,6 @@ class TestStreamingProjection:
         finally:
             infer.shutdown()
 
-        # Verify create_embedding with projected embedding response
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.url.path == "/v1/embeddings"
             return httpx.Response(
@@ -575,18 +561,15 @@ class TestStreamingProjection:
         res = await infer_client.create_embedding(req, RawRequestProxy(None, {}))
         assert isinstance(res, EmbeddingResponse)
         assert res.data[0].embedding == [0.1, 0.2, 0.3]
-        # Extra field is not projected
         assert "timings" not in res.model_dump()
 
     @pytest.mark.asyncio
     async def test_stage_b4_vision_support(self, tmp_path, monkeypatch):
-        # Verify launch args has --mmproj when configured
         binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
 
-        # mmproj is resolved once on the driver (resolve_all_model_sources), same
-        # as the primary model path — the config already carries the resolved
-        # path by the time the actor launches.
+        # mmproj is resolved once on the driver, same as the primary model path —
+        # the actor receives an already-resolved path.
         model_config = ModelshipModelConfig(
             name="test-model",
             model="org/test-model",
@@ -606,7 +589,7 @@ class TestStreamingProjection:
         finally:
             infer.shutdown()
 
-        # Verify gateway rejection is skipped when mmproj is configured
+        # Gateway rejection of image content is skipped when mmproj is configured.
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,
@@ -634,7 +617,6 @@ class TestStreamingProjection:
 
     @pytest.mark.asyncio
     async def test_stage_b4_concurrency_coupling(self):
-        # Verify max_ongoing_requests is set to parallel by default when unset
         model_config = ModelshipModelConfig(
             name="test-model",
             model="org/test-model",
@@ -647,14 +629,12 @@ class TestStreamingProjection:
         opts = build_deployment_options(model_config)
         assert opts["max_ongoing_requests"] == 4
 
-        # When explicitly configured, it should keep the explicit value
         model_config.max_ongoing_requests = 10
         opts = build_deployment_options(model_config)
         assert opts["max_ongoing_requests"] == 10
 
     @pytest.mark.asyncio
     async def test_stage_b4_logprobs_support(self):
-        # Verify logprobs in non-streaming response
         def handler(request: httpx.Request) -> httpx.Response:
             import json
 
@@ -707,7 +687,6 @@ class TestStreamingProjection:
 
     @pytest.mark.asyncio
     async def test_stage_b4_inline_json_errors_handled(self):
-        # Verify 200 OK with inline error payload in chat completion
         def chat_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,
@@ -727,7 +706,6 @@ class TestStreamingProjection:
         assert isinstance(res, ErrorResponse)
         assert res.error.message == "inline chat error detail"
 
-        # Verify 200 OK with inline error payload in embedding
         def embed_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,
@@ -752,7 +730,6 @@ class TestStreamingProjection:
 
     @pytest.mark.asyncio
     async def test_stage_b4_mid_stream_json_errors_handled(self):
-        # Verify mid-stream JSON error terminates stream and yields error
         sse_body = (
             'data: {"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n'
             'data: {"choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}\n\n'
@@ -776,9 +753,8 @@ def _responses_request(**kwargs) -> ResponsesRequest:
 
 
 class TestResponsesProjection:
-    """Stage D: LlamaServerInfer.create_response — the native Responses path
-    shaping items directly from llama-server's own parsed reasoning/tool_calls,
-    same as TestNonStreamingProjection/TestStreamingProjection do for chat."""
+    """LlamaServerInfer.create_response shapes items directly from
+    llama-server's own parsed reasoning/tool_calls, same as the chat projection tests do."""
 
     @pytest.mark.asyncio
     async def test_non_stream_maps_reasoning_and_tools_to_responses_items(self):
@@ -859,9 +835,8 @@ class TestResponsesProjection:
         events = [chunk async for chunk in result]
         types = [e["type"] for e in events]
 
-        # responses_request_to_chat hardcodes stream=False; create_response must
-        # flip it back to True before this reaches the wire, or llama-server
-        # would answer with a single JSON object instead of an SSE stream.
+        # responses_request_to_chat hardcodes stream=False; create_response flips it
+        # back to True before the wire, or llama-server answers with JSON, not SSE.
         assert captured["payload"]["stream"] is True
         assert "response.created" in types
         assert "response.output_text.delta" in types
@@ -899,8 +874,7 @@ class TestResponsesProjection:
             )
 
             # translator.start()'s two events are synchronous and yield immediately;
-            # the disconnect only bites once the generator would block on the (never
-            # answered) HTTP call — no response.completed/failed ever follows.
+            # the disconnect bites once the generator blocks on the (never-answered) HTTP call.
             events = [chunk async for chunk in result]
         types = [e["type"] for e in events]
         assert "response.created" in types

@@ -40,7 +40,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--gateway-name",
-        help="Name for the API gateway app (env: MSHIP_GATEWAY_NAME, default: modelship api)",
+        help="Name for the API gateway app (env: MSHIP_GATEWAY_NAME, default: modelship)",
     )
     parser.add_argument(
         "--gateway-replicas",

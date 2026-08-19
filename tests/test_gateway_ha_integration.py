@@ -10,9 +10,8 @@ from openai import OpenAI
 
 
 def _model_in_all_samples(client: OpenAI, model: str, samples: int = 20) -> bool:
-    """True iff `model` appears in /v1/models on EVERY sampled request. With the
-    gateway load-balanced across replicas, a stale replica would omit it on some
-    requests — so 'present in all samples' means every replica has converged."""
+    """True iff `model` appears on every sampled /v1/models call — a stale
+    replica would omit it on some."""
     return all(model in {m.id for m in client.models.list().data} for _ in range(samples))
 
 
@@ -33,17 +32,14 @@ def _poll(predicate, deadline_s: float) -> bool:
 @pytest.mark.llama_server
 @pytest.mark.gateway_ha
 class TestGatewayReplicaConsistency:
-    """With 2 gateway replicas (the session starts --gateway-replicas 2), a deployed
-    model must become routable on BOTH replicas and a removed one must stop routing
-    on both — i.e. the coordinator watch loop reconciles every replica, not just the
-    one a direct push would have hit."""
+    """With 2 gateway replicas, a deployed model must become routable on both,
+    and a removed one must stop routing on both."""
 
     def test_add_and_remove_propagate_to_all_replicas(self, client, model_deployer):
         # Warm both replicas (spread requests so each starts its watch loop).
         for _ in range(10):
             client.models.list()
 
-        # Deploy: the model becomes routable on every replica.
         model_deployer.deploy("chat-llama-server-plain")
         assert _poll(lambda: _model_in_all_samples(client, "chat-llama-server-plain"), deadline_s=60), (
             "deployed model did not become routable on all gateway replicas"

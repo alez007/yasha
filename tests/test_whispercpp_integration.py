@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 
-OPENAI_API_BASE = "http://localhost:8000/v1"
+OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 
 # `tiny.en` has no language tokens; only `tiny` can auto-detect or translate.
 ENGLISH_ONLY_MODEL = "stt-cpp-model"
@@ -85,7 +85,7 @@ class TestWhispercpp:
         assert response.json()["text"].strip()
 
     def test_english_only_model_reports_en(self, speech):
-        # Regression: detection on a .en model returned a wrong language (observed: 'sq').
+        # .en (English-only) models must report 'en' regardless of what detection returns.
         response = _post_audio("transcriptions", ENGLISH_ONLY_MODEL, speech, response_format="verbose_json")
         assert response.status_code == 200
         assert response.json()["language"] == "en"

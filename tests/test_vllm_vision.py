@@ -1,12 +1,8 @@
 """Tests for vLLM chat-completion handling of vision (image_url) message parts.
 
-The boundary we can verify without a real GPU/model is the protocol hop:
-modelship ``ChatCompletionRequest`` -> ``model_dump()`` -> ``VllmChatCompletionRequest``
-(vLLM's own pydantic model). If image parts survive that, vLLM's downstream
-multimodal preprocessing runs against the same shape it does in upstream
-deployments. Wrapper-level concerns (normalize_chat_messages gating) are
-tested via :class:`VllmInfer.create_chat_completion` with the streaming path
-stubbed out — the goal there is the 400-rejection path, not the inference call.
+Verifies the protocol hop (``ChatCompletionRequest`` -> ``model_dump()`` ->
+``VllmChatCompletionRequest``) preserves image parts, plus the wrapper-level
+400-rejection gating in :class:`VllmInfer.create_chat_completion`.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -24,9 +20,8 @@ from modelship.openai.protocol import ChatCompletionRequest, ErrorResponse
 
 
 def test_image_url_part_survives_protocol_hop_into_vllm_request():
-    """An OpenAI-style image_url part on our request must round-trip into
-    ``VllmChatCompletionRequest`` unchanged — that's the shape vLLM's
-    multimodal preprocessing reads."""
+    """image_url parts must round-trip into ``VllmChatCompletionRequest``
+    unchanged — the shape vLLM's multimodal preprocessing reads."""
     request = ChatCompletionRequest(
         model="qwen-vl",
         messages=[
@@ -81,10 +76,8 @@ def _make_infer(*, supports_image: bool, monkeypatch: pytest.MonkeyPatch) -> Vll
     """Build a VllmInfer with __init__/start bypassed; only the fields the
     chat-completion path reads are populated.
 
-    `_prepare_chat` now renders the request (via `engine_ops.render_and_params`)
-    before dispatching to the streaming seam, so a real render call against the
-    MagicMock `openai_serving_render` would blow up — stub it to return a
-    trivial `(engine_input, sampling_params)` pair instead.
+    `_prepare_chat` renders the request via `engine_ops.render_and_params` before
+    streaming, so that call is stubbed to avoid a real render against the mock.
     """
     infer = VllmInfer.__new__(VllmInfer)
     infer._caps = VllmCapabilities(supports_image=supports_image)  # type: ignore[attr-defined]
@@ -128,10 +121,7 @@ async def test_image_part_rejected_on_text_only_model_with_400(monkeypatch: pyte
 
 @pytest.mark.asyncio
 async def test_text_only_request_reaches_streaming_path_on_vlm(monkeypatch: pytest.MonkeyPatch):
-    """Sanity check: a plain text request on a VLM is not blocked by the
-    gating layer. Streaming, since non-stream no longer calls `_create_chat_completion_stream`
-    (see test_vllm_engine_ops.py / test_integration.py::TestChatCapable for
-    the engine_ops-based non-stream path; TestChatStreamingCapable for streaming)."""
+    """A plain text request on a VLM is not blocked by the gating layer."""
     infer = _make_infer(supports_image=True, monkeypatch=monkeypatch)
     request = ChatCompletionRequest(
         model="qwen-vl",

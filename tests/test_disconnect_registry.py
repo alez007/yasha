@@ -85,9 +85,8 @@ async def test_proxies_keyed_independently_on_one_registry():
 
 @pytest.mark.asyncio
 async def test_watcher_sets_on_disconnect_and_stop_leaves_entry_for_ttl():
-    """stop() must NOT clear the entry: clearing it raced the model deployment's
-    cross-process poll and dropped the signal before it was read. The entry is
-    left for the registry to TTL-evict; stop() only cancels the watch task."""
+    """stop() must NOT clear the entry — the deployment side may still need to
+    read it; it's left for the registry to TTL-evict, stop() only cancels the watch task."""
     reg = _FakeRegistry()
     raw_request = MagicMock()
     raw_request.is_disconnected = AsyncMock(return_value=True)

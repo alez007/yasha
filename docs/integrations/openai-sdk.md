@@ -9,7 +9,7 @@ your gateway and use the model name from your `models.yaml`.
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:8000/v1",
+    base_url="http://localhost:8000/modelship/v1",
     api_key="not-needed",  # or a real key if MSHIP_API_KEYS is set
 )
 
@@ -42,7 +42,7 @@ print(follow_up.output_text)
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "http://localhost:8000/v1",
+  baseURL: "http://localhost:8000/modelship/v1",
   apiKey: "not-needed", // or a real key if MSHIP_API_KEYS is set
 });
 

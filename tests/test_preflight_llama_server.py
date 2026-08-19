@@ -59,9 +59,8 @@ class TestLlamaServerPreflightCpu:
         assert rec["n_ctx"] % 256 == 0
 
     def test_parallel_divides_total_budget(self, tmp_path):
-        # Same hardware/model, parallel=4 must yield a per-slot n_ctx roughly
-        # 1/4 of the single-slot recommendation (the launch command
-        # re-multiplies by parallel to reconstruct the RAM-safe total).
+        # Same hardware/model, parallel=4 should yield a per-slot n_ctx roughly 1/4 of
+        # the single-slot recommendation (the launch command re-multiplies by parallel).
         cfg_single = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), llama_server_kwargs={"parallel": 1})
         cfg_parallel = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), llama_server_kwargs={"parallel": 4})
         hw = HardwareProfile(ram_bytes=4 * 1024**3)
@@ -77,9 +76,8 @@ class TestLlamaServerPreflightCpu:
         assert rec_parallel["n_ctx"] < rec_single["n_ctx"]
 
     def test_parallel_too_high_for_budget_returns_empty(self, tmp_path):
-        # A tiny budget divided across many slots drops below the minimum
-        # usable n_ctx; the estimator should decline rather than recommend
-        # something unusably small.
+        # A tiny budget divided across many slots drops below the minimum usable n_ctx;
+        # the estimator should decline rather than recommend something unusably small.
         cfg = _make_config(
             resolved_path=str(_write_dummy_gguf(tmp_path)), llama_server_kwargs={"parallel": 64}, num_gpus=0
         )
@@ -153,9 +151,8 @@ class TestLlamaServerPreflightGpu:
         assert rec["n_ctx"] == 8192
 
     def test_ram_constrained_partial_shrinks_ctx(self, tmp_path):
-        # Same tight VRAM as the previous test, but RAM is now also tight —
-        # the CPU-resident layers' KV cache doesn't fit at the 8192 target, so
-        # the context shrinks (and ngl is refit against the smaller context).
+        # Same tight VRAM as the previous test, but RAM is now also tight — the
+        # CPU-resident layers' KV cache doesn't fit at 8192, so context shrinks.
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
         hw = HardwareProfile(gpus=[GPUInfo(0, 2 * 1024**3, "test")], ram_bytes=6 * 1024**3)
 
@@ -171,11 +168,8 @@ class TestLlamaServerPreflightGpu:
         assert rec["n_gpu_layers"] > 0
 
     def test_output_layer_ram_shortfall_returns_empty(self, tmp_path):
-        # VRAM fits all 32 transformer blocks but not the 33rd (output) layer,
-        # so ngl == block_count and no CPU-resident block carries a KV cache
-        # (cpu_blocks == 0). The output layer's weights still have to live in
-        # host RAM though, and here RAM is too small even for that alone —
-        # this must not be mistaken for "nothing left on CPU, nothing to check".
+        # VRAM fits all 32 blocks but not the output layer, so cpu_blocks == 0 — but
+        # the output layer's weights still need host RAM, and here RAM is too small for that.
         cfg = _make_config(
             resolved_path=str(_write_dummy_gguf(tmp_path)), llama_server_kwargs={"n_ctx": 1024}, num_gpus=1
         )
@@ -203,9 +197,8 @@ class TestLlamaServerPreflightGpu:
         assert rec == {}
 
     def test_multi_gpu_picks_smallest_n_as_lower_bound(self, tmp_path):
-        # 4 GPUs discoverable at the node level but only 2 reserved: picking
-        # the 2 smallest-free is a lower bound over any 2-subset, and should
-        # match sizing against exactly those two directly.
+        # 4 GPUs discoverable at the node level but only 2 reserved: picking the 2
+        # smallest-free is a lower bound over any 2-subset.
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=2)
         hw_all_four = HardwareProfile(
             gpus=[
@@ -267,9 +260,8 @@ class TestLlamaServerPreflightUnifiedMemory:
         assert rec["n_ctx"] == 131072
 
     def test_declines_instead_of_partial_offload_when_budget_tight(self, tmp_path):
-        # Same numbers as test_partial_offload_fits_fewer_layers_at_default_target,
-        # which goes to partial offload for a real (non-unified) GPU — on unified
-        # memory this must decline instead.
+        # Same numbers as test_partial_offload_fits_fewer_layers_at_default_target
+        # (partial offload there); on unified memory this must decline instead.
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
         hw = HardwareProfile(gpus=[GPUInfo(0, 2 * 1024**3, "Apple GPU", kind="mps")], ram_bytes=64 * 1024**3)
 
@@ -298,9 +290,8 @@ class TestLlamaServerPreflightUnifiedMemory:
 
 
 class TestLlamaServerPreflightFractionalGpu:
-    """0 < num_gpus < 1 shares one physical GPU; budget is sized from the
-    declared share of total capacity, not free VRAM (regression coverage for
-    the int(num_gpus) floor that used to silently drop fractional deploys)."""
+    """0 < num_gpus < 1 shares one physical GPU; budget is sized from the declared
+    share of total capacity, not free VRAM."""
 
     def test_fractional_num_gpus_not_floored_to_zero(self, tmp_path):
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=0.3)
@@ -389,9 +380,8 @@ class TestLlamaServerThreadsRecommendation:
         assert merged["threads"] == 16
 
     def test_threads_declined_when_it_would_undercut_parallel_slots(self, tmp_path):
-        # num_cpus=2 with parallel=4: capping to 2 threads would starve the 4
-        # concurrent slots of compute and defeat the loader's headline
-        # concurrency feature — decline and let llama-server keep all cores.
+        # num_cpus=2 with parallel=4: capping to 2 threads would starve the 4 concurrent
+        # slots of compute — decline and let llama-server keep all cores.
         cfg = _make_config(
             resolved_path=str(_write_dummy_gguf(tmp_path)),
             num_cpus=2,

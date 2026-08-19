@@ -1,12 +1,9 @@
-"""Tests for HeartbeatRegistry: the dedicated actor tracking liveness for background
-``/v1/responses`` runs, separate from the response snapshot itself.
+"""Tests for HeartbeatRegistry: the actor tracking liveness for background
+``/v1/responses`` runs, separate from the response snapshot.
 
-``_HeartbeatStore`` (the actor's plain, non-Ray internals) is tested directly for
-deterministic TTL behavior, mirroring how ``_DisconnectStore`` is tested in
-test_disconnect_registry.py. The module-level wrapper functions (``heartbeat``,
-``is_alive``, ``req_id_for``) are tested against a fake registry handle whose
-``.remote()`` mimics Ray actor-method dispatch, same pattern as ``_FakeRegistry``
-there.
+``_HeartbeatStore`` is tested directly for TTL behavior; the module-level
+wrapper functions are tested against a fake registry handle mimicking Ray's
+``.remote()`` dispatch, same pattern as `test_disconnect_registry.py`.
 """
 
 from unittest.mock import patch
@@ -137,10 +134,8 @@ class TestWrapperFunctions:
 
 
 class TestHeartbeatNeverTouchesTheSnapshot:
-    """The whole point of the split: a heartbeat refresh is a call to a different
-    actor entirely, so it structurally cannot race or regress the response
-    snapshot's terminal status — not just "less likely to", but impossible, since
-    it never performs a read-modify-write of the snapshot at all."""
+    """A heartbeat refresh calls a different actor entirely, so it cannot race
+    or regress the response snapshot's terminal status."""
 
     @pytest.mark.asyncio
     async def test_heartbeat_after_a_terminal_write_leaves_the_snapshot_untouched(self, fake_registry):
@@ -151,8 +146,7 @@ class TestHeartbeatNeverTouchesTheSnapshot:
         terminal = {"id": "resp_1", "status": "cancelled", "output": []}
         await responses_state.write_terminal_if_not_terminal(store, "u1", "resp_1", response=terminal)
 
-        # A heartbeat tick landing after the terminal write — as would happen if a
-        # stray tick raced the drain task's completion — touches only the registry.
+        # A heartbeat tick landing after the terminal write touches only the registry.
         await responses_state.heartbeat("u1", "resp_1", "req-1")
 
         snapshot = await responses_state.read_async(store, "u1", "resp_1")

@@ -1,6 +1,5 @@
 """Shared test fixtures, including the integration suite's session-scoped cluster
-infrastructure (`mship_cluster`, `model_deployer`, `client`, `MODEL_CONFIGS`), so
-every `@pytest.mark.integration` file shares one live cluster per session."""
+infrastructure shared by every `@pytest.mark.integration` file."""
 
 import os
 import subprocess
@@ -18,9 +17,8 @@ from openai import OpenAI
 
 @pytest.fixture(autouse=True)
 def neutralize_request_watcher():
-    """Stub the disconnect registry and watch loop so route-handler tests don't spin
-    up a real Ray cluster. A test module that exercises the real watcher/registry can
-    override this by defining a same-named autouse fixture of its own."""
+    """Stubs the disconnect registry and watch loop so route-handler tests don't spin
+    up a real Ray cluster; a test module needing the real watcher can override this fixture."""
 
     async def _noop_watch(self):
         return
@@ -36,12 +34,11 @@ def neutralize_request_watcher():
 # Integration suite: real Ray cluster + real models, `@pytest.mark.integration`.
 # ---------------------------------------------------------------------------
 
-OPENAI_API_BASE = "http://localhost:8000/v1"
-HEALTH_URL = "http://localhost:8000/health"
+OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
+HEALTH_URL = "http://localhost:8000/modelship/health"
 
-# Per-model configs. Each `Deployer.deploy(*names)` call writes one of these
-# (or a subset) into a one-shot models.yaml and runs `mship_deploy.py
-# --reconcile` to swap the currently-deployed set in-place.
+# Per-model configs; Deployer.deploy(*names) writes a subset into a one-shot
+# models.yaml and runs `mship_deploy.py --reconcile` to swap the deployed set.
 MODEL_CONFIGS: dict[str, dict] = {
     "chat-capable": {
         "name": "chat-capable",
@@ -59,9 +56,7 @@ MODEL_CONFIGS: dict[str, dict] = {
     },
     "chat-reasoning": {
         "name": "chat-reasoning",
-        # Qwen3-0.6B is the smallest reasoning-capable model in the Qwen3
-        # family; it natively emits `<think>...</think>`. Reasoning chains
-        # need headroom so `max_model_len` is bumped.
+        # Qwen3-0.6B natively emits <think>...</think>; max_model_len is bumped for reasoning headroom.
         "model": "Qwen/Qwen3-0.6B",
         "usecase": "generate",
         "loader": "vllm",
@@ -88,11 +83,8 @@ MODEL_CONFIGS: dict[str, dict] = {
     },
     "autoscale-llama": {
         "name": "autoscale-llama",
-        # Tiny CPU GGUF so the host can hold several replicas (1 cpu each, up to
-        # max_replicas) at once. autoscaling_config replaces num_replicas:
-        # target_ongoing_requests=1 makes a handful of concurrent requests
-        # exceed one replica's setpoint and drive scale-out; the short delays
-        # keep the test's poll windows tractable.
+        # Tiny CPU GGUF so the host can hold several replicas at once;
+        # target_ongoing_requests=1 drives scale-out under light concurrent load.
         "model": "lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf",
         "usecase": "generate",
         "loader": "llama_server",
@@ -107,13 +99,8 @@ MODEL_CONFIGS: dict[str, dict] = {
     },
     "chat-llama-server": {
         "name": "chat-llama-server",
-        # Qwen3-0.6B GGUF through the llama_server loader: a llama-server
-        # subprocess doing its own chat templating, tool-call, and reasoning
-        # parsing (`--jinja --reasoning-format auto`). `parallel: 4` exercises
-        # the loader's headline capability: true multi-slot concurrency
-        # instead of a single asyncio.Lock serializing every request. n_ctx is per-slot (the
-        # loader launches with `-c n_ctx*parallel`), bumped for reasoning
-        # headroom.
+        # parallel: 4 gives multi-slot concurrency; n_ctx is per-slot (launched with
+        # -c n_ctx*parallel).
         "model": "lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf",
         "usecase": "generate",
         "loader": "llama_server",
@@ -125,9 +112,7 @@ MODEL_CONFIGS: dict[str, dict] = {
     },
     "chat-llama-server-plain": {
         "name": "chat-llama-server-plain",
-        # Same non-reasoning Qwen2.5-0.5B GGUF as chat-llama-server, through
-        # the llama_server loader. Used for the response_format tests, which
-        # need a model that doesn't emit a `<think>...</think>` preamble.
+        # Same GGUF as chat-llama-server but without a <think> preamble; needed for response_format tests.
         "model": "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf",
         "usecase": "generate",
         "loader": "llama_server",
@@ -135,9 +120,7 @@ MODEL_CONFIGS: dict[str, dict] = {
     },
     "chat-llama-server-gpu": {
         "name": "chat-llama-server-gpu",
-        # Same GGUF as chat-llama-server-plain, on a whole GPU — exercises the
-        # llama_server loader's offload path (actor GPU allocation, -ngl
-        # honored).
+        # Same GGUF as chat-llama-server-plain, on a whole GPU (exercises the -ngl offload path).
         "model": "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf",
         "usecase": "generate",
         "loader": "llama_server",
@@ -163,10 +146,8 @@ MODEL_CONFIGS: dict[str, dict] = {
     },
     "embed-model-llama-server": {
         "name": "embed-model-llama-server",
-        # Real embeddings through a live llama-server subprocess (`--embedding`)
-        # — the existing `test_embeddings` integration test only exercises the
-        # vllm loader; llama_server's B4 embeddings support was otherwise
-        # only unit-tested against a mocked httpx transport.
+        # Real embeddings via llama-server subprocess (--embedding), distinct from
+        # the vllm-loader embed-model below.
         "model": "nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q4_K_M.gguf",
         "usecase": "embed",
         "loader": "llama_server",
@@ -234,9 +215,8 @@ MODEL_CONFIGS: dict[str, dict] = {
 
 
 class _Deployer:
-    """Owns the per-test reconcile cycle: writes a one-shot models.yaml with
-    the requested set and runs `mship_deploy.py --reconcile` synchronously
-    against the already-running gateway. Re-deploying the same set is a no-op."""
+    """Writes a one-shot models.yaml for the requested set and runs `mship_deploy.py
+    --reconcile` against the running gateway; re-deploying the same set is a no-op."""
 
     def __init__(self, tmp_dir: Path) -> None:
         self._tmp = tmp_dir
@@ -283,11 +263,8 @@ class _Deployer:
         self._current = wanted
 
     def deploy_raw(self, models: list[dict], *, replace_strategy: str = "stop_start") -> None:
-        """Like deploy(), but takes raw model dicts directly (e.g. a MODEL_CONFIGS
-        entry with fields overridden to force a new fingerprint under the same
-        name) and lets the caller pick --replace-strategy. Resets self._current
-        to force the next deploy() call to always re-apply its own set, since
-        this bypasses the by-name cache."""
+        """Like deploy(), but takes raw model dicts directly and lets the caller pick
+        --replace-strategy; resets self._current since this bypasses the by-name cache."""
         slug = "+".join(sorted(m["name"] for m in models)) or "empty"
         config_path = self._tmp / f"models-raw-{slug}-{replace_strategy}.yaml"
         log_path = self._tmp / f"reconcile-raw-{slug}-{replace_strategy}.log"
@@ -325,17 +302,14 @@ class _Deployer:
 
 @pytest.fixture(scope="session")
 def mship_cluster(tmp_path_factory):
-    """Start a Ray cluster and a long-lived `mship_deploy` operator process
-    bound to an empty models.yaml — owns the gateway via the fresh-install
-    path and `signal.pause()`s for the rest of the session. Per-test code
-    deploys models additively via `_Deployer.deploy(...)`."""
+    """Starts a Ray cluster and a long-lived `mship_deploy` process bound to an empty
+    models.yaml; per-test code deploys models additively via `_Deployer.deploy(...)`."""
     tmp_dir = tmp_path_factory.mktemp("mship_integration")
     empty_config = tmp_dir / "empty-models.yaml"
     log_path = tmp_dir / "mship_deploy.log"
 
-    # Clear any stale cluster, but don't pre-start a head: mship_deploy.py starts
-    # its own by default, and a pre-started head forces its ray.init() into
-    # attach-mode, which rejects the explicit num_gpus/num_cpus it passes on a GPU host.
+    # Don't pre-start a head: a pre-started head forces ray.init() into attach-mode,
+    # which rejects the explicit num_gpus/num_cpus mship_deploy.py passes on a GPU host.
     subprocess.run(["ray", "stop", "--force"], check=False)
 
     with open(empty_config, "w") as f:
@@ -343,10 +317,7 @@ def mship_cluster(tmp_path_factory):
 
     log_file = open(log_path, "w")  # noqa: SIM115 — kept open for subprocess lifetime, closed in cleanup
     proc = subprocess.Popen(
-        # 2 gateway replicas for the whole session so TestGatewayReplicaConsistency
-        # can verify the coordinator watch loop converges every replica (and all
-        # other tests get free multi-replica coverage). Gateway replicas are
-        # num_cpus=0, so this is cheap.
+        # 2 gateway replicas exercise multi-replica convergence; num_cpus=0 makes this cheap.
         [
             "uv",
             "run",
@@ -358,10 +329,8 @@ def mship_cluster(tmp_path_factory):
             "--prune-ray-sessions",
             "false",
         ],
-        # Non-blocking if absent, so safe to enable session-wide; lets tests
-        # simulate distinct identities via extra_headers. MSHIP_RAY_DASHBOARD
-        # binds the dashboard to 0.0.0.0 (default 127.0.0.1) so it's reachable
-        # from outside the test runner, not just localhost, for live debugging.
+        # MSHIP_TRUSTED_IDENTITY_HEADER lets tests simulate distinct identities via
+        # extra_headers; MSHIP_RAY_DASHBOARD binds the dashboard to 0.0.0.0.
         env={
             **os.environ,
             "MSHIP_TRUSTED_IDENTITY_HEADER": "X-Mship-Test-Identity",

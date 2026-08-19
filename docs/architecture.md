@@ -29,7 +29,7 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 - **Ordered startup** — a cluster-wide mutex (`DeployCoordinator`) admits one deploy at a time; models are ordered by GPU footprint descending (multi-GPU/TP jobs first, whole-GPU before fractional) to avoid memory spikes
 - **Additive by default** — `mship deploy` adds models to a running cluster without disrupting existing deployments. `--reconcile` instead makes the cluster match the config exactly (add/remove/replace); it never tears the cluster down
 - **One deployment per model name** — a model name maps to exactly one deployment; scale it with `num_replicas` (or `autoscaling_config`), which Ray Serve load-balances across replicas natively. Changing a model's config replaces its deployment (`--replace-strategy`, default `blue_green`) rather than adding a second one alongside it
-- **Multi-gateway support** — independent gateways can share a cluster via `--gateway-name`, each managing its own models
+- **Multi-gateway support** — independent gateways can share a cluster via `--gateway-name`, each managing its own models and reachable under its own route (`/<slugified-gateway-name>/v1/...`), since every gateway shares the cluster's one HTTP proxy/port
 
 ### Inference Loaders
 
@@ -81,7 +81,7 @@ State lives in the gateway, not the loaders — `GET`/`DELETE` carry no model an
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="…")
+client = OpenAI(base_url="http://localhost:8000/modelship/v1", api_key="…")
 
 resp = client.responses.create(model="reasoning-qwen", input="Which is larger, 9.11 or 9.9?")
 print(resp.output_text)

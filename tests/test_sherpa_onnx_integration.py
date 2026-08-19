@@ -12,7 +12,7 @@ import pytest
 import openai
 from modelship.infer.sherpa_onnx.registry import REGISTRY
 
-OPENAI_API_BASE = "http://localhost:8000/v1"
+OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 _VOICE_NAMES = REGISTRY["kokoro-en-v0_19"].voice_names
 
 
@@ -58,10 +58,8 @@ class TestSherpaOnnx:
         assert len({clips[0], clips[1], clips[2]}) == len(sample)
 
     def test_speech_is_intelligible_via_transcription(self, client, tmp_path):
-        # Structural WAV checks alone don't prove the audio is clean speech
-        # rather than silence/noise that happens to be shaped like a WAV file
-        # — round-trip it through a real STT model (whispercpp, CPU-only so
-        # it can run alongside sherpa_onnx without a GPU) to confirm it is.
+        # Round-trips the audio through a real STT model (whispercpp, CPU-only) to
+        # confirm it's clean speech, not silence/noise shaped like a WAV file.
         audio = client.audio.speech.create(
             model="tts-model", voice="af_bella", input="The wizard counted seventeen purple bananas."
         ).content
@@ -79,11 +77,8 @@ class TestSherpaOnnx:
             assert "door" in text or "light" in text, f"voice {voice!r} transcribed to unintelligible text: {text!r}"
 
     def test_numeric_voice_is_accepted(self, client, tmp_path):
-        # sherpa's kokoro model isn't byte-deterministic call-to-call (stochastic
-        # vocoder), so this can't assert equality against the named-voice
-        # request — only that the digit path round-trips through the API to
-        # real, intelligible inference instead of being rejected somewhere
-        # along the way.
+        # The kokoro vocoder isn't byte-deterministic, so this only checks the digit
+        # path round-trips to intelligible audio, not byte equality with the named voice.
         audio = client.audio.speech.create(model="tts-model", voice="0", input="Numeric voice selection.").content
         assert "numeric" in _transcribe(client, audio, tmp_path)
 
@@ -113,9 +108,8 @@ class TestSherpaOnnx:
         assert all(e["audio"] for e in deltas)
 
     def test_response_format_is_accepted_but_audio_is_always_wav(self):
-        # SherpaOnnxInfer's RawSpeechResponse always carries media_type
-        # audio/wav; response_format is accepted by the request schema but
-        # not currently used to transcode the output.
+        # RawSpeechResponse always carries media_type audio/wav; response_format is
+        # accepted by the schema but not used to transcode the output.
         response = _post_speech(voice="af_bella", input="Format check.", response_format="mp3")
         assert response.status_code == 200
         assert response.headers["content-type"] == "audio/wav"

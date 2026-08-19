@@ -244,9 +244,7 @@ class TestMcpCallExecutesAndContinues:
 
     @pytest.mark.asyncio
     async def test_tool_call_sandwiched_between_messages_keeps_output_order(self):
-        # Regression: the turn loop used to append all non-tool-call items first and
-        # executed mcp_call items after, regardless of where the tool call actually
-        # sat in the turn's own output — reordering any turn that interleaves them.
+        # Output order must match the turn's own interleaving, not tool-calls-last.
         msg1_events, msg1_item, seq = _message_events(oi=0, text="Rolling...", start_seq=2)
         tc_events, tc_item, seq = _tool_call_events(
             call_id="call_1", fc_id="fc_1", name="roll", arguments='{"n":2}', oi=1, start_seq=seq
@@ -278,9 +276,8 @@ class TestMcpCallExecutesAndContinues:
 
     @pytest.mark.asyncio
     async def test_forced_tool_choice_only_applies_to_first_turn(self):
-        # Regression: a forced tool_choice ("required") re-applied to every inner
-        # turn would force the model to keep calling tools forever, since each turn
-        # "satisfies" it again — it should only nudge the first turn.
+        # tool_choice forcing only applies to the first turn — reapplying it every
+        # turn would force endless tool calls.
         tc_events, tc_item, seq = _tool_call_events(
             call_id="call_1", fc_id="fc_1", name="roll", arguments="{}", oi=0, start_seq=2
         )
@@ -342,9 +339,7 @@ class TestApprovalRequired:
         assert output[1]["name"] == "roll"
         # No mcp_call streaming events at all for a suppressed approval-bound call.
         assert not any("mcp_call" in e["type"] for e in result if "type" in e)
-        # Regression: the approval item's output_item.added/done must carry the
-        # correct (offset) output_index — it used to be dropped (buf.abs_oi stayed
-        # None), landing the item in the wrong output slot.
+        # Approval-request output_item events must carry the correct offset output_index.
         approval_events = [e for e in result if e.get("item", {}).get("type") == "mcp_approval_request"]
         assert len(approval_events) == 2
         assert all(e["output_index"] == 1 for e in approval_events)
@@ -379,10 +374,8 @@ class TestApprovalRequired:
         assert output[1]["approval_request_id"] == "mcpr_1"
         assert output[1]["arguments"] == '{"n":2}'
 
-        # Regression: the resumed call's event shape must still match a normal
-        # mcp_call — added -> arguments.delta -> arguments.done -> in_progress ->
-        # completed -> done — even though the arguments are already fully known
-        # (they came from the mcp_approval_request item, not a live stream).
+        # The resumed call's event shape matches a normal mcp_call even though the
+        # arguments are already known (from mcp_approval_request, not a live stream).
         mcp_related = [e["type"] for e in result if "mcp_call" in e["type"]]
         assert mcp_related == [
             "response.mcp_call_arguments.delta",
@@ -429,9 +422,8 @@ class TestApprovalRequired:
         assert rejected["status"] == "failed"
         assert "rejected" in rejected["error"]
         assert "no thanks" in rejected["error"]
-        # Regression: a rejected approval-resume call used to only end up as a
-        # failed item in the terminal output[], with no matching streaming event —
-        # diverging from _execute_mcp_call's in_progress/failed pair.
+        # A rejected approval-resume call emits the same in_progress/failed streaming
+        # pair as _execute_mcp_call, not just a terminal output item.
         assert [e["type"] for e in result if e["type"].startswith("response.mcp_call.")] == [
             "response.mcp_call.in_progress",
             "response.mcp_call.failed",
@@ -439,9 +431,8 @@ class TestApprovalRequired:
 
     @pytest.mark.asyncio
     async def test_approval_resume_rejects_forged_tool_name_not_in_discovery(self):
-        # Security regression: the approved mcp_approval_request item is client-echoed
-        # input, not server-verified state. A client could edit/forge its 'name' to
-        # something never actually discovered on the server; that must not execute.
+        # mcp_approval_request is client-echoed input, not server-verified — a
+        # forged tool name must not execute.
         msg_events, msg_item, seq = _message_events(oi=0, text="okay.", start_seq=2)
         turn1 = [_created("i1"), _in_progress("i1"), *msg_events, _terminal("i1", [msg_item], seq=seq)]
         handle = FakeHandle([turn1])
@@ -471,9 +462,8 @@ class TestApprovalRequired:
 
     @pytest.mark.asyncio
     async def test_approval_resume_rejects_tool_filtered_out_by_allowed_tools(self):
-        # Security regression: even a tool that genuinely exists on the server must
-        # not execute via approval-resume if this turn's allowed_tools policy would
-        # have filtered it out of discovery.
+        # A tool filtered out by this turn's allowed_tools policy must not execute
+        # via approval-resume, even if it exists on the server.
         msg_events, msg_item, seq = _message_events(oi=0, text="okay.", start_seq=2)
         turn1 = [_created("i1"), _in_progress("i1"), *msg_events, _terminal("i1", [msg_item], seq=seq)]
         handle = FakeHandle([turn1])
@@ -536,11 +526,9 @@ class TestApprovalRequired:
 
     @pytest.mark.asyncio
     async def test_approval_response_without_previous_response_id_rejected(self):
-        # Security regression: an mcp_approval_request only ever exists as output
-        # from a prior, stored response. Without previous_response_id there is no
-        # genuine one to resume from, so a client self-supplying both the request
-        # and response items in one call must not be able to bypass the
-        # require_approval pause entirely.
+        # mcp_approval_request only ever exists as output from a prior response;
+        # without previous_response_id there's no genuine one to resume from, so a
+        # client can't self-supply both items to bypass approval.
         handle = FakeHandle([[]])
         request = _req(
             previous_response_id=None,
@@ -696,9 +684,9 @@ class TestDiscoveryFailure:
 
     @pytest.mark.asyncio
     async def test_discovery_failure_non_streaming_yields_a_failed_response_object_not_nothing(self):
-        # Regression: the non-streaming branch must capture response.failed the same
-        # way it captures completed/incomplete, or the generator yields nothing and
-        # the route's _await_first masks it as a generic 500 (StopAsyncIteration).
+        # The non-streaming branch must capture response.failed like
+        # completed/incomplete, or the generator yields nothing and _await_first
+        # surfaces a generic 500.
         handle = FakeHandle([[]])
         with patch("modelship.openai.mcp.loop.list_mcp_tools", side_effect=McpCallError("unreachable")):
             result = await _run(handle, _req(stream=False))

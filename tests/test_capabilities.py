@@ -64,9 +64,8 @@ class TestNodeCapabilityResources:
         assert resources == {"mship_llama_server": 1}
 
     def test_llama_server_wrapper_with_missing_target_is_unavailable(self, tmp_path):
-        """The `thin` image bakes the wrapper script unconditionally but ships no
-        real binary behind it — the probe must resolve the exec target, not just
-        check the wrapper file's own existence."""
+        """The `thin` image bakes the wrapper script but ships no real binary behind it; the
+        probe must resolve the exec target, not just check the wrapper file's existence."""
         missing_target = tmp_path / "nonexistent" / "llama-server"
         wrapper = tmp_path / "llama-server.sh"
         wrapper.write_text(f'#!/bin/sh\nexport LD_LIBRARY_PATH="{tmp_path}"\nexec "{missing_target}" "$@"\n')
@@ -140,11 +139,8 @@ class TestDeploymentCapabilityResources:
 
 class TestCapabilitiesModuleIsRayFree:
     def test_import_does_not_pull_in_ray(self):
-        """modelship/launcher.py imports LOADER_MODULES from this module before
-        resolve_ray_auth_env runs — a top-level `import ray` here (even
-        transitively, e.g. via modelship.infer.infer_config) would silently
-        break that discipline. Run in a subprocess so this test's own import of
-        `modelship.infer.infer_config` above can't taint the check."""
+        """launcher.py imports LOADER_MODULES before resolve_ray_auth_env runs, so this module
+        must never import ray; run in a subprocess since this test file's own imports already did."""
         result = subprocess.run(
             [sys.executable, "-c", "import modelship.deploy.capabilities, sys; assert 'ray' not in sys.modules"],
             capture_output=True,

@@ -10,12 +10,8 @@ import pytest
 @pytest.mark.integration
 @pytest.mark.stable_diffusion_cpp
 class TestImageStableDiffusionCpp:
-    """End-to-end CPU image generation, editing and variations through the
-    stable_diffusion_cpp loader. One single-file SD2.1 GGUF deployment backs all
-    three endpoints (txt2img + img2img + mask). The generated image is reused as
-    the input for the edit and variation calls. Small size + few steps keep the
-    CPU run tractable; the assertions check a valid PNG of the requested size,
-    not image quality."""
+    """One single-file SD2.1 GGUF deployment backs all three endpoints; the
+    generated image is reused as input for the edit and variation calls."""
 
     SIZE = "256x256"
 

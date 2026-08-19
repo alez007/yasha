@@ -35,7 +35,7 @@ kuberay-operator:
 
 # -- Gateway: the OpenAI-compatible HTTP surface (Ray Serve proxy).
 gateway:
-  name: "modelship api"
+  name: "modelship"
   port: 8000
   # Number of gateway replicas (maps to `mship deploy` --gateway-replicas /
   # MSHIP_GATEWAY_REPLICAS).

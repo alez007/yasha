@@ -281,11 +281,8 @@ class TestModelshipModelConfig:
             )
 
     def test_cpu_num_gpus_leaves_gpu_memory_utilization_unset(self):
-        # On vLLM's CPU backend, gpu_memory_utilization means "fraction of host
-        # RAM to reserve," not VRAM — the GPU-oriented 0.9 default reserves 90%
-        # of node RAM and reliably raises at worker init on a real machine, so
-        # the CPU-appropriate fallback is 0.4. Still resolved lazily, not
-        # written back onto the config here.
+        # On vLLM's CPU backend gpu_memory_utilization means fraction of host RAM, not VRAM;
+        # the CPU-appropriate fallback is 0.4, resolved lazily rather than written back here.
         config = ModelshipModelConfig(
             name="test-llm",
             model="some-model",
@@ -414,9 +411,8 @@ class TestModelshipModelConfig:
     def test_all_loaders_valid(self):
         image_only = (ModelLoader.diffusers, ModelLoader.stable_diffusion_cpp)
         for loader in ModelLoader:
-            # diffusers / stable_diffusion_cpp are image-only; sherpa_onnx is tts-only
-            # (and needs a registry name, not an arbitrary model string); the rest
-            # support generate.
+            # diffusers / stable_diffusion_cpp are image-only; sherpa_onnx is tts-only (and needs
+            # a registry name, not an arbitrary model string); everything else supports generate.
             if loader is ModelLoader.sherpa_onnx:
                 usecase, model = ModelUsecase.tts, "kokoro-en-v0_19"
             elif loader in image_only:
@@ -479,8 +475,7 @@ class TestModelshipConfig:
         assert len(config.models) == 0
 
     def test_duplicate_name_different_config_rejected(self):
-        # a model name maps to exactly one deployment; same name + different
-        # config used to be the round-robin case, now a hard error.
+        # A model name maps to exactly one deployment: same name with a different config is a hard error.
         with pytest.raises(ValidationError, match="duplicate model name"):
             ModelshipConfig(
                 models=[
@@ -669,9 +664,8 @@ class TestAutoscalingConfig:
 
 
 class TestPreRayImportChain:
-    """These all run before resolve_ray_auth_env(), and ray latches RAY_AUTH_MODE
-    at import. Subprocess-based: ray is already in sys.modules by suite time.
-    """
+    """These modules run before resolve_ray_auth_env(), and ray latches RAY_AUTH_MODE at
+    import; subprocess-based since ray is already in sys.modules by suite time."""
 
     @pytest.mark.parametrize(
         "module",
