@@ -26,6 +26,21 @@ docker run --rm --shm-size=8g \
 Images are multi-arch (amd64 + arm64), so this works on Apple Silicon and ARM
 Linux hosts too.
 
+!!! tip "No config file needed"
+    A single model can skip `models.yaml` entirely — the root-level fields have
+    matching flags, validated by the same schema:
+
+    ```bash
+    docker run --rm --shm-size=8g -v ./models-cache:/.cache -p 8000:8000 \
+      ghcr.io/modelship-ai/modelship:latest-cpu deploy \
+      --model "lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf" \
+      --loader llama_server --usecase generate --num-cpus 3
+    ```
+
+    It serves as `qwen3-0.6b`, inferred from the reference. The nested tuning
+    blocks (`llama_server_config` above) still need a file — see
+    [Single-model deploys](model-configuration.md#single-model-deploys-no-config-file).
+
 Once the server is up (look for `Deployed app 'modelship' successfully`),
 call the **Responses API** and watch the model think:
 

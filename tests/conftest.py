@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 import modelship.infer.infer_config as infer_config
+from modelship.utils.cli import MODEL_ARG_KEYS
 from openai import OpenAI
 
 
@@ -214,9 +215,24 @@ MODEL_CONFIGS: dict[str, dict] = {
 }
 
 
+def cli_expressible(config: dict) -> bool:
+    """Whether the model flags can express this entry: they carry only the
+    root-level scalars, so a nested tuning block means a config file."""
+    return set(config) <= set(MODEL_ARG_KEYS)
+
+
+def _model_flags(config: dict) -> list[str]:
+    flags: list[str] = []
+    for key, value in config.items():
+        flags += [f"--{key.replace('_', '-')}", str(value)]
+    return flags
+
+
 class _Deployer:
-    """Writes a one-shot models.yaml for the requested set and runs `mship_deploy.py
-    --reconcile` against the running gateway; re-deploying the same set is a no-op."""
+    """Runs `mship_deploy.py --reconcile` against the running gateway to swap the
+    deployed set; re-deploying the same set is a no-op. A lone CLI-expressible model
+    goes through the `--model` flags, everything else through a one-shot models.yaml.
+    """
 
     def __init__(self, tmp_dir: Path) -> None:
         self._tmp = tmp_dir
@@ -228,22 +244,47 @@ class _Deployer:
             return
 
         slug = "+".join(sorted(wanted)) or "empty"
-        config_path = self._tmp / f"models-{slug}.yaml"
-        log_path = self._tmp / f"reconcile-{slug}.log"
-        with open(config_path, "w") as f:
-            yaml.dump({"models": [MODEL_CONFIGS[n] for n in sorted(wanted)]}, f)
+        configs = [MODEL_CONFIGS[n] for n in sorted(wanted)]
+        if len(configs) == 1 and cli_expressible(configs[0]):
+            input_args = _model_flags(configs[0])
+        else:
+            input_args = ["--config", str(self._write_config(f"models-{slug}.yaml", configs))]
 
+        self._run(input_args, slug, "stop_start")
+        self._current = wanted
+
+    def deploy_raw(self, models: list[dict], *, replace_strategy: str = "stop_start") -> None:
+        """Like deploy(), but takes raw model dicts directly and lets the caller pick
+        --replace-strategy; resets self._current since this bypasses the by-name cache."""
+        slug = "raw-" + ("+".join(sorted(m["name"] for m in models)) or "empty")
+        config_path = self._write_config(f"models-{slug}-{replace_strategy}.yaml", models)
+        self._current = frozenset()
+        self._run(["--config", str(config_path)], slug, replace_strategy)
+
+    def deploy_cli(self, *flags: str) -> None:
+        """Deploy straight from `--model` flags. Resets the by-name cache, as
+        deploy_raw does."""
+        self._current = frozenset()
+        self._run(list(flags), "cli", "stop_start")
+
+    def _write_config(self, filename: str, models: list[dict]) -> Path:
+        config_path = self._tmp / filename
+        with open(config_path, "w") as f:
+            yaml.dump({"models": models}, f)
+        return config_path
+
+    def _run(self, input_args: list[str], slug: str, replace_strategy: str) -> None:
+        log_path = self._tmp / f"reconcile-{slug}-{replace_strategy}.log"
         with open(log_path, "w") as log_file:
             result = subprocess.run(
                 [
                     "uv",
                     "run",
                     "mship_deploy.py",
-                    "--config",
-                    str(config_path),
+                    *input_args,
                     "--reconcile",
                     "--replace-strategy",
-                    "stop_start",
+                    replace_strategy,
                     "--prune-ray-sessions",
                     "false",
                     # Attach to mship_cluster's already-running head instead of starting a second one.
@@ -254,44 +295,6 @@ class _Deployer:
                 check=False,
                 timeout=900,
             )
-        if result.returncode != 0:
-            tail = log_path.read_text()[-4000:]
-            pytest.fail(
-                f"mship_deploy --reconcile failed for {slug} (exit {result.returncode}).\n"
-                f"Log file: {log_path}\nLast 4KB:\n{tail}"
-            )
-        self._current = wanted
-
-    def deploy_raw(self, models: list[dict], *, replace_strategy: str = "stop_start") -> None:
-        """Like deploy(), but takes raw model dicts directly and lets the caller pick
-        --replace-strategy; resets self._current since this bypasses the by-name cache."""
-        slug = "+".join(sorted(m["name"] for m in models)) or "empty"
-        config_path = self._tmp / f"models-raw-{slug}-{replace_strategy}.yaml"
-        log_path = self._tmp / f"reconcile-raw-{slug}-{replace_strategy}.log"
-        with open(config_path, "w") as f:
-            yaml.dump({"models": models}, f)
-
-        with open(log_path, "w") as log_file:
-            result = subprocess.run(
-                [
-                    "uv",
-                    "run",
-                    "mship_deploy.py",
-                    "--config",
-                    str(config_path),
-                    "--reconcile",
-                    "--replace-strategy",
-                    replace_strategy,
-                    "--prune-ray-sessions",
-                    "false",
-                    "--use-existing-ray-cluster",
-                ],
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                check=False,
-                timeout=900,
-            )
-        self._current = frozenset()
         if result.returncode != 0:
             tail = log_path.read_text()[-4000:]
             pytest.fail(

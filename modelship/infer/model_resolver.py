@@ -1,5 +1,4 @@
 import fnmatch
-import os
 from pathlib import Path
 from typing import NamedTuple
 
@@ -7,7 +6,16 @@ from huggingface_hub import hf_hub_download, model_info, snapshot_download
 from tqdm.asyncio import tqdm_asyncio
 
 from modelship.logging import get_logger
-from modelship.utils import is_pathy
+from modelship.utils.model_ref import ResolvedSource, parse_model_ref
+
+__all__ = [
+    "ModelDownloadError",
+    "PinnedSource",
+    "ResolvedSource",
+    "check_model_source",
+    "download_model_source",
+    "parse_model_ref",
+]
 
 logger = get_logger("startup")
 
@@ -31,41 +39,6 @@ class ModelDownloadError(Exception):
     downloaded (network blip, transient HF error, disk full, ...). Kept
     distinct from `check_model_source`'s errors so `ModelDeployment` treats
     it as transient rather than fatal."""
-
-
-class ResolvedSource(NamedTuple):
-    """Result of parsing a model reference."""
-
-    source: str  # repo_id or local path
-    selector: str | None  # filename or glob pattern
-    is_local: bool
-
-
-def _expand(s: str) -> str:
-    """expanduser only for pathy strings — Path.resolve() never expands `~`,
-    so this must happen here or a valid `~/...` ref 404s downstream."""
-    return os.path.expanduser(s) if is_pathy(s) else s
-
-
-def parse_model_ref(model: str) -> ResolvedSource:
-    """Parses model string into (source, selector, is_local).
-
-    Path-first: if the literal full string is an existing local path, treat it
-    as one (covers the rare colon-in-filename case). Otherwise split on the
-    first ':' — the part before is the source, the part after is the selector.
-
-    A pathy source (starts with /, ./, or ~) is always local regardless of
-    whether it exists, so a missing path fails clearly downstream instead of
-    being misread as an HF repo id. `~` is expanded in the returned source."""
-    expanded = _expand(model)
-    if is_pathy(model) and Path(expanded).exists():
-        return ResolvedSource(source=expanded, selector=None, is_local=True)
-
-    if ":" in model:
-        source, selector = model.split(":", 1)
-        return ResolvedSource(source=_expand(source), selector=selector, is_local=is_pathy(source))
-
-    return ResolvedSource(source=expanded, selector=None, is_local=is_pathy(model))
 
 
 def _select_patterns(repo_files: list[str], trust_remote_code: bool = False) -> list[str] | None:

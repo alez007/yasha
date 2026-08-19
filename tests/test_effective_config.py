@@ -50,6 +50,19 @@ class TestMerge:
         merged = merge([a1], [a2], "g", "additive")
         assert merged == [a2]
 
+    def test_replacing_a_name_with_different_weights_warns(self, caplog):
+        vllm = _model("qwen3-8b", model="Qwen/Qwen3-8B", loader="vllm")
+        gguf = _model("qwen3-8b", model="org/Qwen3-8B-GGUF:*Q4_K_M.gguf")
+        with caplog.at_level("WARNING"):
+            merged = merge([vllm], [gguf], "g", "additive")
+        assert merged == [gguf]
+        assert "REPLACED" in caplog.text
+
+    def test_replacing_a_name_with_the_same_weights_does_not_warn(self, caplog):
+        with caplog.at_level("WARNING"):
+            merge([_model("a", num_cpus=1)], [_model("a", num_cpus=2)], "g", "additive")
+        assert caplog.text == ""
+
     def test_additive_rejects_duplicate_name_within_input(self):
         a1 = _model("a", num_cpus=1)
         a2 = _model("a", num_cpus=2)

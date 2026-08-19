@@ -1,3 +1,4 @@
+import argparse
 import os
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from pydantic_yaml import parse_yaml_raw_as
 
 from modelship.logging import get_logger
 from modelship.utils import is_pathy
+from modelship.utils.cli import model_from_args
 from modelship.utils.config_schema import ModelLoader, ModelshipConfig
 
 logger = get_logger("startup")
@@ -134,6 +136,32 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
 
 
 def config_absent(arg_path: str | None) -> bool:
-    """True when there's nothing to load: no ``--config`` and no default file.
+    """True when there's no file to load: no ``--config`` and no default file.
     An explicit ``--config`` that doesn't exist is still a hard error."""
     return arg_path is None and not default_config_path().exists()
+
+
+def validate_models(raw_models: list[dict]) -> ModelshipConfig:
+    """Validate raw model dicts into a ModelshipConfig. Both models.yaml and the
+    ``--model`` flags land here."""
+    return ModelshipConfig.model_validate({"models": raw_models})
+
+
+def resolve_input_models(args: argparse.Namespace) -> list[dict] | None:
+    """The raw model dicts this invocation asks for, or None when it asks for
+    none. ``--model`` describes one entry; otherwise models.yaml supplies them.
+
+    Ray-free, so the launcher can validate the result before importing ray.
+    """
+    # parse_args rejects this first; kept for callers that build a Namespace directly.
+    if args.model is not None and args.config is not None:
+        raise ValueError(
+            "--model and --config are mutually exclusive: --model deploys a single model, "
+            "--config deploys the set in a models.yaml. Add the model to the file instead."
+        )
+    cli_model = model_from_args(args)
+    if cli_model is not None:
+        return [cli_model]
+    if config_absent(args.config):
+        return None
+    return load_raw_models(args.config)

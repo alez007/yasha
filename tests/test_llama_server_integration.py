@@ -10,6 +10,9 @@ import time
 import httpx
 import pytest
 
+from modelship.utils.cli import infer_model_name
+from tests.conftest import MODEL_CONFIGS
+
 OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 
 _WEATHER_TOOL = {
@@ -485,3 +488,21 @@ def test_embeddings_llama_server(client, model_deployer):
     response = client.embeddings.create(model="embed-model-llama-server", input=["Hello world", "Modelship is great"])
     assert len(response.data) == 2
     assert len(response.data[0].embedding) > 0
+
+
+@pytest.mark.integration
+@pytest.mark.llama_server
+def test_deploy_with_inferred_model_name(client, model_deployer):
+    """`--model` with no `--name`: the name inferred from the ref is what the
+    gateway serves under."""
+    ref = MODEL_CONFIGS["chat-llama-server-plain"]["model"]
+    model_deployer.deploy_cli("--model", ref, "--loader", "llama_server", "--usecase", "generate", "--num-cpus", "1")
+
+    inferred = infer_model_name(ref)
+    assert inferred in {m.id for m in client.models.list().data}
+    completion = client.chat.completions.create(
+        model=inferred,
+        messages=[{"role": "user", "content": "Say hi"}],
+        max_tokens=16,
+    )
+    assert completion.choices[0].message.content

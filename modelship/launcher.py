@@ -5,9 +5,11 @@ Ray-free until it hands off to modelship.driver.
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import os
 import platform
+import re
 import sys
 from typing import TYPE_CHECKING
 
@@ -18,6 +20,8 @@ from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.cache import resolve_cache_root
 
 if TYPE_CHECKING:
+    from pydantic import ValidationError
+
     from modelship.utils.config_schema import ModelshipConfig
 
 _REQUIRED_PYTHON = (3, 12, 10)
@@ -44,7 +48,7 @@ def _cmd_deploy(argv: list[str]) -> None:
     os.environ.setdefault("MSHIP_CACHE_DIR", resolve_cache_root())
     _guard_python_version()
 
-    config = _validate_config(args.config)
+    config = _validate_config(args)
     if config is not None and _is_own_head_deploy():
         _check_loader_capabilities({m.loader.value for m in config.models})
 
@@ -98,20 +102,30 @@ def _advertises_no_capacity() -> bool:
     return not any(reserved)
 
 
-def _validate_config(config_path: str | None) -> ModelshipConfig | None:
-    """Validate models.yaml before the driver imports ray. None when there is
-    no config to load."""
+def _validate_config(args: argparse.Namespace) -> ModelshipConfig | None:
+    """Validate the requested models before the driver imports ray. None when
+    the invocation asks for none."""
     from pydantic import ValidationError
 
-    from modelship.deploy.config import config_absent, load_yaml_config
+    from modelship.deploy.config import resolve_input_models, validate_models
 
-    if config_absent(config_path):
-        return None
     try:
-        return load_yaml_config(config_path)
-    except (FileNotFoundError, ValidationError, yaml.YAMLError, ValueError) as e:
+        raw_models = resolve_input_models(args)
+        if raw_models is None:
+            return None
+        return validate_models(raw_models)
+    except ValidationError as e:
+        print(f"error: invalid config: {_flagged(e) if args.model else e}", file=sys.stderr)
+        sys.exit(1)
+    except (FileNotFoundError, yaml.YAMLError, ValueError) as e:
         print(f"error: invalid config: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def _flagged(error: ValidationError) -> str:
+    """Rewrite pydantic's `models.0.<field>` locations as `--<field>` so a
+    single-model deploy reports its own flags, not a models.yaml shape."""
+    return re.sub(r"\bmodels\.\d+\.([a-z_]+)", lambda m: f"--{m.group(1).replace('_', '-')}", str(error))
 
 
 def _check_loader_capabilities(loaders: set[str]) -> None:
