@@ -153,6 +153,7 @@ def resolve_input_models(args: argparse.Namespace) -> list[dict] | None:
 
     Ray-free, so the launcher can validate the result before importing ray.
     """
+    # parse_args rejects this first; kept for callers that build a Namespace directly.
     if args.model is not None and args.config is not None:
         raise ValueError(
             "--model and --config are mutually exclusive: --model deploys a single model, "

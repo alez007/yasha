@@ -108,12 +108,12 @@ class TestValidateConfigFromModelFlag:
         assert parsed is not None
         assert [(m.name, m.loader.value) for m in parsed.models] == [("y", "llama_server")]
 
-    def test_model_with_config_exits(self, tmp_path):
+    def test_model_with_config_exits_at_parse_time(self, tmp_path):
         config = tmp_path / "models.yaml"
         config.write_text("models: []\n")
         with pytest.raises(SystemExit) as exc:
-            launcher._validate_config(self._args("--model", "x/y", "--config", str(config)))
-        assert exc.value.code == 1
+            self._args("--model", "x/y", "--config", str(config))
+        assert exc.value.code == 2
 
     def test_missing_loader_exits(self):
         with pytest.raises(SystemExit) as exc:

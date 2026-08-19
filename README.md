@@ -191,9 +191,30 @@ See [Monitoring & Logging](docs/monitoring.md) for full details.
 Modelship is actively used and designed for stability in multi-tenant setups. Key guarantees include:
 
 - **Mutex-backed deployments:** A cluster-wide deploy coordinator prevents VRAM exhaustion by ensuring models are never loaded concurrently if resources are tight.
-- **Comprehensive HTTP-level tests:** The `tests/test_*_integration.py` suites validate chat, reasoning, tool-calling, and streaming across all loaders using real (small) models.
+- **Comprehensive HTTP-level tests:** The `tests/test_*_integration.py` suites validate chat, reasoning, tool-calling, and streaming across all loaders using real (small) models — plus the cluster behaviour below.
 - **Security:** Gateway API-key auth, opt-in Ray cluster token auth, and payload/concurrency limits (`MSHIP_MAX_REQUEST_BODY_BYTES`) guard against unauthenticated or oversized requests.
 - **Observability:** Deep integration with Prometheus, OpenTelemetry, and structured logging, with a pre-built Grafana dashboard and Prometheus alerting rules included.
+
+### Verified cluster behaviour
+
+Every row below is asserted end-to-end against a **live cluster with real models over real HTTP** — no mocks, no stubs. Run them with `pytest tests/ -m integration` (or a single area via its marker, e.g. `-m blue_green`).
+
+| Capability | What the cluster guarantees | Proven by |
+|---|---|---|
+| **Zero-downtime model cutover** | Change a live model's config and the swap is atomic: traffic is hammered continuously through the cutover with **zero failed requests**, and the old deployment is fully torn down rather than left as a zombie | [`test_blue_green_integration.py`](tests/test_blue_green_integration.py) |
+| **Load-driven autoscaling** | Replicas scale out under sustained concurrency (bounded by `max_replicas`) and scale back to `min_replicas` once load stops — no errors on the way up or down | [`test_autoscaling_integration.py`](tests/test_autoscaling_integration.py) |
+| **Multi-replica gateway convergence** | With multiple gateway replicas, a deploy or removal converges on *every* replica — a removed model 404s on all of them instead of routing into a torn-down deployment | [`test_gateway_ha_integration.py`](tests/test_gateway_ha_integration.py) |
+| **Engine crash recovery** | `SIGKILL` the vLLM engine-core subprocess and the replica respawns and serves again on its own — no operator action, no cluster restart | [`test_crash_recovery_integration.py`](tests/test_crash_recovery_integration.py) |
+| **Authenticated node join / clean leave** | A node joining with a missing or wrong token is rejected; with the right token it joins, and `SIGTERM` removes only that node — the head and its other nodes are untouched | [`test_cluster_join.py`](tests/test_cluster_join.py) |
+| **Fractional GPU multi-tenancy** | Two *different* engines (vLLM at `num_gpus: 0.6`, llama-server at `0.3`) share one physical GPU and serve concurrent traffic without starving each other | [`test_fractional_gpu_sharing.py`](tests/test_fractional_gpu_sharing.py) |
+| **Cross-process disconnect cancellation** | A dropped client socket cancels in-flight inference across the Ray process boundary and frees the GPU; other requests on the same replica are unaffected | [`test_disconnect_integration.py`](tests/test_disconnect_integration.py) |
+| **Per-identity prefix-cache isolation** | An identical prompt from a different identity never hits another identity's KV-cache entry — the cross-tenant timing side channel is closed by construction | [`test_vllm_integration.py`](tests/test_vllm_integration.py) |
+| **Resumable background runs** | A client can disconnect mid-stream; the run continues server-side and the client reconnects with `starting_after` to replay from where it left off through to completion | [`test_responses_integration.py`](tests/test_responses_integration.py) |
+| **Durable conversation state** | Stored `/v1/responses` chains survive deletion of a parent turn, fan out into independent concurrent branches from one parent, and a cancel stays cancelled | [`test_responses_integration.py`](tests/test_responses_integration.py) |
+| **Server-side MCP tool loop** | Real MCP server, discovered and called by the model — including the `require_approval` round trip, background mode, mid-flight cancel that sticks, and an unreachable server surfacing as a `failed` response rather than a 5xx | [`test_mcp_integration.py`](tests/test_mcp_integration.py) |
+| **Real in-replica concurrency** | llama-server `parallel` slots serve concurrent requests genuinely in parallel — N at once complete in well under N× the single-request time, not serialized behind a lock | [`test_llama_server_integration.py`](tests/test_llama_server_integration.py) |
+| **Hot reconcile of the model set** | The entire integration suite swaps the deployed model set repeatedly via `--reconcile` against one long-lived gateway process that is never restarted | [`tests/conftest.py`](tests/conftest.py) |
+| **Cross-loader pipelines** | TTS audio generated by one deployment is fed straight back in as STT input to another, through the same gateway | [`test_audio_integration.py`](tests/test_audio_integration.py) |
 
 We are currently hardening the Kubernetes/KubeRay path (a Helm chart ships in [`helm/`](helm/modelship/); GPU-aware probes and gateway-level rate-limiting are next). See the full [Production Readiness Plan](docs/production-readiness.md) for the scorecard and roadmap.
 

@@ -135,11 +135,19 @@ class TestResolveInputModels:
         with patch("modelship.deploy.config.default_config_path", return_value=tmp_path / "nope.yaml"):
             assert resolve_input_models(_args()) is None
 
-    def test_both_is_rejected(self, tmp_path):
+    def test_both_is_rejected_at_parse_time(self, tmp_path, capsys):
         config = tmp_path / "models.yaml"
         config.write_text("models: []\n")
+        with pytest.raises(SystemExit) as exc:
+            _args("--model", "Qwen/Qwen3-8B", "--config", str(config))
+        assert exc.value.code == 2
+        assert "mutually exclusive" in capsys.readouterr().err
+
+    def test_both_is_rejected_for_a_hand_built_namespace(self, tmp_path):
+        args = _args("--config", str(tmp_path / "models.yaml"))
+        args.model = "Qwen/Qwen3-8B"
         with pytest.raises(ValueError, match="mutually exclusive"):
-            resolve_input_models(_args("--model", "Qwen/Qwen3-8B", "--config", str(config)))
+            resolve_input_models(args)
 
 
 class TestFailsBeforeRay:

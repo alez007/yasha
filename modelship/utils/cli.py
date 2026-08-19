@@ -235,7 +235,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     _add_model_args(parser)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.model is not None and args.config is not None:
+        # Rejected here rather than in resolve_input_models so both entry points fail
+        # before the driver starts a Ray head.
+        parser.error(
+            "--model and --config are mutually exclusive: --model deploys a single model, "
+            "--config deploys the set in a models.yaml. Add the model to the file instead."
+        )
+    return args
 
 
 def _add_model_args(parser: argparse.ArgumentParser) -> None:
