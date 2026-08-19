@@ -38,6 +38,49 @@ Reference for `models.yaml` (default: `config/models.yaml`). Each entry under `m
 | `--responses-ttl-s` | `MSHIP_RESPONSES_TTL_S` | `2592000` | TTL in seconds for stored `/v1/responses` conversation state; `<=0` disables expiry |
 | `--state-sweep-interval-s` | `MSHIP_STATE_SWEEP_INTERVAL_S` | `300` | Interval in seconds between expired-key sweeps in the in-memory state store |
 
+### Single-model deploys (no config file)
+
+`--model` deploys one model straight from the command line, no `models.yaml` needed:
+
+```bash
+mship deploy --model lmstudio-community/Qwen3-8B-GGUF:'*Q4_K_M.gguf' \
+             --loader llama_server --usecase generate --num-cpus 4
+```
+
+These flags mirror the root-level fields of a `models:` entry one for one, and are validated by the same schema — anything rejected in the file is rejected here, with the same message:
+
+| Flag | Field |
+|---|---|
+| `--model` | `model` |
+| `--name` | `name` (inferred from `--model` when omitted) |
+| `--usecase` | `usecase` |
+| `--loader` | `loader` |
+| `--num-gpus` | `num_gpus` |
+| `--num-cpus` | `num_cpus` |
+| `--num-replicas` | `num_replicas` |
+| `--max-ongoing-requests` | `max_ongoing_requests` |
+
+Limits:
+
+- **One model per invocation.** Use `--config` for several. A second `mship deploy --model ...` against a running cluster adds to it (the default additive merge), so models can also be added one at a time.
+- **No nested blocks.** `vllm_engine_kwargs`, `llama_server_config`, `autoscaling_config`, `diffusers_config`, `stable_diffusion_cpp_config`, `whispercpp_config` and `chat_template_kwargs` have no flags — those need a config file. Preflight still auto-sizes the model, so most deploys don't need them.
+- **`--model` and `--config` are mutually exclusive.** With `--model`, the default `config/models.yaml` is ignored entirely.
+
+#### Inferred names
+
+With no `--name`, the name clients call the model by comes from the `model` reference — its basename (or the filename stem for a local weight file), minus GGUF and quantization decoration. The selector is ignored: it picks a quant, it doesn't identify the model.
+
+| `--model` | Inferred `name` |
+|---|---|
+| `lmstudio-community/Qwen3-8B-GGUF:*Q4_K_M.gguf` | `qwen3-8b` |
+| `bartowski/Llama-3.3-70B-Instruct-GGUF:*Q8_0*-of-*.gguf` | `llama-3.3-70b-instruct` |
+| `Qwen/Qwen3-8B` | `qwen3-8b` |
+| `/models/qwen3-8b-instruct.Q4_K_M.gguf` | `qwen3-8b-instruct` |
+| `~/models/Qwen3-8B/` | `qwen3-8b` |
+| `base.en` | `base.en` |
+
+Inference is deterministic, so re-running the same command is idempotent. It also means two different references can infer the same name — deploying `Qwen/Qwen3-8B` on `vllm` and then a `Qwen3-8B` GGUF on `llama_server` both resolve to `qwen3-8b`, and the second **replaces** the first, since a name maps to exactly one deployment. That is what you want when swapping a model's loader; pass `--name` to run both side by side.
+
 ### Cache directory structure
 
 Under `MSHIP_CACHE_DIR` (default `/.cache`):

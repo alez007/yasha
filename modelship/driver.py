@@ -40,9 +40,8 @@ def main(argv: list[str] | None = None) -> None:
 
     from modelship.deploy.actor_options import build_deployment_options, total_gpu_reservation
     from modelship.deploy.config import (
-        config_absent,
-        load_raw_models,
         resolve_all_model_sources,
+        resolve_input_models,
     )
     from modelship.deploy.effective_config import (
         deployment_names,
@@ -194,23 +193,22 @@ def main(argv: list[str] | None = None) -> None:
     ensure_key_seeded(store)
     effective_raw = read_effective(store, gateway_name)
 
-    # No --config: self-heal (reconcile) reconciles live->effective; a join or a bare
-    # bootstrap do the same no-op merge and wait for a later --config/--reconcile/join.
-    if args.config is None and (mode == "reconcile" or joined_cluster):
+    # No input named: self-heal (reconcile) reconciles live->effective; a join or a
+    # bare bootstrap do the same no-op merge and wait for a later config/join.
+    if args.config is None and args.model is None and (mode == "reconcile" or joined_cluster):
         desired_raw = effective_raw
         logger.info(
-            "Self-heal: reconciling to persisted effective config (no --config given)."
+            "Self-heal: reconciling to persisted effective config (no --config/--model given)."
             if not joined_cluster
             else "Join: no config given — contributing resources, reconciling to effective set."
         )
-    elif config_absent(args.config):
+    elif (input_raw := resolve_input_models(args)) is None:
         desired_raw = effective_raw
         logger.info(
-            "No --config given and no default config/models.yaml found — bootstrapping an empty "
-            "coordinator; it will wait for capacity/models via a later --config, --reconcile, or join."
+            "No --config/--model given and no default config/models.yaml found — bootstrapping an "
+            "empty coordinator; it will wait for capacity/models via a later config or join."
         )
     else:
-        input_raw = load_raw_models(args.config)
         desired_raw = merge(effective_raw, input_raw, gateway_name, mode)
     yml_conf = to_config(desired_raw)
     logger.debug("Deploying effective config (%s mode, %d model(s)): %s", mode, len(desired_raw), yml_conf)

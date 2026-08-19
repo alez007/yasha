@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from modelship import launcher
+from modelship.utils.cli import parse_args
 
 
 class TestGuardPythonVersion:
@@ -49,19 +50,22 @@ class TestValidateConfig:
         path.write_text(body)
         return str(path)
 
+    def _args(self, *argv):
+        return parse_args(list(argv))
+
     def test_absent_config_returns_none(self, tmp_path):
         with patch("modelship.deploy.config.default_config_path", return_value=tmp_path / "nope.yaml"):
-            assert launcher._validate_config(None) is None
+            assert launcher._validate_config(self._args()) is None
 
     def test_missing_explicit_config_exits(self, tmp_path):
         with pytest.raises(SystemExit) as exc:
-            launcher._validate_config(str(tmp_path / "nope.yaml"))
+            launcher._validate_config(self._args("--config", str(tmp_path / "nope.yaml")))
         assert exc.value.code == 1
 
     def test_unknown_loader_exits(self, tmp_path):
         config = self._write(tmp_path, "models:\n  - name: m\n    loader: nope\n    model: x\n")
         with pytest.raises(SystemExit) as exc:
-            launcher._validate_config(config)
+            launcher._validate_config(self._args("--config", config))
         assert exc.value.code == 1
 
     def test_duplicate_name_exits(self, tmp_path):
@@ -72,14 +76,14 @@ class TestValidateConfig:
             "  - name: m\n    loader: llama_server\n    model: b.gguf\n    usecase: generate\n",
         )
         with pytest.raises(SystemExit) as exc:
-            launcher._validate_config(config)
+            launcher._validate_config(self._args("--config", config))
         assert exc.value.code == 1
 
     def test_valid_config_returns_parsed_models(self, tmp_path):
         config = self._write(
             tmp_path, "models:\n  - name: m\n    loader: llama_server\n    model: x.gguf\n    usecase: generate\n"
         )
-        parsed = launcher._validate_config(config)
+        parsed = launcher._validate_config(self._args("--config", config))
         assert parsed is not None
         assert [m.loader.value for m in parsed.models] == ["llama_server"]
 
@@ -89,8 +93,59 @@ class TestValidateConfig:
         )
         with patch.dict(sys.modules):
             sys.modules.pop("ray", None)
-            launcher._validate_config(config)
+            launcher._validate_config(self._args("--config", config))
             assert "ray" not in sys.modules
+
+
+class TestValidateConfigFromModelFlag:
+    def _args(self, *argv):
+        return parse_args(list(argv))
+
+    def test_model_flag_returns_parsed_model(self):
+        parsed = launcher._validate_config(
+            self._args("--model", "x/y-GGUF:*Q4_K_M.gguf", "--loader", "llama_server", "--usecase", "generate")
+        )
+        assert parsed is not None
+        assert [(m.name, m.loader.value) for m in parsed.models] == [("y", "llama_server")]
+
+    def test_model_with_config_exits(self, tmp_path):
+        config = tmp_path / "models.yaml"
+        config.write_text("models: []\n")
+        with pytest.raises(SystemExit) as exc:
+            launcher._validate_config(self._args("--model", "x/y", "--config", str(config)))
+        assert exc.value.code == 1
+
+    def test_missing_loader_exits(self):
+        with pytest.raises(SystemExit) as exc:
+            launcher._validate_config(self._args("--model", "x/y", "--usecase", "generate"))
+        assert exc.value.code == 1
+
+    def test_fractional_num_gpus_with_whole_gpu_loader_exits(self):
+        with pytest.raises(SystemExit) as exc:
+            launcher._validate_config(
+                self._args(
+                    "--model", "x/y.gguf", "--loader", "llama_server", "--usecase", "generate", "--num-gpus", "1.5"
+                )
+            )
+        assert exc.value.code == 1
+
+
+class TestFlaggedErrors:
+    """Pydantic reports a models.yaml path; a --model deploy has no file to point at."""
+
+    def test_field_paths_become_flags(self, capsys):
+        with pytest.raises(SystemExit):
+            launcher._validate_config(parse_args(["--model", "x/y"]))
+        err = capsys.readouterr().err
+        assert "--usecase" in err and "--loader" in err
+        assert "models.0." not in err
+
+    def test_config_errors_keep_pydantic_paths(self, tmp_path, capsys):
+        config = tmp_path / "models.yaml"
+        config.write_text("models:\n  - name: m\n    model: x\n")
+        with pytest.raises(SystemExit):
+            launcher._validate_config(parse_args(["--config", str(config)]))
+        assert "models.0." in capsys.readouterr().err
 
 
 class TestIsOwnHeadDeploy:

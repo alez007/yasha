@@ -17,6 +17,7 @@ This is the deploy-domain layer over the generic ``modelship.state`` store.
 
 from typing import Literal
 
+from modelship.deploy.config import validate_models
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.logging import get_logger
 from modelship.state import StateStore
@@ -91,11 +92,26 @@ def merge(
             continue
         prior_dep_name = dep_name_by_model_name.get(model_name)
         if prior_dep_name is not None:
-            del merged[prior_dep_name]
+            _log_replacement(model_name, merged.pop(prior_dep_name), d)
         merged[dep_name] = d
         dep_name_by_model_name[model_name] = dep_name
 
     return list(merged.values())
+
+
+def _log_replacement(model_name: str, prior: dict, incoming: dict) -> None:
+    """A name already in the effective set is replaced, not joined. Pointing it at
+    different weights is worth a warning; any other config change is routine."""
+    if prior.get("model") == incoming.get("model"):
+        logger.info("Model %r config changed; replacing the existing deployment.", model_name)
+        return
+    logger.warning(
+        "Model %r is already deployed from %r and will be REPLACED by %r — one model name maps to "
+        "exactly one deployment. Give one of them a distinct name to run both side by side.",
+        model_name,
+        prior.get("model"),
+        incoming.get("model"),
+    )
 
 
 def deployment_names(raw_models: list[dict], gateway_name: str) -> set[str]:
@@ -109,7 +125,7 @@ def deployment_names(raw_models: list[dict], gateway_name: str) -> set[str]:
 
 def to_config(raw_models: list[dict]) -> ModelshipConfig:
     """Validate raw model dicts into a ModelshipConfig for the deploy path."""
-    return ModelshipConfig.model_validate({"models": raw_models})
+    return validate_models(raw_models)
 
 
 def read_effective(store: StateStore, gateway_name: str) -> list[dict]:

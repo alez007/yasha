@@ -665,18 +665,21 @@ class TestAutoscalingConfig:
 
 class TestPreRayImportChain:
     """These modules run before resolve_ray_auth_env(), and ray latches RAY_AUTH_MODE at
-    import; subprocess-based since ray is already in sys.modules by suite time."""
+    import; subprocess-based since ray is already in sys.modules by suite time.
+    huggingface_hub latches HF_HOME the same way."""
 
     @pytest.mark.parametrize(
         "module",
         [
+            "modelship.utils.model_ref",
             "modelship.utils.config_schema",
             "modelship.utils.cli",
             "modelship.deploy.config",
             "modelship.launcher",
         ],
     )
-    def test_import_does_not_pull_ray(self, module):
-        code = f"import sys; import {module}; print('ray' in sys.modules)"
+    @pytest.mark.parametrize("heavy", ["ray", "huggingface_hub"])
+    def test_import_stays_light(self, module, heavy):
+        code = f"import sys; import {module}; print({heavy!r} in sys.modules)"
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
-        assert result.stdout.strip() == "False", f"{module} imports ray"
+        assert result.stdout.strip() == "False", f"{module} imports {heavy}"

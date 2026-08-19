@@ -133,6 +133,15 @@ mship bootstrap --thin      # coordinator/head only, no capacity
 mship deploy --config models.yaml
 ```
 
+For a single model, skip the config file — the root-level fields have matching flags, validated by the same schema:
+
+```bash
+mship deploy --model "lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf" \
+             --loader llama_server --usecase generate --num-cpus 3
+```
+
+It serves as `qwen3-0.6b`, inferred from the reference. Several models, or the nested tuning blocks, still need a `models.yaml` — see [Single-model deploys](docs/model-configuration.md#single-model-deploys-no-config-file).
+
 `mship bootstrap` installs a pinned Python 3.12.10 environment for that role and records it, so `deploy` afterwards needs no variant flag and installs nothing — it starts straight through. Nothing to pin and nothing to match across machines: every node lands on the same footing, so a new one joins the cluster by running the same two commands. After a `pip install -U mship`, re-run `mship bootstrap` to move the environment with it.
 
 Platform prerequisites still apply: Xcode Command Line Tools on macOS, `build-essential`/`cmake` on Linux, plus `ninja-build` and NVIDIA's `nvcc` for `--cuda`. Alpine and other musl distros are unsupported. See [docs/install-native.md](docs/install-native.md) for the full list.

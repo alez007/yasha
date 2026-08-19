@@ -4,8 +4,34 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+from pathlib import Path
 
 from modelship.utils import parse_memory_bytes
+from modelship.utils.config_schema import ModelLoader, ModelUsecase
+from modelship.utils.model_ref import parse_model_ref
+
+# The models.yaml keys the model flags surface, in config-key form. Single
+# source of truth for what a --model deploy can express.
+MODEL_ARG_KEYS = (
+    "name",
+    "model",
+    "usecase",
+    "loader",
+    "num_gpus",
+    "num_cpus",
+    "num_replicas",
+    "max_ongoing_requests",
+)
+
+# Marks a `--model` path as a file rather than a directory when it doesn't
+# exist yet, so name inference can still take the stem.
+_WEIGHT_SUFFIXES = (".gguf", ".safetensors", ".bin")
+
+_GGUF_REPO_SUFFIX = "-gguf"
+
+# A trailing quant token in a weight filename: Q4_K_M, Q8_0, IQ4_XS, F16, BF16.
+_QUANT_SEGMENT = re.compile(r"^(?:i?q\d+|bf\d+|f\d+)(?:[_-]\w+)*$", re.IGNORECASE)
 
 # Maps argparse attribute names to the env vars they override. CLI flags take
 # precedence over env vars; downstream code (Ray init, logging, gateway start)
@@ -208,7 +234,89 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "stop_start: drop old first, then deploy new (brief unavailability, no overlap)."
         ),
     )
+    _add_model_args(parser)
     return parser.parse_args(argv)
+
+
+def _add_model_args(parser: argparse.ArgumentParser) -> None:
+    """The models.yaml root-level scalars, as flags for a single-model deploy.
+
+    None is `required`: unset flags are dropped from the raw dict, leaving the
+    schema to raise requiredness for both surfaces.
+    """
+    group = parser.add_argument_group(
+        "single-model deploy",
+        "Deploy one model with no config file. Use --config for several models, or for "
+        "the nested tuning blocks (vllm_engine_kwargs, llama_server_config, "
+        "autoscaling_config, ...), which have no flags.",
+    )
+    group.add_argument(
+        "--model",
+        help=(
+            "Model reference: an HF repo id, a repo id with a file selector "
+            "(repo:*Q4_K_M.gguf), or a local file/directory path. Mutually exclusive "
+            "with --config."
+        ),
+    )
+    group.add_argument("--name", help="Model name clients call it by (default: inferred from --model)")
+    group.add_argument("--usecase", choices=[u.value for u in ModelUsecase])
+    group.add_argument("--loader", choices=[loader.value for loader in ModelLoader])
+    group.add_argument("--num-gpus", type=float, help="GPUs to reserve; a fraction < 1 shares one GPU")
+    group.add_argument("--num-cpus", type=float, help="CPUs to reserve (default: 0.1)")
+    group.add_argument("--num-replicas", type=int, help="Fixed replica count (default: 1)")
+    group.add_argument("--max-ongoing-requests", type=int, help="Per-replica concurrency cap")
+
+
+def model_from_args(args: argparse.Namespace) -> dict | None:
+    """The raw models.yaml entry `--model` describes, or None when it's absent.
+
+    Unset flags are omitted, not defaulted — validators branch on
+    `model_fields_set`, so a materialized default validates differently.
+    """
+    if args.model is None:
+        return None
+
+    raw: dict = {"name": args.name if args.name is not None else infer_model_name(args.model)}
+    for key in MODEL_ARG_KEYS:
+        if key == "name":
+            continue
+        value = getattr(args, key, None)
+        if value is not None:
+            raw[key] = value
+    return raw
+
+
+def infer_model_name(model: str) -> str:
+    """Model name for a `--model` ref given no `--name`: the source's basename, or
+    its stem for a weight file, minus GGUF and quant decoration. The selector is
+    ignored; it picks a quant rather than identifying the model."""
+    ref = parse_model_ref(model)
+    base = os.path.basename(ref.source.rstrip("/"))
+
+    if ref.is_local and (Path(ref.source).is_file() or Path(base).suffix.lower() in _WEIGHT_SUFFIXES):
+        base = _strip_quant(Path(base).stem)
+    elif base.lower().endswith(_GGUF_REPO_SUFFIX):
+        base = base[: -len(_GGUF_REPO_SUFFIX)]
+
+    name = _sanitize_name(base)
+    if not name:
+        raise ValueError(f"cannot infer a model name from --model {model!r}; pass --name explicitly.")
+    return name
+
+
+def _strip_quant(stem: str) -> str:
+    """Drop trailing quant segments from a weight-file stem: qwen3-8b.Q4_K_M -> qwen3-8b."""
+    parts = stem.split(".")
+    while len(parts) > 1 and _QUANT_SEGMENT.match(parts[-1]):
+        parts.pop()
+    return ".".join(parts)
+
+
+def _sanitize_name(base: str) -> str:
+    """Lowercase and reduce to characters safe in a Serve app name and an OpenAI
+    `model` field. Capped short of the fingerprint the deployment name appends."""
+    name = re.sub(r"[^a-z0-9._-]+", "-", base.lower())
+    return re.sub(r"-{2,}", "-", name).strip("-._")[:63].strip("-._")
 
 
 def apply_args_to_env(args: argparse.Namespace) -> None:
