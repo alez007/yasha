@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from modelship.infer.infer_config import (
     LlamaServerConfig,
     ModelLoader,
@@ -12,9 +14,41 @@ from modelship.infer.infer_config import (
     ModelUsecase,
 )
 from modelship.preflight import GPUInfo, HardwareProfile, merge_with_user_overrides
+from modelship.preflight._sliding_window import SlidingWindowInfo
 from modelship.preflight.llama_cpp import LlamaServerPreflight, _GGUFMeta, _weight_bytes
 
 _LLAMA_META = _GGUFMeta(block_count=32, head_count_kv=8, head_dim=128, context_length=131072)
+
+# Gemma-4-shaped: 48 layers, 40 sliding (window 1024) + 8 full, matching the
+# real GGUF header. kv/token = 2*48*8*256*2 = 393216 B.
+_GEMMA4_SLIDING_META = _GGUFMeta(
+    block_count=48,
+    head_count_kv=8,
+    head_dim=256,
+    context_length=262144,
+    sliding=SlidingWindowInfo(n_full_layers=8, n_sliding_layers=40, n_total_layers=48, window=1024),
+)
+
+
+class _FakeGGUFField:
+    def __init__(self, value):
+        self._value = value
+
+    def contents(self):
+        return self._value
+
+
+class _FakeGGUFReader:
+    """Minimal stand-in for `gguf.GGUFReader` — `_read_field_value` only calls
+    `.get_field(key).contents()`."""
+
+    def __init__(self, fields: dict):
+        self._fields = fields
+
+    def get_field(self, key: str):
+        if key not in self._fields:
+            return None
+        return _FakeGGUFField(self._fields[key])
 
 
 def _make_config(
@@ -408,3 +442,124 @@ class TestLlamaServerThreadsRecommendation:
         ):
             rec = LlamaServerPreflight().recommend(cfg, hw)
         assert rec["threads"] == 4
+
+
+class TestResolveSlidingWindowGguf:
+    def test_bool_pattern_counts_sliding_layers(self):
+        from modelship.preflight.llama_cpp import _resolve_sliding_window_gguf
+
+        reader = _FakeGGUFReader(
+            {
+                "gemma4.attention.sliding_window": 1024,
+                "gemma4.attention.sliding_window_pattern": [True] * 5 + [False],
+            }
+        )
+        sw = _resolve_sliding_window_gguf(reader, "gemma4", block_count=6)
+        assert sw == SlidingWindowInfo(n_full_layers=1, n_sliding_layers=5, n_total_layers=6, window=1024)
+
+    def test_int_period_pattern_every_nth_layer_full(self):
+        from modelship.preflight.llama_cpp import _resolve_sliding_window_gguf
+
+        reader = _FakeGGUFReader({"llama.attention.sliding_window": 4096, "llama.attention.sliding_window_pattern": 4})
+        sw = _resolve_sliding_window_gguf(reader, "llama", block_count=8)
+        assert sw == SlidingWindowInfo(n_full_layers=2, n_sliding_layers=6, n_total_layers=8, window=4096)
+
+    def test_bare_window_with_no_pattern_means_every_layer_slides(self):
+        from modelship.preflight.llama_cpp import _resolve_sliding_window_gguf
+
+        reader = _FakeGGUFReader({"mistral.attention.sliding_window": 4096})
+        sw = _resolve_sliding_window_gguf(reader, "mistral", block_count=8)
+        assert sw == SlidingWindowInfo(n_full_layers=0, n_sliding_layers=8, n_total_layers=8, window=4096)
+
+    def test_no_window_field_returns_none(self):
+        from modelship.preflight.llama_cpp import _resolve_sliding_window_gguf
+
+        reader = _FakeGGUFReader({})
+        assert _resolve_sliding_window_gguf(reader, "llama", block_count=32) is None
+
+
+class TestReadIntAt:
+    def test_array_field_returns_value_at_index(self):
+        from modelship.preflight.llama_cpp import _read_int_at
+
+        reader = _FakeGGUFReader({"gemma4.attention.head_count_kv": [8, 8, 1, 8]})
+        assert _read_int_at(reader, "gemma4.attention.head_count_kv", 2, default=0) == 1
+
+    def test_scalar_field_ignores_index(self):
+        from modelship.preflight.llama_cpp import _read_int_at
+
+        reader = _FakeGGUFReader({"llama.attention.head_count_kv": 8})
+        assert _read_int_at(reader, "llama.attention.head_count_kv", 5, default=0) == 8
+
+    def test_missing_field_returns_default(self):
+        from modelship.preflight.llama_cpp import _read_int_at
+
+        reader = _FakeGGUFReader({})
+        assert _read_int_at(reader, "missing.key", 0, default=42) == 42
+
+
+class TestReadGgufMetadataSliding:
+    """End-to-end through `_read_gguf_metadata` against a fake reader shaped
+    like the real Gemma 4 GGUF header."""
+
+    def test_gemma4_header_resolves_sliding_and_swa_head_dim(self):
+        # patch("gguf.GGUFReader", ...) needs the real module importable.
+        pytest.importorskip("gguf")
+        from modelship.preflight.llama_cpp import _read_gguf_metadata
+
+        fields = {
+            "general.architecture": "gemma4",
+            "gemma4.block_count": 48,
+            "gemma4.attention.head_count": 16,
+            "gemma4.attention.head_count_kv": [8, 8, 8, 8, 8, 1] * 8,
+            "gemma4.embedding_length": 2560,
+            "gemma4.attention.key_length": 512,
+            "gemma4.attention.key_length_swa": 256,
+            "gemma4.attention.sliding_window": 1024,
+            "gemma4.attention.sliding_window_pattern": [True, True, True, True, True, False] * 8,
+            "gemma4.context_length": 262144,
+        }
+        with patch("gguf.GGUFReader", return_value=_FakeGGUFReader(fields)):
+            meta = _read_gguf_metadata("/fake/path.gguf")
+
+        assert meta is not None
+        assert meta.head_dim == 256  # SWA head_dim, not the global layers' 512.
+        assert meta.head_count_kv == 8  # sampled at a sliding-layer position.
+        assert meta.sliding == SlidingWindowInfo(n_full_layers=8, n_sliding_layers=40, n_total_layers=48, window=1024)
+
+
+class TestLlamaServerPreflightGpuSliding:
+    """kv/token = 393216 B for _GEMMA4_SLIDING_META (sliding-aware, not
+    linear)."""
+
+    def test_full_offload_hits_context_cap_not_the_naive_linear_ctx(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        hw = HardwareProfile(gpus=[GPUInfo(0, 30 * 1024**3, "test")], ram_bytes=64 * 1024**3)
+
+        with (
+            patch("modelship.preflight.llama_cpp._read_gguf_metadata", return_value=_GEMMA4_SLIDING_META),
+            patch("modelship.preflight.llama_cpp._weight_bytes", return_value=4 * 1024**3),
+        ):
+            rec = LlamaServerPreflight().recommend(cfg, hw)
+
+        assert rec["n_ctx"] == 262144
+        assert rec["n_gpu_layers"] == 49
+        # Naive linear division of the same budget lands at 59392 — proves the
+        # sliding-aware fit, not a roomier budget, is what reached the cap.
+        assert rec["n_ctx"] > 59392
+
+
+class TestLlamaServerPreflightCpuSliding:
+    def test_sliding_aware_fit_reaches_cap_naive_division_would_miss(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=0)
+        hw = HardwareProfile(ram_bytes=25 * 1024**3)
+
+        with (
+            patch("modelship.preflight.llama_cpp._read_gguf_metadata", return_value=_GEMMA4_SLIDING_META),
+            patch("modelship.preflight.llama_cpp._weight_bytes", return_value=1 * 1024**3),
+        ):
+            rec = LlamaServerPreflight().recommend(cfg, hw)
+
+        assert rec["n_ctx"] == 262144
+        # Naive linear division of the same budget lands at 50432 tokens.
+        assert rec["n_ctx"] > 50432
