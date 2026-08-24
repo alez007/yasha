@@ -77,7 +77,7 @@ The response carries both `output_text` and a first-class `reasoning` output ite
 
 `/v1/responses` is tested against the independent [Open Responses](https://github.com/openresponses/openresponses) compliance suite (`bun run test:compliance`), which drives the endpoint over real HTTP against a live deployment rather than mocks.
 
-**Latest result: 17/17** — every core, compaction, vision, and WebSocket test (`Qwen3-VL-8B-Instruct` AWQ, vLLM, 2026-07-24).
+**Latest result: 17/17** — every core, compaction, vision, and WebSocket test (`gemma-4-12B-it` QAT w4a16, vLLM, 2026-08-24).
 
 <details>
 <summary>Full test breakdown</summary>
