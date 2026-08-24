@@ -1246,6 +1246,25 @@ class TestFitLenWithSliding:
         # Window unreachable, so every layer still grows: budget / kv_per_token.
         assert _fit_len_with_sliding(48 * 1024 * 500, kv_per_token, sw, 262144) == 500
 
+    def test_mixed_layers_are_capped_even_with_a_huge_budget(self):
+        """A generous budget must not push the result past ctx_cap — this is
+        the case an unknown max_position_embeddings falls back to."""
+        from modelship.preflight.vllm import SlidingWindowInfo, _fit_len_with_sliding
+
+        sw = SlidingWindowInfo(n_full_layers=8, n_sliding_layers=40, n_total_layers=48, window=1024)
+        kv_per_token = 2 * 8 * 256 * 2 * 48
+        assert _fit_len_with_sliding(1024 * 1024**3, kv_per_token, sw, 32768) == 32768
+
+    def test_below_window_result_is_still_capped(self):
+        """A sliding window at or beyond ctx_cap must not let the below-window
+        branch return a length past the cap."""
+        from modelship.preflight.vllm import SlidingWindowInfo, _fit_len_with_sliding
+
+        sw = SlidingWindowInfo(n_full_layers=8, n_sliding_layers=40, n_total_layers=48, window=32768)
+        kv_per_token = 48 * 1024
+        budget = 1_611_000_000  # below-window branch; pre-fix this returned 32775
+        assert _fit_len_with_sliding(budget, kv_per_token, sw, 32768) == 32768
+
 
 class TestSlidingWindowIntegration:
     """The same model with and without `layer_types` present."""
