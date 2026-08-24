@@ -9,6 +9,8 @@ from typing import Any, NamedTuple, cast
 
 from modelship.infer.infer_config import ModelshipModelConfig, default_gpu_memory_utilization
 from modelship.logging import get_logger
+from modelship.preflight._mla import MLAInfo
+from modelship.preflight._mla import kv_bytes_per_token as mla_kv_bytes_per_token
 from modelship.preflight._sliding_window import SlidingWindowInfo, fit_len_with_sliding, seq_kv_bytes
 from modelship.preflight.base import HardwareProfile
 
@@ -458,17 +460,6 @@ def _resolve_text_config(model_cfg: dict) -> dict:
     return model_cfg
 
 
-class MLAInfo(NamedTuple):
-    """DeepSeek-style MLA geometry: one shared compressed latent per token,
-    not per-head K/V."""
-
-    kv_lora_rank: int
-    qk_rope_head_dim: int
-    qk_nope_head_dim: int
-    v_head_dim: int
-    num_heads: int
-
-
 def _resolve_mla(text_cfg: dict) -> MLAInfo | None:
     """None for ordinary MHA/GQA models."""
     kv_lora_rank = text_cfg.get("kv_lora_rank")
@@ -493,9 +484,7 @@ def _kv_bytes_per_token(text_cfg: dict, model_cfg: dict, config: ModelshipModelC
 
     mla = _resolve_mla(text_cfg)
     if mla is not None:
-        # One shared latent per token per layer: no per-head factor, no x2 for K/V.
-        per_token = (mla.kv_lora_rank + mla.qk_rope_head_dim) * kv_dtype_bytes * num_layers
-        return int(per_token), max_position_embeddings
+        return mla_kv_bytes_per_token(mla, kv_dtype_bytes, num_layers), max_position_embeddings
 
     num_attention_heads = text_cfg.get("num_attention_heads")
     num_kv_heads = text_cfg.get("num_key_value_heads") or num_attention_heads

@@ -342,6 +342,10 @@ Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/lla
 
 llama-server caches prompts in RAM by default (`--cache-prompt`, always on, 8 GiB idle-slot cache) — exact-prefix reuse works out of the box for ordinary append-only chat. There is no persistent **on-disk** prompt cache; caching is in-memory only and doesn't survive a process restart, unlike modelship's disk cache for other loaders.
 
+#### MLA models (DeepSeek, MiniCPM3)
+
+llama.cpp caches the compressed latent for MLA architectures only when the GGUF ships split `attn_k_b`/`attn_v_b` projections. Conversions predating that support carry a fused `attn_kv_b` and fall back to full per-head K/V — for DeepSeek-V2-Lite that is 276,480 B/token instead of 31,104, so the same VRAM buys ~8.9x less context. Preflight detects which layout a file has and sizes `n_ctx` accordingly, but the only way to recover the context is to use a newer conversion. Nothing in the model's metadata reveals this, so check the tensor names if a GGUF sizes far smaller than expected.
+
 Minimum config — preflight fills in `n_ctx`, `n_gpu_layers`, `threads`:
 
 ```yaml
