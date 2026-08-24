@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from modelship.infer.infer_config import (
     LlamaServerConfig,
     ModelLoader,
@@ -501,6 +503,8 @@ class TestReadGgufMetadataSliding:
     like the real Gemma 4 GGUF header."""
 
     def test_gemma4_header_resolves_sliding_and_swa_head_dim(self):
+        # patch("gguf.GGUFReader", ...) needs the real module importable.
+        pytest.importorskip("gguf")
         from modelship.preflight.llama_cpp import _read_gguf_metadata
 
         fields = {
@@ -525,9 +529,8 @@ class TestReadGgufMetadataSliding:
 
 
 class TestLlamaServerPreflightGpuSliding:
-    """kv/token = 393216 B for _GEMMA4_SLIDING_META; without the sliding fix,
-    the naive linear budget division caps n_ctx far below what the hardware
-    actually supports."""
+    """kv/token = 393216 B for _GEMMA4_SLIDING_META (sliding-aware, not
+    linear)."""
 
     def test_full_offload_hits_context_cap_not_the_naive_linear_ctx(self, tmp_path):
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)

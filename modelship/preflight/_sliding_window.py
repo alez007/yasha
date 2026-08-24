@@ -1,6 +1,5 @@
 """Sliding-window KV-cache sizing math shared by the vllm and llama_server
-preflight estimators. Loader-specific code resolves a `SlidingWindowInfo`
-from its own model metadata (config.json vs. GGUF header) and calls these."""
+preflight estimators."""
 
 from __future__ import annotations
 
@@ -32,8 +31,7 @@ def seq_kv_bytes(kv_per_token: float, sliding: SlidingWindowInfo | None, length:
 
 def fit_len_with_sliding(budget: float, kv_per_token: float, sliding: SlidingWindowInfo, ctx_cap: int) -> int:
     """Largest single-sequence max length whose KV fits `budget`, capped at
-    `ctx_cap`. Apportions `kv_per_token` evenly across layers — callers only
-    have one aggregate geometry, not a true per-layer breakdown."""
+    `ctx_cap`. Apportions `kv_per_token` evenly across layers."""
     per_layer = kv_per_token / sliding.n_total_layers
     full_per_token = per_layer * sliding.n_full_layers
     sliding_per_token = per_layer * sliding.n_sliding_layers
