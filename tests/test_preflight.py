@@ -758,6 +758,43 @@ class TestVllmPreflightCpu:
         with pytest.raises(ValidationError, match="cannot be set explicitly"):
             _make_config(resolved_path=str(snapshot), num_gpus=0, vllm_kwargs={"gpu_memory_utilization": 0.5})
 
+    def test_sliding_window_uses_saturated_seq_bytes_for_gmu(self, tmp_path):
+        """CPU sizing on a sliding-window model must clamp attention KV to the
+        saturated per-sequence size, not `kv_per_token * suggested`."""
+        from modelship.preflight.vllm import (
+            _CPU_KV_SEQUENCES,
+            SlidingWindowInfo,
+            _seq_kv_bytes,
+        )
+
+        cfg_json = {
+            **self._SMALL_MODEL_CFG,
+            "sliding_window": 64,
+            "layer_types": ["sliding_attention"] * 6 + ["full_attention"] * 2,
+        }
+        weight_bytes = 1 * 1024**3
+        snapshot = _write_model_snapshot(tmp_path, config_json=cfg_json, weight_bytes=weight_bytes)
+        cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
+
+        ram_bytes = 6 * 1024**3
+        hw = HardwareProfile(ram_bytes=ram_bytes, available_ram_bytes=ram_bytes)
+        with patch("modelship.preflight.vllm._raw_host_ram_bytes", return_value=ram_bytes):
+            rec = VllmPreflight().recommend(cfg, hw)
+
+        # Cap reached confirms _fit_len_with_sliding ran rather than the
+        # uniform-attention path.
+        assert rec["max_model_len"] == 2048
+
+        kv_per_token = 2 * 8 * 128 * 2 * 8  # matches _SMALL_MODEL_CFG geometry
+        sliding = SlidingWindowInfo(n_full_layers=2, n_sliding_layers=6, n_total_layers=8, window=64)
+        saturated = _CPU_KV_SEQUENCES * _seq_kv_bytes(kv_per_token, sliding, 2048)
+        linear = _CPU_KV_SEQUENCES * kv_per_token * 2048
+        assert saturated < linear  # sanity: the two diverge in this scenario
+
+        assert rec["gpu_memory_utilization"] == round(saturated / ram_bytes, 3)
+        wrong_gmu = round(linear / ram_bytes, 3)
+        assert rec["gpu_memory_utilization"] < wrong_gmu
+
 
 class TestDefaultGpuMemoryUtilization:
     """`default_gpu_memory_utilization()`: the config field stays None until a
