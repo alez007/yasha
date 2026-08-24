@@ -11,32 +11,23 @@ from modelship.preflight.base import HardwareProfile, gpu_share_bytes
 
 logger = get_logger("preflight.llama_cpp")
 
-# Fraction of total system RAM the preflight will allocate. No equivalent of
-# vLLM's `gpu_memory_utilization` exists for this loader; 0.8 leaves room
-# for the OS, page cache, and other actors on the same node.
+# No equivalent of vLLM's `gpu_memory_utilization` for this loader; 0.8
+# leaves room for the OS, page cache, and other actors on the node.
 _RAM_UTILIZATION = 0.8
 
-# Fixed overhead for llama.cpp runtime state (compute buffers, sampler stacks,
-# tokenizer vocab). Much smaller than vLLM since there's no CUDA-graph capture,
-# no NCCL, no fused kernels' workspace.
+# Fixed overhead for llama.cpp runtime state (compute buffers, sampler
+# stacks, tokenizer vocab) — smaller than vLLM's since there's no CUDA-graph
+# capture, NCCL, or fused-kernel workspace.
 _OVERHEAD_FIXED_BYTES = 512 * 1024**2
 
-# Round the recommended n_ctx to this alignment. llama.cpp doesn't require any
-# specific alignment, but powers of 256 are the convention and keep numbers
-# readable in logs.
+# n_ctx alignment; llama.cpp has no hard requirement, powers of 256 are
+# convention.
 _NCTX_ALIGNMENT = 256
 
-# Minimum n_ctx we're willing to recommend. Below this the deployment is
-# unusable for chat anyway; better to skip and let the user see the OOM than
-# silently ship a 256-token context.
+# Below this n_ctx, decline the recommendation instead of shipping it.
 _MIN_NCTX = 512
 
-# Safety cap when the GGUF doesn't declare `{arch}.context_length`. Without it,
-# a high-RAM host could end up recommending an n_ctx far beyond what the model
-# was actually trained for (older quant repos and custom conversions sometimes
-# omit the field). 32k is the largest "native" context shipped by most
-# instruct-tuned models without RoPE extension at the time of writing — picking
-# higher risks gibberish and severe attention-cost blowup at inference time.
+# Fallback cap when the GGUF omits `{arch}.context_length`.
 _UNKNOWN_CONTEXT_LENGTH_CAP = 32768
 
 # Default KV-cache element size when neither `type_k` nor `type_v` is set in
@@ -57,18 +48,14 @@ _NON_BLOCK_LAYER_EQUIV = 1
 # pinned n_ctx themselves.
 _PARTIAL_OFFLOAD_NCTX_TARGET = 8192
 
-# Sharded GGUF filenames (e.g. model-00001-of-00003.gguf). The resolver only
-# keeps the first shard's path; llama.cpp auto-loads the rest at load time,
-# but the weight-footprint estimate needs every shard's size summed.
+# Sharded GGUF filenames (e.g. model-00001-of-00003.gguf); the resolver
+# keeps only the first shard's path, so weight-bytes sums all of them.
 _SHARD_SUFFIX_RE = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$")
 
 
 class LlamaServerPreflight:
-    """Sizes the `llama_server` loader's launch args to the hardware an actor
-    lands on. Branches on `config.num_gpus` (the reservation is the intent
-    signal), never on hardware discoverability — the pynvml node-level
-    fallback in `discover_hardware()` can report GPUs Ray didn't assign to a
-    `num_gpus=0` deploy."""
+    """Sizes the `llama_server` loader's launch args. Branches on
+    `config.num_gpus`, not hardware discoverability."""
 
     def recommend(self, config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
         # Thread alignment is independent of context/offload sizing — recommend
@@ -127,10 +114,6 @@ class LlamaServerPreflight:
             )
             return {}
 
-        # Cap to the model's declared training context when available;
-        # otherwise apply a conservative safety ceiling so a high-RAM host
-        # doesn't recommend hundreds of thousands of tokens on a GGUF that
-        # just happens to omit the field.
         cap = meta.context_length if meta.context_length else _UNKNOWN_CONTEXT_LENGTH_CAP
         if not meta.context_length:
             logger.info(
@@ -180,11 +163,8 @@ class LlamaServerPreflight:
 
         fractional = 0 < config.num_gpus < 1
         num_gpus = 1 if fractional else int(config.num_gpus)
-        # llama.cpp's default --split-mode layer splits proportionally to free
-        # memory, so summed free VRAM across the assigned GPUs is the real
-        # capacity. Take the num_gpus smallest-free GPUs from the node-level
-        # view, keeping this a lower bound when that view shows GPUs Ray
-        # didn't actually assign to this deploy.
+        # --split-mode layer splits proportionally to free VRAM; take the
+        # num_gpus smallest-free GPUs as a lower bound on real capacity.
         picked = sorted(hw.gpus, key=lambda g: g.available_bytes)[:num_gpus]
         if len(picked) < num_gpus:
             logger.info(
@@ -269,10 +249,8 @@ class LlamaServerPreflight:
             return max(0, min(total_layers, int(vram_budget // denom)))
 
         ngl = fit_ngl(target_ctx)
-        # cpu_blocks: transformer blocks left on CPU — the only layers with a
-        # KV cache. cpu_layers: all CPU-resident weight layers, which also
-        # includes the output layer (_NON_BLOCK_LAYER_EQUIV) once ngl reaches
-        # block_count but hasn't yet covered total_layers.
+        # cpu_blocks: KV-bearing transformer blocks left on CPU. cpu_layers:
+        # all CPU-resident weight layers, including the output layer.
         cpu_blocks = meta.block_count - min(ngl, meta.block_count)
         cpu_layers = total_layers - ngl
 
@@ -323,12 +301,8 @@ class LlamaServerPreflight:
         return {"n_ctx": suggested, "n_gpu_layers": ngl}
 
     def _apply_parallel_division(self, config: ModelshipModelConfig, rec: dict[str, Any]) -> dict[str, Any]:
-        """llama-server splits its total context (`-c`) across `parallel`
-        slots, so the per-slot `n_ctx` LlamaServerConfig expects is the total
-        RAM/VRAM-budgeted context divided by the slot count (the loader's
-        launch command re-multiplies by `parallel` to reconstruct the
-        RAM/VRAM-safe total). `n_gpu_layers` is per-process, not per-slot, so
-        it survives the division untouched."""
+        """llama-server splits total context (`-c`) across `parallel` slots;
+        `n_gpu_layers` is per-process, so it's untouched by the division."""
         if "n_ctx" not in rec:
             return rec
 
@@ -359,17 +333,8 @@ class LlamaServerPreflight:
 
 
 def _recommend_threads(config: ModelshipModelConfig) -> dict[str, Any]:
-    """Align llama-server's compute threads with the actor's Ray CPU
-    reservation so a subprocess on a shared node doesn't grab every core.
-    `num_cpus` defaults to 0.1 (a fractional share), so only >= 1 (necessarily
-    an explicit config value) is treated as a real thread budget.
-
-    `num_cpus` is a Ray scheduling hint, not an enforced cap the way `num_gpus`
-    is — a deploy can legitimately set it low for bin-packing while still
-    running many `--parallel` slots that need real compute concurrency to
-    actually overlap. Recommending fewer threads than slots would starve them
-    and defeat the loader's headline feature, so decline in that case and let
-    llama-server keep its own default (all cores) instead."""
+    """Aligns llama-server's threads to `config.num_cpus` (>= 1 only; the 0.1
+    default isn't a real budget). Declines rather than undercut `parallel`."""
     if config.num_cpus < 1:
         return {}
     threads = int(config.num_cpus)
@@ -405,11 +370,8 @@ class _GGUFMeta:
 
 
 def _weight_bytes(path: str) -> int:
-    """On-disk size of the GGUF file, summed across shards for a sharded model
-    (e.g. model-00001-of-00003.gguf) — the resolver only keeps the first
-    shard's path, so a naive single-file size undercounts total weight bytes.
-    Wrapped as a helper so tests can mock a hypothetical weight footprint
-    without writing real bytes to tmp."""
+    """On-disk size of the GGUF file, summed across shards for a sharded
+    model — the resolver only keeps the first shard's path."""
     match = _SHARD_SUFFIX_RE.search(path)
     if match is None:
         try:
@@ -430,11 +392,8 @@ def _weight_bytes(path: str) -> int:
 
 
 def _read_gguf_metadata(path: str) -> _GGUFMeta | None:
-    """Read the architecture-relevant header fields from a GGUF file.
-
-    `GGUFReader` mmaps the file and parses metadata only — tensor data is not
-    loaded. Returns None on any parse failure; the caller treats that the same
-    as a vLLM-side missing config.json (skip preflight, let the loader try)."""
+    """Reads the architecture-relevant header fields from a GGUF file.
+    `GGUFReader` mmaps and parses metadata only, no tensor data."""
     try:
         from gguf import GGUFReader
     except Exception:
@@ -470,9 +429,7 @@ def _read_gguf_metadata(path: str) -> _GGUFMeta | None:
         head_dim = key_length
     head_count_kv = _read_int_at(reader, f"{arch}.attention.head_count_kv", sample_index, head_count)
 
-    # head_dim falls back to embedding_length / head_count when not stated
-    # explicitly. Modern Llama/Qwen GGUFs include `key_length`; older ones rely
-    # on the fallback.
+    # Older GGUFs without key_length fall back to embedding_length/head_count.
     if head_dim is None and embedding_length and head_count:
         head_dim = embedding_length // head_count
 
@@ -577,12 +534,8 @@ def _read_field_value(reader: Any, key: str) -> Any:
 
 
 def _unwrap_scalar(val: Any) -> Any:
-    """Extract a scalar from whatever shape gguf hands back.
-
-    `ReaderField.contents()` returns numpy arrays for some field types and
-    Python sequences for others; numpy `>=0`-dim scalars are also possible
-    on older gguf releases. Pull out the first element when the value is
-    array-like, leave true scalars alone."""
+    """Extracts a scalar from a gguf field's raw contents — numpy array,
+    Python sequence, or true scalar — taking the first element of any."""
     if val is None:
         return None
     # numpy array (1-d or higher): take the first element.
@@ -623,9 +576,6 @@ def _sliding_log_suffix(sliding: SlidingWindowInfo | None) -> str:
 
 
 def _kv_bytes_per_token(meta: _GGUFMeta) -> int | None:
-    """Bytes of KV cache stored per token across all layers.
-
-    `2 *` accounts for both K and V tensors. KV element size defaults to fp16
-    (2 bytes) — `llama_server`'s config surface has no `type_k`/`type_v`
-    override, so preflight always assumes it."""
+    """Bytes of KV cache per token across all layers; `2 *` for K and V,
+    element size fixed at fp16 (no `type_k`/`type_v` override exists)."""
     return 2 * meta.block_count * meta.head_count_kv * meta.head_dim * _DEFAULT_KV_DTYPE_BYTES
