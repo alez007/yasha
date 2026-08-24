@@ -6,6 +6,7 @@ from typing import Any
 
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.logging import get_logger
+from modelship.preflight._sliding_window import SlidingWindowInfo, fit_len_with_sliding
 from modelship.preflight.base import HardwareProfile, gpu_share_bytes
 
 logger = get_logger("preflight.llama_cpp")
@@ -126,8 +127,6 @@ class LlamaServerPreflight:
             )
             return {}
 
-        max_tokens = int(budget // kv_per_token)
-        suggested = (max_tokens // _NCTX_ALIGNMENT) * _NCTX_ALIGNMENT
         # Cap to the model's declared training context when available;
         # otherwise apply a conservative safety ceiling so a high-RAM host
         # doesn't recommend hundreds of thousands of tokens on a GGUF that
@@ -139,6 +138,11 @@ class LlamaServerPreflight:
                 config.name,
                 _UNKNOWN_CONTEXT_LENGTH_CAP,
             )
+        if meta.sliding is not None:
+            max_tokens = fit_len_with_sliding(budget, kv_per_token, meta.sliding, cap)
+        else:
+            max_tokens = int(budget // kv_per_token)
+        suggested = (max_tokens // _NCTX_ALIGNMENT) * _NCTX_ALIGNMENT
         suggested = min(suggested, cap)
         if suggested < _MIN_NCTX:
             logger.warning(
@@ -150,7 +154,7 @@ class LlamaServerPreflight:
             return {}
 
         logger.info(
-            "preflight llama_server cpu '%s': ram_avail=%.2f GiB%s util=%.2f weights=%.2f GiB kv/token=%d B "
+            "preflight llama_server cpu '%s': ram_avail=%.2f GiB%s util=%.2f weights=%.2f GiB kv/token=%d B%s "
             "→ suggested n_ctx=%d",
             config.name,
             ram_basis / 1024**3,
@@ -158,6 +162,7 @@ class LlamaServerPreflight:
             _RAM_UTILIZATION,
             weight_bytes / 1024**3,
             int(kv_per_token),
+            _sliding_log_suffix(meta.sliding),
             suggested,
         )
 
@@ -202,17 +207,22 @@ class LlamaServerPreflight:
                 sum(g.available_bytes for g in picked) * _VRAM_UTILIZATION - len(picked) * _GPU_OVERHEAD_FIXED_BYTES
             )
 
-        ctx_full = int((vram_budget - layer_bytes * total_layers) // kv_per_token)
+        budget = vram_budget - layer_bytes * total_layers
+        if meta.sliding is not None:
+            ctx_full = fit_len_with_sliding(budget, kv_per_token, meta.sliding, ctx_cap)
+        else:
+            ctx_full = int(budget // kv_per_token)
         if ctx_full >= _MIN_NCTX:
             suggested = min(ctx_full, ctx_cap)
             suggested = (suggested // _NCTX_ALIGNMENT) * _NCTX_ALIGNMENT
             if suggested >= _MIN_NCTX:
                 logger.info(
-                    "preflight llama_server gpu '%s': vram_budget=%.2f GiB across %d GPU(s), full offload "
+                    "preflight llama_server gpu '%s': vram_budget=%.2f GiB across %d GPU(s), full offload%s "
                     "→ n_ctx=%d n_gpu_layers=%d",
                     config.name,
                     vram_budget / 1024**3,
                     len(picked),
+                    _sliding_log_suffix(meta.sliding),
                     suggested,
                     total_layers,
                 )
@@ -244,6 +254,8 @@ class LlamaServerPreflight:
         total_layers: int,
         ctx_cap: int,
     ) -> dict[str, Any]:
+        # kv_per_layer carries the corrected magnitude but stays flat/linear
+        # here — unlike full offload, which layers land on GPU isn't known.
         server_config = config.llama_server_config
         if server_config is not None and "n_ctx" in server_config.model_fields_set:
             target_ctx = server_config.n_ctx * server_config.parallel
@@ -375,7 +387,7 @@ def _recommend_threads(config: ModelshipModelConfig) -> dict[str, Any]:
 
 
 class _GGUFMeta:
-    __slots__ = ("block_count", "context_length", "head_count_kv", "head_dim")
+    __slots__ = ("block_count", "context_length", "head_count_kv", "head_dim", "sliding")
 
     def __init__(
         self,
@@ -383,11 +395,13 @@ class _GGUFMeta:
         head_count_kv: int,
         head_dim: int,
         context_length: int | None,
+        sliding: SlidingWindowInfo | None = None,
     ) -> None:
         self.block_count = block_count
         self.head_count_kv = head_count_kv
         self.head_dim = head_dim
         self.context_length = context_length
+        self.sliding = sliding
 
 
 def _weight_bytes(path: str) -> int:
@@ -440,21 +454,27 @@ def _read_gguf_metadata(path: str) -> _GGUFMeta | None:
 
     block_count = _read_int(reader, f"{arch}.block_count")
     head_count = _read_int(reader, f"{arch}.attention.head_count")
-    head_count_kv = _read_int(reader, f"{arch}.attention.head_count_kv") or head_count
     embedding_length = _read_int(reader, f"{arch}.embedding_length")
     key_length = _read_int(reader, f"{arch}.attention.key_length")
+    context_length = _read_int(reader, f"{arch}.context_length")
+
+    sliding = _resolve_sliding_window_gguf(reader, arch, block_count)
+
+    # head_count_kv is per-layer on hybrid archs; sample a sliding-layer index
+    # and prefer the sliding head_dim, matching vLLM's config.json estimator.
+    if sliding is not None:
+        sample_index = _first_sliding_layer_index(reader, arch) or 0
+        head_dim = _read_int(reader, f"{arch}.attention.key_length_swa") or key_length
+    else:
+        sample_index = 0
+        head_dim = key_length
+    head_count_kv = _read_int_at(reader, f"{arch}.attention.head_count_kv", sample_index, head_count)
 
     # head_dim falls back to embedding_length / head_count when not stated
     # explicitly. Modern Llama/Qwen GGUFs include `key_length`; older ones rely
     # on the fallback.
-    if key_length:
-        head_dim = key_length
-    elif embedding_length and head_count:
+    if head_dim is None and embedding_length and head_count:
         head_dim = embedding_length // head_count
-    else:
-        head_dim = None
-
-    context_length = _read_int(reader, f"{arch}.context_length")
 
     if not (block_count and head_count_kv and head_dim):
         return None
@@ -464,7 +484,76 @@ def _read_gguf_metadata(path: str) -> _GGUFMeta | None:
         head_count_kv=int(head_count_kv),
         head_dim=int(head_dim),
         context_length=int(context_length) if context_length else None,
+        sliding=sliding,
     )
+
+
+def _as_list(val: Any) -> list | None:
+    """Normalizes a gguf field's raw contents into a plain list when it's
+    array-like (a per-layer field); None for a true scalar."""
+    if val is None:
+        return None
+    if hasattr(val, "ndim") and getattr(val, "ndim", 0) > 0:
+        try:
+            return list(val.tolist()) if val.size else []
+        except Exception:
+            return None
+    if isinstance(val, list | tuple):
+        return list(val)
+    return None
+
+
+def _resolve_sliding_window_gguf(reader: Any, arch: str, block_count: int | None) -> SlidingWindowInfo | None:
+    """GGUF equivalent of vllm.py's `_resolve_sliding_window`, reading
+    `{arch}.attention.sliding_window_pattern` instead of `layer_types`."""
+    window = _read_int(reader, f"{arch}.attention.sliding_window")
+    if not window or not block_count:
+        return None
+
+    pattern_val = _read_field_value(reader, f"{arch}.attention.sliding_window_pattern")
+    pattern_list = _as_list(pattern_val)
+    if pattern_list is not None:
+        n_sliding = sum(1 for v in pattern_list if bool(v))
+    elif pattern_val is not None:
+        try:
+            period = int(pattern_val)
+        except (TypeError, ValueError):
+            period = 0
+        n_sliding = block_count - block_count // period if period > 0 else block_count
+    else:
+        n_sliding = block_count
+
+    if n_sliding <= 0:
+        return None
+    return SlidingWindowInfo(block_count - n_sliding, n_sliding, block_count, int(window))
+
+
+def _first_sliding_layer_index(reader: Any, arch: str) -> int | None:
+    pattern_list = _as_list(_read_field_value(reader, f"{arch}.attention.sliding_window_pattern"))
+    if pattern_list is None:
+        return None
+    for i, v in enumerate(pattern_list):
+        if bool(v):
+            return i
+    return None
+
+
+def _read_int_at(reader: Any, key: str, index: int, default: int | None) -> int | None:
+    """Reads a field that may be a per-layer array or a plain scalar; the
+    value at `index` for an array, the scalar itself otherwise."""
+    val = _read_field_value(reader, key)
+    lst = _as_list(val)
+    if lst is not None:
+        try:
+            return int(lst[index])
+        except (IndexError, TypeError, ValueError):
+            return default
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
 
 
 def _read_field_value(reader: Any, key: str) -> Any:
@@ -525,6 +614,12 @@ def _read_string(reader: Any, key: str) -> str | None:
     if isinstance(val, bytes):
         return val.decode("utf-8", errors="replace")
     return str(val)
+
+
+def _sliding_log_suffix(sliding: SlidingWindowInfo | None) -> str:
+    if sliding is None:
+        return ""
+    return f" swa({sliding.n_sliding_layers}/{sliding.n_total_layers} layers, window {sliding.window})"
 
 
 def _kv_bytes_per_token(meta: _GGUFMeta) -> int | None:
