@@ -128,6 +128,9 @@ class VllmPreflight:
         mamba = _resolve_mamba_state(config, model_path)
         if mamba is not None:
             kv_per_token_per_gpu = _correct_kv_for_hybrid(kv_per_token_per_gpu, mamba)
+        # Mutually exclusive with mamba: _correct_kv_for_hybrid already drops
+        # kv/token to the full-attention layers.
+        sliding = _resolve_sliding_window(text_cfg) if mamba is None else None
 
         weight_bytes = _estimate_weight_footprint(model_path)
         weight_bytes_per_gpu = weight_bytes / (tp_size * pp_size) if weight_bytes else 0.0
@@ -191,7 +194,11 @@ class VllmPreflight:
             if not rec:
                 return {}
         else:
-            max_tokens = int(budget // kv_per_token_per_gpu)
+            ctx_cap = max_position_embeddings or _UNKNOWN_CONTEXT_LENGTH_CAP
+            if sliding is not None:
+                max_tokens = _fit_len_with_sliding(budget, kv_per_token_per_gpu, sliding, ctx_cap)
+            else:
+                max_tokens = int(budget // kv_per_token_per_gpu)
             suggested = (max_tokens // _DEFAULT_BLOCK_SIZE) * _DEFAULT_BLOCK_SIZE
             if max_position_embeddings:
                 suggested = min(suggested, max_position_embeddings)
@@ -216,7 +223,13 @@ class VllmPreflight:
             weight_bytes_per_gpu / 1024**3,
             cudagraph_bytes_per_gpu / 1024**3,
             int(kv_per_token_per_gpu),
-            f" hybrid(state {mamba.per_seq_state_bytes / 1024**2:.1f} MiB/seq)" if mamba else "",
+            f" hybrid(state {mamba.per_seq_state_bytes / 1024**2:.1f} MiB/seq)"
+            if mamba
+            else (
+                f" swa({sliding.n_sliding_layers}/{sliding.n_total_layers} layers, window {sliding.window})"
+                if sliding
+                else ""
+            ),
             rec,
         )
 
@@ -286,9 +299,10 @@ class VllmPreflight:
         mamba = _resolve_mamba_state(config, model_path)
         if mamba is not None:
             kv_per_token = _correct_kv_for_hybrid(kv_per_token, mamba)
+        sliding = _resolve_sliding_window(text_cfg) if mamba is None else None
 
         return self._recommend_cpu_auto_gmu(
-            config, hw, kv_per_token, weight_bytes, weight_overhead, ctx_cap, denom_ram, mamba
+            config, hw, kv_per_token, weight_bytes, weight_overhead, ctx_cap, denom_ram, mamba, sliding
         )
 
     def _recommend_cpu_auto_gmu(
@@ -301,6 +315,7 @@ class VllmPreflight:
         ctx_cap: int,
         denom_ram: int,
         mamba: MambaStateInfo | None,
+        sliding: SlidingWindowInfo | None,
     ) -> dict[str, Any]:
         """gpu_memory_utilization is still at its CPU-deploy auto default: we're
         free to size both max_model_len and the utilization fraction. Target
@@ -324,7 +339,10 @@ class VllmPreflight:
                 config, kv_budget, kv_per_token, ctx_cap, denom_ram, weight_bytes, weight_overhead, mamba
             )
 
-        max_tokens = int(kv_budget // kv_per_token)
+        if sliding is not None:
+            max_tokens = _fit_len_with_sliding(kv_budget, kv_per_token, sliding, ctx_cap)
+        else:
+            max_tokens = int(kv_budget // kv_per_token)
         suggested = min((max_tokens // _DEFAULT_BLOCK_SIZE) * _DEFAULT_BLOCK_SIZE, ctx_cap)
         if suggested < _DEFAULT_BLOCK_SIZE:
             logger.warning(
@@ -334,7 +352,7 @@ class VllmPreflight:
             )
             return {}
 
-        clamped_kv_bytes = min(kv_budget, _CPU_KV_SEQUENCES * kv_per_token * suggested)
+        clamped_kv_bytes = min(kv_budget, _CPU_KV_SEQUENCES * _seq_kv_bytes(kv_per_token, sliding, suggested))
         recommended_gmu = round(clamped_kv_bytes / denom_ram, 3)
         recommended_gmu = min(max(recommended_gmu, 0.01), 0.9)
 
@@ -535,6 +553,67 @@ def _divide_kv_by_tp(kv_per_token: int, model_cfg: dict, tp_size: int) -> float:
     # GQA edge case: when num_kv_heads doesn't divide tp_size cleanly, vLLM
     # replicates KV heads across ranks, so per-GPU bytes don't shrink.
     return float(kv_per_token)
+
+
+class SlidingWindowInfo(NamedTuple):
+    """Layer split for interleaved sliding-window/full attention. A sliding
+    layer's KV stops growing at `window` tokens."""
+
+    n_full_layers: int
+    n_sliding_layers: int
+    n_total_layers: int
+    window: int
+
+
+def _resolve_sliding_window(text_cfg: dict) -> SlidingWindowInfo | None:
+    """Split layers by `layer_types`, else `sliding_window_pattern` (every Nth
+    layer full), else a bare `sliding_window` (all layers slide). None if uniform."""
+    window = text_cfg.get("sliding_window")
+    if not window or text_cfg.get("use_sliding_window") is False:
+        return None
+    n_total = text_cfg.get("num_hidden_layers") or text_cfg.get("num_layers")
+    if not n_total:
+        return None
+
+    layer_types = text_cfg.get("layer_types")
+    pattern = text_cfg.get("sliding_window_pattern")
+    if layer_types:
+        n_sliding = sum(1 for t in layer_types if isinstance(t, str) and "sliding" in t)
+    elif isinstance(pattern, int) and pattern > 0:
+        n_sliding = n_total - n_total // pattern
+    else:
+        n_sliding = n_total
+
+    if n_sliding <= 0:
+        return None
+    return SlidingWindowInfo(n_total - n_sliding, n_sliding, int(n_total), int(window))
+
+
+def _seq_kv_bytes(kv_per_token: float, sliding: SlidingWindowInfo | None, length: int) -> float:
+    """KV bytes one sequence of `length` tokens occupies."""
+    if sliding is None:
+        return kv_per_token * length
+    per_layer = kv_per_token / sliding.n_total_layers
+    window_tokens = min(sliding.window + _DEFAULT_BLOCK_SIZE, length)
+    return per_layer * (sliding.n_full_layers * length + sliding.n_sliding_layers * window_tokens)
+
+
+def _fit_len_with_sliding(budget: float, kv_per_token: float, sliding: SlidingWindowInfo, ctx_cap: int) -> int:
+    """Largest single-sequence max_model_len whose KV fits `budget`. Apportions
+    `kv_per_token` evenly across layers — config.json carries only one geometry."""
+    per_layer = kv_per_token / sliding.n_total_layers
+    full_per_token = per_layer * sliding.n_full_layers
+    sliding_per_token = per_layer * sliding.n_sliding_layers
+    # One block of slack: windows round up to whole pages.
+    window_tokens = sliding.window + _DEFAULT_BLOCK_SIZE
+
+    # Below the window nothing has saturated: every layer still grows per token.
+    if budget < (full_per_token + sliding_per_token) * window_tokens:
+        return int(budget // (full_per_token + sliding_per_token))
+    if full_per_token <= 0:
+        # No full-attention layer: KV stops growing, only the context cap binds.
+        return ctx_cap
+    return int((budget - sliding_per_token * window_tokens) // full_per_token)
 
 
 def _is_multimodal(model_cfg: dict) -> bool:

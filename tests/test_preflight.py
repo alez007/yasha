@@ -1153,3 +1153,139 @@ class TestHybridIntegration:
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
         with pytest.raises(ValidationError, match="cannot be set explicitly"):
             _make_config(resolved_path=str(snapshot), num_gpus=0, vllm_kwargs={"gpu_memory_utilization": 0.5})
+
+
+def _gemma4_shaped_config(*, layer_types: bool) -> dict:
+    """Gemma-4-12B geometry: 40 sliding(1024) + 8 full out of 48 layers."""
+    cfg = {
+        "num_hidden_layers": 48,
+        "num_attention_heads": 16,
+        "num_key_value_heads": 8,
+        "hidden_size": 3840,
+        "head_dim": 256,
+        "torch_dtype": "bfloat16",
+        "max_position_embeddings": 262144,
+        "sliding_window": 1024,
+    }
+    if layer_types:
+        cfg["layer_types"] = ["sliding_attention"] * 40 + ["full_attention"] * 8
+    return cfg
+
+
+class TestResolveSlidingWindow:
+    """Layer split read from config.json alone."""
+
+    def test_reads_layer_types(self):
+        from modelship.preflight.vllm import _resolve_sliding_window
+
+        sw = _resolve_sliding_window(_gemma4_shaped_config(layer_types=True))
+        assert (sw.n_sliding_layers, sw.n_full_layers, sw.n_total_layers) == (40, 8, 48)
+        assert sw.window == 1024
+
+    def test_falls_back_to_sliding_window_pattern(self):
+        """`sliding_window_pattern` means every Nth layer is full attention."""
+        from modelship.preflight.vllm import _resolve_sliding_window
+
+        sw = _resolve_sliding_window({"num_hidden_layers": 26, "sliding_window": 4096, "sliding_window_pattern": 2})
+        assert (sw.n_sliding_layers, sw.n_full_layers) == (13, 13)
+
+    def test_bare_sliding_window_means_every_layer_slides(self):
+        from modelship.preflight.vllm import _resolve_sliding_window
+
+        sw = _resolve_sliding_window({"num_hidden_layers": 32, "sliding_window": 4096})
+        assert (sw.n_sliding_layers, sw.n_full_layers) == (32, 0)
+
+    def test_uniform_full_attention_returns_none(self):
+        from modelship.preflight.vllm import _resolve_sliding_window
+
+        assert _resolve_sliding_window({"num_hidden_layers": 32}) is None
+        assert _resolve_sliding_window({"num_hidden_layers": 32, "sliding_window": None}) is None
+
+    def test_use_sliding_window_false_is_respected(self):
+        """A `sliding_window` value is present but switched off."""
+        from modelship.preflight.vllm import _resolve_sliding_window
+
+        cfg = {"num_hidden_layers": 32, "sliding_window": 4096, "use_sliding_window": False}
+        assert _resolve_sliding_window(cfg) is None
+
+    def test_non_sliding_layer_types_count_as_full(self):
+        """Non-sliding `layer_types` count as full, keeping the estimate conservative."""
+        from modelship.preflight.vllm import _resolve_sliding_window
+
+        cfg = {
+            "num_hidden_layers": 4,
+            "sliding_window": 8192,
+            "layer_types": ["chunked_attention", "chunked_attention", "sliding_attention", "full_attention"],
+        }
+        sw = _resolve_sliding_window(cfg)
+        assert (sw.n_sliding_layers, sw.n_full_layers) == (1, 3)
+
+
+class TestFitLenWithSliding:
+    def test_chosen_length_fits_and_one_more_token_does_not(self):
+        from modelship.preflight.vllm import _fit_len_with_sliding, _resolve_sliding_window, _seq_kv_bytes
+
+        sw = _resolve_sliding_window(_gemma4_shaped_config(layer_types=True))
+        kv_per_token = 2 * 8 * 256 * 2 * 48
+        budget = 8.0 * 1024**3
+        length = _fit_len_with_sliding(budget, kv_per_token, sw, 262144)
+        assert _seq_kv_bytes(kv_per_token, sw, length) <= budget
+        assert _seq_kv_bytes(kv_per_token, sw, length + 1) > budget
+
+    def test_all_sliding_is_bounded_only_by_the_context_cap(self):
+        from modelship.preflight.vllm import SlidingWindowInfo, _fit_len_with_sliding
+
+        sw = SlidingWindowInfo(n_full_layers=0, n_sliding_layers=32, n_total_layers=32, window=4096)
+        assert _fit_len_with_sliding(64 * 1024**3, 2 * 8 * 128 * 2 * 32, sw, 32768) == 32768
+
+    def test_budget_below_the_window_falls_back_to_per_token_growth(self):
+        from modelship.preflight.vllm import SlidingWindowInfo, _fit_len_with_sliding
+
+        sw = SlidingWindowInfo(n_full_layers=8, n_sliding_layers=40, n_total_layers=48, window=1_000_000)
+        kv_per_token = 48 * 1024
+        # Window unreachable, so every layer still grows: budget / kv_per_token.
+        assert _fit_len_with_sliding(48 * 1024 * 500, kv_per_token, sw, 262144) == 500
+
+
+class TestSlidingWindowIntegration:
+    """The same model with and without `layer_types` present."""
+
+    def test_layer_types_unlocks_far_more_context(self, tmp_path):
+        hw = HardwareProfile(gpus=[GPUInfo(0, 16 * 1024**3, "test"), GPUInfo(1, 16 * 1024**3, "test")])
+
+        def _rec(config_json, subdir):
+            snapshot = _write_model_snapshot(tmp_path / subdir, config_json=config_json, weight_bytes=10 * 1024**3)
+            cfg = _make_config(resolved_path=str(snapshot), vllm_kwargs={"tensor_parallel_size": 2}, num_gpus=2)
+            return VllmPreflight().recommend(cfg, hw)["max_model_len"]
+
+        (tmp_path / "with").mkdir()
+        (tmp_path / "without").mkdir()
+        with_sw = _rec(_gemma4_shaped_config(layer_types=True), "with")
+        without_sw = _rec(
+            {k: v for k, v in _gemma4_shaped_config(layer_types=False).items() if k != "sliding_window"}, "without"
+        )
+
+        assert with_sw > without_sw * 4
+        assert with_sw % 16 == 0
+
+    def test_all_full_layer_types_matches_no_sliding_keys(self, tmp_path):
+        hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test")])
+        base = {
+            "num_hidden_layers": 32,
+            "num_attention_heads": 32,
+            "num_key_value_heads": 8,
+            "hidden_size": 4096,
+            "head_dim": 128,
+            "torch_dtype": "bfloat16",
+            "max_position_embeddings": 32768,
+        }
+
+        def _rec(config_json, subdir):
+            (tmp_path / subdir).mkdir()
+            snapshot = _write_model_snapshot(tmp_path / subdir, config_json=config_json, weight_bytes=14 * 1024**3)
+            cfg = _make_config(resolved_path=str(snapshot), vllm_kwargs={"tensor_parallel_size": 1})
+            return VllmPreflight().recommend(cfg, hw)["max_model_len"]
+
+        uniform = _rec(base, "uniform")
+        all_full = _rec({**base, "sliding_window": 4096, "layer_types": ["full_attention"] * 32}, "allfull")
+        assert all_full == uniform
