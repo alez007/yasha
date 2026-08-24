@@ -56,6 +56,14 @@ _CPU_KV_SEQUENCES = 4
 # max_position_embeddings.
 _UNKNOWN_CONTEXT_LENGTH_CAP = 32768
 
+# MLA's chunked-prefill decompression workspace row cap, mirrored from vLLM's
+# MLACommonMetadataBuilder.determine_chunked_prefill_workspace_size.
+_MLA_WORKSPACE_ROW_CAP = 65536
+
+# Safety margin on the MLA workspace's gpu_util reduction, covering PyTorch
+# CUDA allocator rounding/fragmentation on top of the raw tensor size.
+_MLA_WORKSPACE_SAFETY_MARGIN = 1.1
+
 
 class VllmPreflight:
     def recommend(self, config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
@@ -145,6 +153,16 @@ class VllmPreflight:
         )
         # gpu_util already carries the fraction (set at config normalization).
         gpu_util = config.vllm_engine_kwargs.gpu_memory_utilization or default_gpu_memory_utilization(config)
+
+        # vLLM 0.26.0's CUDA-graph memory profiler is a no-op stub, and KV-block
+        # commitment isn't bounded by max_model_len — gpu_util is the only lever.
+        mla = _resolve_mla(text_cfg)
+        mla_workspace_bytes = 0
+        if mla is not None and not config.vllm_engine_kwargs.enforce_eager:
+            dtype_bytes = _resolve_compute_dtype_bytes(text_cfg, model_cfg)
+            mla_workspace_bytes = _mla_chunked_prefill_workspace_bytes(text_cfg, config, dtype_bytes, mla)
+            gpu_util = max(gpu_util - _MLA_WORKSPACE_SAFETY_MARGIN * mla_workspace_bytes / gpu_basis, 0.01)
+
         budget = (
             gpu_basis * gpu_util
             - weight_bytes_per_gpu
@@ -198,6 +216,9 @@ class VllmPreflight:
                 )
                 return {}
             rec = {"max_model_len": suggested}
+
+        if mla_workspace_bytes:
+            rec["gpu_memory_utilization"] = round(gpu_util, 4)
 
         logger.info(
             "preflight vllm '%s': gpu_%s=%.2f GiB util=%.2f tp=%d pp=%d "
@@ -437,10 +458,45 @@ def _resolve_text_config(model_cfg: dict) -> dict:
     return model_cfg
 
 
+class MLAInfo(NamedTuple):
+    """DeepSeek-style MLA geometry: one shared compressed latent per token,
+    not per-head K/V."""
+
+    kv_lora_rank: int
+    qk_rope_head_dim: int
+    qk_nope_head_dim: int
+    v_head_dim: int
+    num_heads: int
+
+
+def _resolve_mla(text_cfg: dict) -> MLAInfo | None:
+    """None for ordinary MHA/GQA models."""
+    kv_lora_rank = text_cfg.get("kv_lora_rank")
+    qk_rope_head_dim = text_cfg.get("qk_rope_head_dim")
+    num_heads = text_cfg.get("num_attention_heads")
+    if not (kv_lora_rank and qk_rope_head_dim and num_heads):
+        return None
+    qk_nope_head_dim = text_cfg.get("qk_nope_head_dim") or 0
+    v_head_dim = text_cfg.get("v_head_dim") or qk_nope_head_dim
+    return MLAInfo(kv_lora_rank, qk_rope_head_dim, qk_nope_head_dim, v_head_dim, num_heads)
+
+
 def _kv_bytes_per_token(text_cfg: dict, model_cfg: dict, config: ModelshipModelConfig) -> tuple[int | None, int | None]:
     """Returns (bytes-per-token-across-all-TP-ranks, max_position_embeddings).
     Reads geometry from `text_cfg`, falling back to `model_cfg`."""
     num_layers = text_cfg.get("num_hidden_layers") or text_cfg.get("num_layers")
+    if not num_layers:
+        return None, None
+    kv_dtype_bytes = _resolve_kv_dtype_bytes(text_cfg, model_cfg, config)
+    max_position_embeddings = text_cfg.get("max_position_embeddings") or model_cfg.get("max_position_embeddings")
+    max_position_embeddings = int(max_position_embeddings) if max_position_embeddings else None
+
+    mla = _resolve_mla(text_cfg)
+    if mla is not None:
+        # One shared latent per token per layer: no per-head factor, no x2 for K/V.
+        per_token = (mla.kv_lora_rank + mla.qk_rope_head_dim) * kv_dtype_bytes * num_layers
+        return int(per_token), max_position_embeddings
+
     num_attention_heads = text_cfg.get("num_attention_heads")
     num_kv_heads = text_cfg.get("num_key_value_heads") or num_attention_heads
     hidden_size = text_cfg.get("hidden_size")
@@ -448,14 +504,12 @@ def _kv_bytes_per_token(text_cfg: dict, model_cfg: dict, config: ModelshipModelC
     if head_dim is None and hidden_size and num_attention_heads:
         head_dim = hidden_size // num_attention_heads
 
-    if not (num_layers and num_kv_heads and head_dim):
+    if not (num_kv_heads and head_dim):
         return None, None
 
-    kv_dtype_bytes = _resolve_kv_dtype_bytes(text_cfg, model_cfg, config)
     # Each token stores both K and V (factor of 2) for every layer.
     per_token = 2 * num_kv_heads * head_dim * kv_dtype_bytes * num_layers
-    max_position_embeddings = text_cfg.get("max_position_embeddings") or model_cfg.get("max_position_embeddings")
-    return int(per_token), int(max_position_embeddings) if max_position_embeddings else None
+    return int(per_token), max_position_embeddings
 
 
 def _resolve_kv_dtype_bytes(text_cfg: dict, model_cfg: dict, config: ModelshipModelConfig) -> int:
@@ -503,8 +557,23 @@ def _estimate_cudagraph_bytes_per_gpu(
     return int(hidden * layers * dtype_bytes * max_num_batched_tokens // divisor)
 
 
+def _mla_chunked_prefill_workspace_bytes(
+    text_cfg: dict, config: ModelshipModelConfig, dtype_bytes: int, mla: MLAInfo
+) -> int:
+    """MLA's decompressed-K/V scratch buffer, sized by context length —
+    mirrors vLLM's `determine_chunked_prefill_workspace_size`."""
+    max_model_len = (
+        config.vllm_engine_kwargs.max_model_len
+        or text_cfg.get("max_position_embeddings")
+        or _UNKNOWN_CONTEXT_LENGTH_CAP
+    )
+    rows = min(8 * max_model_len, _MLA_WORKSPACE_ROW_CAP)
+    return int(rows * mla.num_heads * (mla.qk_nope_head_dim + mla.v_head_dim) * dtype_bytes)
+
+
 def _divide_kv_by_tp(kv_per_token: int, model_cfg: dict, tp_size: int) -> float:
-    if tp_size <= 1:
+    if tp_size <= 1 or _resolve_mla(model_cfg) is not None:
+        # MLA's compressed latent is replicated per TP rank, not head-sharded.
         return float(kv_per_token)
     num_kv_heads = model_cfg.get("num_key_value_heads") or model_cfg.get("num_attention_heads") or 0
     if num_kv_heads and num_kv_heads % tp_size == 0:
