@@ -755,3 +755,11 @@ class TestAttentionBlockCount:
         meta = self._meta(_QWEN35_FIELDS, None)
         assert meta is not None
         assert meta.attn_block_count == meta.block_count == 65
+
+    def test_partial_tensor_list_falls_back(self):
+        # Only the first shard is opened; counting its blocks alone would
+        # undercount KV and oversize n_ctx.
+        shard = [t for t in _QWEN35_TENSORS if int(t.split(".")[1]) < 22]
+        meta = self._meta(_QWEN35_FIELDS, shard)
+        assert meta is not None
+        assert meta.attn_block_count == meta.block_count == 65

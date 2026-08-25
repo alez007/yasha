@@ -475,7 +475,7 @@ def _read_gguf_metadata(path: str) -> _GGUFMeta | None:
         sliding=sliding,
         v_head_dim=int(v_head_dim),
         mla=mla,
-        attn_block_count=_attention_block_count(reader),
+        attn_block_count=_attention_block_count(reader, int(block_count)),
     )
 
 
@@ -494,7 +494,7 @@ def _resolve_mla_gguf(reader: Any, arch: str, num_heads: int | None) -> MLAInfo 
     return MLAInfo(kv_lora_rank, qk_rope_head_dim, 0, 0, num_heads)
 
 
-def _attention_block_count(reader: Any) -> int | None:
+def _attention_block_count(reader: Any, block_count: int) -> int | None:
     """Blocks holding a token-growing KV cache, i.e. every block that isn't
     recurrent. Keyed on tensor names rather than the arch string, so it covers
     any hybrid llama.cpp supports. None when it can't be determined."""
@@ -512,7 +512,14 @@ def _attention_block_count(reader: Any) -> int | None:
         index = int(match.group(1))
         recurrent[index] = recurrent.get(index, False) or match.group(2).startswith(_RECURRENT_TENSOR_PREFIXES)
 
-    if not recurrent:
+    if len(recurrent) < block_count:
+        # Only the first shard of a sharded GGUF is opened, and it carries just
+        # its own tensors; a partial list would undercount KV and oversize n_ctx.
+        logger.debug(
+            "preflight: GGUF tensor list covers %d of %d blocks; treating all as attention",
+            len(recurrent),
+            block_count,
+        )
         return None
     count = sum(1 for is_recurrent in recurrent.values() if not is_recurrent)
     # Callers divide by kv_per_token, so never hand back a zero.
