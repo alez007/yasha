@@ -174,6 +174,28 @@ class VllmPreflight:
             - _OVERHEAD_WEIGHT_FRACTION * weight_bytes_per_gpu
             - cudagraph_bytes_per_gpu
         )
+        # Cudagraph capture is discretionary, the state/KV floor isn't. Skipped
+        # when eager is set: an explicit `false` wins the merge downstream.
+        force_eager = False
+        if cudagraph_bytes_per_gpu and config.vllm_engine_kwargs.enforce_eager is None:
+            floor_bytes = (
+                mamba.per_seq_state_bytes * (config.vllm_engine_kwargs.max_num_seqs or _MIN_MAX_NUM_SEQS)
+                if mamba is not None
+                else kv_per_token_per_gpu * _DEFAULT_BLOCK_SIZE
+            )
+            if budget < floor_bytes:
+                logger.info(
+                    "preflight '%s': cudagraph reservation (%.2f GiB/GPU) leaves %.2f GiB, under the %.2f GiB "
+                    "floor → recommending enforce_eager to reclaim it",
+                    config.name,
+                    cudagraph_bytes_per_gpu / 1024**3,
+                    budget / 1024**3,
+                    floor_bytes / 1024**3,
+                )
+                budget += cudagraph_bytes_per_gpu
+                cudagraph_bytes_per_gpu = 0
+                force_eager = True
+
         if budget <= 0:
             logger.warning(
                 "preflight: '%s' has no KV-cache budget on the assigned GPU "
@@ -221,6 +243,9 @@ class VllmPreflight:
                 )
                 return {}
             rec = {"max_model_len": suggested}
+
+        if force_eager:
+            rec["enforce_eager"] = True
 
         if mla_workspace_bytes:
             rec["gpu_memory_utilization"] = round(gpu_util, 4)
@@ -727,6 +752,9 @@ def _resolve_mamba_state(config: ModelshipModelConfig, model_path: str) -> Mamba
                 enforce_eager=True,
                 tensor_parallel_size=tp,
                 pipeline_parallel_size=pp,
+                # ParallelConfig validates world_size against visible GPUs; this
+                # runs in the 0-GPU PG bundle.
+                distributed_executor_backend="ray" if tp * pp > 1 else None,
                 dtype=cast("Any", config.vllm_engine_kwargs.dtype or "auto"),
                 trust_remote_code=config.vllm_engine_kwargs.trust_remote_code,
             )
@@ -765,7 +793,10 @@ def _resolve_mamba_state(config: ModelshipModelConfig, model_path: str) -> Mamba
             default_max_num_seqs=int(vllm_config.scheduler_config.max_num_seqs),
         )
     except Exception:
-        logger.debug("preflight '%s': mamba-state resolution failed; skipping term", config.name, exc_info=True)
+        # Not debug: this drops both the state reservation and the KV correction.
+        logger.warning(
+            "preflight '%s': mamba-state resolution failed; hybrid sizing will be skipped", config.name, exc_info=True
+        )
         return None
     finally:
         for k, v in prev_offline.items():

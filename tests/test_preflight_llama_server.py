@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import patch
 
@@ -71,9 +72,11 @@ class _FakeGGUFReader:
     """Minimal stand-in for `gguf.GGUFReader` — `_read_field_value` only calls
     `.get_field(key).contents()`, and MLA detection reads `.tensors`."""
 
-    def __init__(self, fields: dict, tensor_names: list[str] | None = None):
+    def __init__(self, fields: dict, tensor_names: Sequence[str] | None = ()):
         self._fields = fields
-        self.tensors = [_FakeGGUFTensor(n) for n in (tensor_names or [])]
+        # Explicit None models a reader with no usable tensor list; the default
+        # empty tuple is just "no tensors declared".
+        self.tensors = None if tensor_names is None else [_FakeGGUFTensor(n) for n in tensor_names]
 
     def get_field(self, key: str):
         if key not in self._fields:
@@ -533,7 +536,7 @@ class TestReadGgufMetadataSliding:
     like the real Gemma 4 GGUF header."""
 
     def test_gemma4_header_resolves_sliding_and_swa_head_dim(self):
-        # patch("gguf.GGUFReader", ...) needs the real module importable.
+        # patch("modelship.preflight._gguf.SkimGGUFReader", ...) needs the real module importable.
         pytest.importorskip("gguf")
         from modelship.preflight.llama_cpp import _read_gguf_metadata
 
@@ -549,7 +552,7 @@ class TestReadGgufMetadataSliding:
             "gemma4.attention.sliding_window_pattern": [True, True, True, True, True, False] * 8,
             "gemma4.context_length": 262144,
         }
-        with patch("gguf.GGUFReader", return_value=_FakeGGUFReader(fields)):
+        with patch("modelship.preflight._gguf.SkimGGUFReader", return_value=_FakeGGUFReader(fields)):
             meta = _read_gguf_metadata("/fake/path.gguf")
 
         assert meta is not None
@@ -629,7 +632,7 @@ class TestReadGgufMetadataMla:
         from modelship.preflight.llama_cpp import _read_gguf_metadata
 
         reader = _FakeGGUFReader(_SPLIT_FIELDS, _SPLIT_MLA_TENSORS)
-        with patch("gguf.GGUFReader", return_value=reader):
+        with patch("modelship.preflight._gguf.SkimGGUFReader", return_value=reader):
             meta = _read_gguf_metadata("/fake/path.gguf")
 
         assert meta is not None
@@ -644,7 +647,7 @@ class TestReadGgufMetadataMla:
         from modelship.preflight.llama_cpp import _read_gguf_metadata
 
         reader = _FakeGGUFReader(_FUSED_FIELDS, _FUSED_MLA_TENSORS)
-        with patch("gguf.GGUFReader", return_value=reader):
+        with patch("modelship.preflight._gguf.SkimGGUFReader", return_value=reader):
             meta = _read_gguf_metadata("/fake/path.gguf")
 
         assert meta is not None
@@ -699,3 +702,119 @@ class TestLlamaServerPreflightGpuMla:
             rec = LlamaServerPreflight().recommend(cfg, hw)
 
         assert rec["n_ctx"] == 163840
+
+
+# Mirrors the real Qwen3.8-27B GGUF: 65 blocks, of which 48 are Gated DeltaNet
+# (ssm_*) and 17 carry attention K/V.
+_QWEN35_FIELDS = {
+    "general.architecture": "qwen35",
+    "qwen35.block_count": 65,
+    "qwen35.attention.head_count": 24,
+    "qwen35.attention.head_count_kv": 4,
+    "qwen35.attention.key_length": 256,
+    "qwen35.attention.value_length": 256,
+    "qwen35.embedding_length": 5120,
+    "qwen35.context_length": 262144,
+}
+_QWEN35_ATTN_BLOCKS = [*range(3, 64, 4), 64]
+_QWEN35_TENSORS = [f"blk.{i}.{'attn_k.weight' if i in _QWEN35_ATTN_BLOCKS else 'ssm_conv1d.weight'}" for i in range(65)]
+
+
+class TestAttentionBlockCount:
+    """Hybrid recurrent archs cache KV only on their attention blocks; counting
+    every block overestimates kv/token by the hybrid ratio."""
+
+    def _meta(self, fields, tensors):
+        pytest.importorskip("gguf")
+        from modelship.preflight.llama_cpp import _read_gguf_metadata
+
+        with patch("modelship.preflight._gguf.SkimGGUFReader", return_value=_FakeGGUFReader(fields, tensors)):
+            return _read_gguf_metadata("/fake/path.gguf")
+
+    def test_recurrent_blocks_are_excluded(self):
+        from modelship.preflight.llama_cpp import _kv_bytes_per_token
+
+        meta = self._meta(_QWEN35_FIELDS, _QWEN35_TENSORS)
+        assert meta is not None
+        assert meta.block_count == 65
+        assert meta.attn_block_count == 17
+        assert _kv_bytes_per_token(meta) == (256 + 256) * 17 * 4 * 2
+
+    def test_dense_model_counts_every_block(self):
+        fields = {**_QWEN35_FIELDS, "general.architecture": "llama", "llama.block_count": 4}
+        fields = {k.replace("qwen35.", "llama."): v for k, v in fields.items()}
+        meta = self._meta(fields, [f"blk.{i}.attn_k.weight" for i in range(4)])
+        assert meta is not None
+        assert meta.attn_block_count == meta.block_count == 4
+
+    def test_attention_free_model_falls_back(self):
+        # Dividing by a zero kv/token would blow up the callers.
+        fields = {**_QWEN35_FIELDS, "qwen35.block_count": 8}
+        meta = self._meta(fields, [f"blk.{i}.ssm_conv1d.weight" for i in range(8)])
+        assert meta is not None
+        assert meta.attn_block_count == 8
+
+    def test_unreadable_tensor_list_falls_back(self):
+        meta = self._meta(_QWEN35_FIELDS, None)
+        assert meta is not None
+        assert meta.attn_block_count == meta.block_count == 65
+
+
+def _write_shards(tmp_path: Path, tensors_per_shard: list[list[str]]) -> str:
+    """Real GGUF shards named the way llama.cpp's gguf-split emits them."""
+    import numpy as np
+    from gguf import GGUFWriter
+
+    total = len(tensors_per_shard)
+    for index, names in enumerate(tensors_per_shard, start=1):
+        writer = GGUFWriter(str(tmp_path / f"model-{index:05d}-of-{total:05d}.gguf"), "qwen35")
+        for name in names:
+            writer.add_tensor(name, np.zeros((2, 2), dtype=np.float32))
+        writer.write_header_to_file()
+        writer.write_kv_data_to_file()
+        writer.write_tensors_to_file()
+        writer.close()
+    return str(tmp_path / f"model-00001-of-{total:05d}.gguf")
+
+
+class TestShardedTensorNames:
+    """Each shard declares only its own tensors, so KV geometry keyed on tensor
+    names has to read every shard."""
+
+    def _names(self, path):
+        pytest.importorskip("gguf")
+        from modelship.preflight._gguf import SkimGGUFReader
+        from modelship.preflight.llama_cpp import _tensor_names
+
+        return _tensor_names(SkimGGUFReader(path), path)
+
+    def test_unsharded_path_is_itself(self, tmp_path):
+        from modelship.preflight.llama_cpp import _shard_paths
+
+        assert _shard_paths(str(tmp_path / "model.gguf")) == [str(tmp_path / "model.gguf")]
+
+    def test_shard_paths_enumerate_siblings(self, tmp_path):
+        from modelship.preflight.llama_cpp import _shard_paths
+
+        paths = _shard_paths(str(tmp_path / "model-00001-of-00003.gguf"))
+        assert [Path(p).name for p in paths] == [f"model-0000{n}-of-00003.gguf" for n in (1, 2, 3)]
+
+    def test_names_span_every_shard(self, tmp_path):
+        pytest.importorskip("gguf")
+        blocks = [[f"blk.{i}.attn_k.weight"] for i in range(3)]
+        assert self._names(_write_shards(tmp_path, blocks)) == [f"blk.{i}.attn_k.weight" for i in range(3)]
+
+    def test_recurrent_split_across_shards_is_counted_whole(self, tmp_path):
+        pytest.importorskip("gguf")
+        from modelship.preflight.llama_cpp import _attention_block_count
+
+        # Attention blocks land in the second shard; reading only the first
+        # would see none of them.
+        shards = [[f"blk.{i}.ssm_conv1d.weight" for i in range(4)], [f"blk.{i}.attn_k.weight" for i in range(4, 6)]]
+        assert _attention_block_count(self._names(_write_shards(tmp_path, shards))) == 2
+
+    def test_missing_shard_declines(self, tmp_path):
+        pytest.importorskip("gguf")
+        path = _write_shards(tmp_path, [["blk.0.attn_k.weight"], ["blk.1.attn_k.weight"]])
+        Path(tmp_path / "model-00002-of-00002.gguf").unlink()
+        assert self._names(path) is None

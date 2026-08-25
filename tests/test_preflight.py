@@ -1239,6 +1239,32 @@ def _mamba_info(**overrides):
     return MambaStateInfo(**base)
 
 
+class TestResolveMambaStateExecutorBackend:
+    """The other hybrid tests patch `_resolve_mamba_state` out, so the real
+    EngineArgs construction is only covered here."""
+
+    def _captured_kwargs(self, num_gpus: int) -> dict:
+        import vllm.engine.arg_utils
+
+        from modelship.preflight.vllm import _resolve_mamba_state
+
+        captured: dict = {}
+
+        def fake_engine_args(**kwargs):
+            captured.update(kwargs)
+            raise RuntimeError("stop before config build")
+
+        with patch.object(vllm.engine.arg_utils, "EngineArgs", fake_engine_args):
+            assert _resolve_mamba_state(_make_config(num_gpus=num_gpus), "/nonexistent") is None
+        return captured
+
+    def test_multi_slot_selects_ray_backend(self):
+        assert self._captured_kwargs(num_gpus=2)["distributed_executor_backend"] == "ray"
+
+    def test_single_slot_leaves_backend_unset(self):
+        assert self._captured_kwargs(num_gpus=1)["distributed_executor_backend"] is None
+
+
 class TestApplyHybridFit:
     """Pure arithmetic of the device-agnostic fit ladder — no vLLM, no config
     building. `kv_pool` is the bytes available for KV cache + mamba state."""
@@ -1308,6 +1334,31 @@ class TestHybridIntegration:
             rec = VllmPreflight().recommend(cfg, hw)
         assert rec["max_model_len"] == _HYBRID_CFG["max_position_embeddings"]
         assert rec["max_num_seqs"] > 8
+
+    def test_cudagraph_starving_the_state_floor_recommends_eager(self, tmp_path):
+        snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
+        cfg = _make_config(resolved_path=str(snapshot))
+        # State floor fits only once the cudagraph bytes come back.
+        hw = HardwareProfile(gpus=[GPUInfo(0, int(10.8 * 1024**3), "test")])
+        with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
+            rec = VllmPreflight().recommend(cfg, hw)
+        assert rec["enforce_eager"] is True
+        assert rec["max_num_seqs"] == 8
+        assert rec["max_model_len"] >= 16
+
+    def test_explicit_eager_false_blocks_the_cudagraph_reclaim(self, tmp_path):
+        snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
+        cfg = _make_config(resolved_path=str(snapshot), vllm_kwargs={"enforce_eager": False})
+        hw = HardwareProfile(gpus=[GPUInfo(0, int(10.8 * 1024**3), "test")])
+        with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
+            assert VllmPreflight().recommend(cfg, hw) == {}
+
+    def test_roomy_gpu_leaves_enforce_eager_alone(self, tmp_path):
+        snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
+        cfg = _make_config(resolved_path=str(snapshot))
+        hw = HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])
+        with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
+            assert "enforce_eager" not in VllmPreflight().recommend(cfg, hw)
 
     def test_cpu_auto_gmu_hybrid_folds_state_into_gmu(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
