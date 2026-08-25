@@ -759,10 +759,62 @@ class TestAttentionBlockCount:
         assert meta is not None
         assert meta.attn_block_count == meta.block_count == 65
 
-    def test_partial_tensor_list_falls_back(self):
-        # Only the first shard is opened; counting its blocks alone would
-        # undercount KV and oversize n_ctx.
-        shard = [t for t in _QWEN35_TENSORS if int(t.split(".")[1]) < 22]
-        meta = self._meta(_QWEN35_FIELDS, shard)
-        assert meta is not None
-        assert meta.attn_block_count == meta.block_count == 65
+
+def _write_shards(tmp_path: Path, tensors_per_shard: list[list[str]]) -> str:
+    """Real GGUF shards named the way llama.cpp's gguf-split emits them."""
+    import numpy as np
+    from gguf import GGUFWriter
+
+    total = len(tensors_per_shard)
+    for index, names in enumerate(tensors_per_shard, start=1):
+        writer = GGUFWriter(str(tmp_path / f"model-{index:05d}-of-{total:05d}.gguf"), "qwen35")
+        for name in names:
+            writer.add_tensor(name, np.zeros((2, 2), dtype=np.float32))
+        writer.write_header_to_file()
+        writer.write_kv_data_to_file()
+        writer.write_tensors_to_file()
+        writer.close()
+    return str(tmp_path / f"model-00001-of-{total:05d}.gguf")
+
+
+class TestShardedTensorNames:
+    """Each shard declares only its own tensors, so KV geometry keyed on tensor
+    names has to read every shard."""
+
+    def _names(self, path):
+        pytest.importorskip("gguf")
+        from modelship.preflight._gguf import SkimGGUFReader
+        from modelship.preflight.llama_cpp import _tensor_names
+
+        return _tensor_names(SkimGGUFReader(path), path)
+
+    def test_unsharded_path_is_itself(self, tmp_path):
+        from modelship.preflight.llama_cpp import _shard_paths
+
+        assert _shard_paths(str(tmp_path / "model.gguf")) == [str(tmp_path / "model.gguf")]
+
+    def test_shard_paths_enumerate_siblings(self, tmp_path):
+        from modelship.preflight.llama_cpp import _shard_paths
+
+        paths = _shard_paths(str(tmp_path / "model-00001-of-00003.gguf"))
+        assert [Path(p).name for p in paths] == [f"model-0000{n}-of-00003.gguf" for n in (1, 2, 3)]
+
+    def test_names_span_every_shard(self, tmp_path):
+        pytest.importorskip("gguf")
+        blocks = [[f"blk.{i}.attn_k.weight"] for i in range(3)]
+        assert self._names(_write_shards(tmp_path, blocks)) == [f"blk.{i}.attn_k.weight" for i in range(3)]
+
+    def test_recurrent_split_across_shards_is_counted_whole(self, tmp_path):
+        pytest.importorskip("gguf")
+        from modelship.preflight.llama_cpp import _attention_block_count
+
+        # Attention blocks land in the second shard; reading only the first
+        # would see none of them.
+        shards = [[f"blk.{i}.ssm_conv1d.weight" for i in range(4)], [f"blk.{i}.attn_k.weight" for i in range(4, 6)]]
+        assert _attention_block_count(self._names(_write_shards(tmp_path, shards))) == 2
+
+    def test_missing_shard_declines(self, tmp_path):
+        pytest.importorskip("gguf")
+        path = _write_shards(tmp_path, [["blk.0.attn_k.weight"], ["blk.1.attn_k.weight"]])
+        Path(tmp_path / "model-00002-of-00002.gguf").unlink()
+        assert self._names(path) is None

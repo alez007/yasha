@@ -392,25 +392,23 @@ class _GGUFMeta:
         self.mla = mla
 
 
-def _weight_bytes(path: str) -> int:
-    """On-disk size of the GGUF file, summed across shards for a sharded
-    model — the resolver only keeps the first shard's path."""
+def _shard_paths(path: str) -> list[str]:
+    """Every shard of a sharded GGUF; the resolver only keeps the first."""
     match = _SHARD_SUFFIX_RE.search(path)
     if match is None:
-        try:
-            return os.path.getsize(path)
-        except OSError:
-            return 0
+        return [path]
+    prefix, total = path[: match.start()], match.group(2)
+    return [f"{prefix}-{n:0{len(total)}d}-of-{total}.gguf" for n in range(1, int(total) + 1)]
 
-    prefix = path[: match.start()]
-    total_shards = match.group(2)
+
+def _weight_bytes(path: str) -> int:
+    """On-disk size, summed across shards."""
     total = 0
-    for shard_num in range(1, int(total_shards) + 1):
-        shard_path = f"{prefix}-{shard_num:0{len(total_shards)}d}-of-{total_shards}.gguf"
+    for shard in _shard_paths(path):
         try:
-            total += os.path.getsize(shard_path)
+            total += os.path.getsize(shard)
         except OSError:
-            logger.debug("preflight: sharded GGUF sibling missing: %s", shard_path)
+            logger.debug("preflight: sharded GGUF sibling missing: %s", shard)
     return total
 
 
@@ -465,7 +463,8 @@ def _read_gguf_metadata(path: str) -> _GGUFMeta | None:
     if sliding is None:
         v_head_dim = _read_int(reader, f"{arch}.attention.value_length") or head_dim
 
-    mla = _resolve_mla_gguf(reader, arch, head_count)
+    tensor_names = _tensor_names(reader, path)
+    mla = _resolve_mla_gguf(reader, arch, head_count, tensor_names)
 
     return _GGUFMeta(
         block_count=int(block_count),
@@ -475,15 +474,15 @@ def _read_gguf_metadata(path: str) -> _GGUFMeta | None:
         sliding=sliding,
         v_head_dim=int(v_head_dim),
         mla=mla,
-        attn_block_count=_attention_block_count(reader, int(block_count)),
+        attn_block_count=_attention_block_count(tensor_names),
     )
 
 
-def _resolve_mla_gguf(reader: Any, arch: str, num_heads: int | None) -> MLAInfo | None:
+def _resolve_mla_gguf(reader: Any, arch: str, num_heads: int | None, tensor_names: list[str] | None) -> MLAInfo | None:
     """GGUF equivalent of vllm.py's `_resolve_mla`, gated on the split
     `attn_k_b`/`attn_v_b` tensors: llama.cpp caches the compressed latent only
     when they're present, else full per-head K/V."""
-    if not _has_split_mla_tensors(reader):
+    if tensor_names is None or not any(n.endswith("attn_k_b.weight") for n in tensor_names):
         return None
     kv_lora_rank = _read_int(reader, f"{arch}.attention.kv_lora_rank")
     qk_rope_head_dim = _read_int(reader, f"{arch}.rope.dimension_count")
@@ -494,44 +493,45 @@ def _resolve_mla_gguf(reader: Any, arch: str, num_heads: int | None) -> MLAInfo 
     return MLAInfo(kv_lora_rank, qk_rope_head_dim, 0, 0, num_heads)
 
 
-def _attention_block_count(reader: Any, block_count: int) -> int | None:
-    """Blocks holding a token-growing KV cache, i.e. every block that isn't
-    recurrent. Keyed on tensor names rather than the arch string, so it covers
-    any hybrid llama.cpp supports. None when it can't be determined."""
+def _tensor_names(reader: Any, path: str) -> list[str] | None:
+    """Names across every shard; each declares only its own. None if any shard
+    is unreadable — a partial list undercounts KV."""
+    from modelship.preflight._gguf import SkimGGUFReader
+
     try:
-        names = [t.name for t in reader.tensors]
+        tensor_names = [t.name for t in reader.tensors]
     except (AttributeError, TypeError):
         logger.debug("preflight: GGUF reader exposes no tensor list", exc_info=True)
         return None
+    for shard in _shard_paths(path)[1:]:
+        try:
+            tensor_names.extend(t.name for t in SkimGGUFReader(shard).tensors)
+        except Exception:
+            logger.debug("preflight: unreadable GGUF shard %s", shard, exc_info=True)
+            return None
+    return tensor_names
+
+
+def _attention_block_count(tensor_names: list[str] | None) -> int | None:
+    """Blocks holding a token-growing KV cache, i.e. every block that isn't
+    recurrent. Keyed on tensor names rather than the arch string, so it covers
+    any hybrid llama.cpp supports. None when it can't be determined."""
+    if tensor_names is None:
+        return None
 
     recurrent: dict[int, bool] = {}
-    for name in names:
+    for name in tensor_names:
         match = _BLOCK_TENSOR_RE.match(name)
         if match is None:
             continue
         index = int(match.group(1))
         recurrent[index] = recurrent.get(index, False) or match.group(2).startswith(_RECURRENT_TENSOR_PREFIXES)
 
-    if len(recurrent) < block_count:
-        # Only the first shard of a sharded GGUF is opened, and it carries just
-        # its own tensors; a partial list would undercount KV and oversize n_ctx.
-        logger.debug(
-            "preflight: GGUF tensor list covers %d of %d blocks; treating all as attention",
-            len(recurrent),
-            block_count,
-        )
+    if not recurrent:
         return None
     count = sum(1 for is_recurrent in recurrent.values() if not is_recurrent)
     # Callers divide by kv_per_token, so never hand back a zero.
     return count or None
-
-
-def _has_split_mla_tensors(reader: Any) -> bool:
-    try:
-        return any(t.name.endswith("attn_k_b.weight") for t in reader.tensors)
-    except (AttributeError, TypeError):
-        logger.debug("preflight: GGUF reader exposes no tensor list", exc_info=True)
-        return False
 
 
 def _as_list(val: Any) -> list | None:
