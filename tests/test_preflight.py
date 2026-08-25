@@ -1083,7 +1083,7 @@ class TestCudagraphEstimation:
 
         mla = _resolve_mla(_MLA_CFG)
         assert mla is not None
-        workspace = _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla)
+        workspace = _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 1)
         assert workspace == 512 * 1024**2
 
 
@@ -1143,6 +1143,24 @@ class TestMlaKvCache:
 
         assert _divide_kv_by_tp(31104, _MLA_CFG, 2) == 31104
 
+    def test_workspace_shrinks_with_tp(self):
+        # The opposite rule to the latent cache above: the up-projection is
+        # head-sharded, so the buffer scales down by tp.
+        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
+
+        mla = _resolve_mla(_MLA_CFG)
+        assert mla is not None
+        at_1 = _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 1)
+        at_4 = _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 4)
+        assert at_4 == at_1 // 4
+
+    def test_workspace_keeps_one_head_when_tp_exceeds_head_count(self):
+        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
+
+        mla = _resolve_mla(_MLA_CFG)
+        assert mla is not None
+        assert _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 64) > 0
+
     def test_recommend_lowers_gpu_memory_utilization_with_cudagraphs(self, tmp_path):
         # vLLM's own CUDA-graph memory profiler doesn't reserve room for this
         # workspace; preflight must shrink gpu_memory_utilization to compensate.
@@ -1151,6 +1169,16 @@ class TestMlaKvCache:
         rec = VllmPreflight().recommend(_make_config(resolved_path=str(snapshot)), hw)
         assert "gpu_memory_utilization" in rec
         assert rec["gpu_memory_utilization"] < default_gpu_memory_utilization(_make_config())
+
+    def test_recommend_reclaims_gpu_memory_utilization_at_higher_tp(self, tmp_path):
+        snapshot = _write_model_snapshot(tmp_path, config_json=_MLA_CFG, weight_bytes=5 * 1024**3)
+        gpus = [GPUInfo(i, 16 * 1024**3, "test") for i in range(4)]
+
+        def _gmu(tp):
+            cfg = _make_config(resolved_path=str(snapshot), vllm_kwargs={"tensor_parallel_size": tp}, num_gpus=tp)
+            return VllmPreflight().recommend(cfg, HardwareProfile(gpus=gpus[:tp]))["gpu_memory_utilization"]
+
+        assert _gmu(4) > _gmu(1)
 
     def test_recommend_leaves_gpu_memory_utilization_unset_when_eager(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=_MLA_CFG, weight_bytes=5 * 1024**3)

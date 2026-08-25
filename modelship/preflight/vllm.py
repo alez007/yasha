@@ -162,7 +162,7 @@ class VllmPreflight:
         mla_workspace_bytes = 0
         if mla is not None and not config.vllm_engine_kwargs.enforce_eager:
             dtype_bytes = _resolve_compute_dtype_bytes(text_cfg, model_cfg)
-            mla_workspace_bytes = _mla_chunked_prefill_workspace_bytes(text_cfg, config, dtype_bytes, mla)
+            mla_workspace_bytes = _mla_chunked_prefill_workspace_bytes(text_cfg, config, dtype_bytes, mla, tp_size)
             gpu_util = max(gpu_util - _MLA_WORKSPACE_SAFETY_MARGIN * mla_workspace_bytes / gpu_basis, 0.01)
 
         budget = (
@@ -547,7 +547,7 @@ def _estimate_cudagraph_bytes_per_gpu(
 
 
 def _mla_chunked_prefill_workspace_bytes(
-    text_cfg: dict, config: ModelshipModelConfig, dtype_bytes: int, mla: MLAInfo
+    text_cfg: dict, config: ModelshipModelConfig, dtype_bytes: int, mla: MLAInfo, tp_size: int
 ) -> int:
     """MLA's decompressed-K/V scratch buffer, sized by context length —
     mirrors vLLM's `determine_chunked_prefill_workspace_size`."""
@@ -557,7 +557,10 @@ def _mla_chunked_prefill_workspace_bytes(
         or _UNKNOWN_CONTEXT_LENGTH_CAP
     )
     rows = min(8 * max_model_len, _MLA_WORKSPACE_ROW_CAP)
-    return int(rows * mla.num_heads * (mla.qk_nope_head_dim + mla.v_head_dim) * dtype_bytes)
+    # The up-projection runs on this rank's shard of the heads, so unlike the
+    # replicated latent cache this buffer does shrink with TP.
+    local_heads = max(mla.num_heads // max(tp_size, 1), 1)
+    return int(rows * local_heads * (mla.qk_nope_head_dim + mla.v_head_dim) * dtype_bytes)
 
 
 def _divide_kv_by_tp(kv_per_token: int, model_cfg: dict, tp_size: int) -> float:
