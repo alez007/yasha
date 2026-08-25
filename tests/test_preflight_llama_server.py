@@ -536,7 +536,7 @@ class TestReadGgufMetadataSliding:
     like the real Gemma 4 GGUF header."""
 
     def test_gemma4_header_resolves_sliding_and_swa_head_dim(self):
-        # patch("gguf.GGUFReader", ...) needs the real module importable.
+        # patch("modelship.preflight._gguf.SkimGGUFReader", ...) needs the real module importable.
         pytest.importorskip("gguf")
         from modelship.preflight.llama_cpp import _read_gguf_metadata
 
@@ -552,7 +552,7 @@ class TestReadGgufMetadataSliding:
             "gemma4.attention.sliding_window_pattern": [True, True, True, True, True, False] * 8,
             "gemma4.context_length": 262144,
         }
-        with patch("gguf.GGUFReader", return_value=_FakeGGUFReader(fields)):
+        with patch("modelship.preflight._gguf.SkimGGUFReader", return_value=_FakeGGUFReader(fields)):
             meta = _read_gguf_metadata("/fake/path.gguf")
 
         assert meta is not None
@@ -632,7 +632,7 @@ class TestReadGgufMetadataMla:
         from modelship.preflight.llama_cpp import _read_gguf_metadata
 
         reader = _FakeGGUFReader(_SPLIT_FIELDS, _SPLIT_MLA_TENSORS)
-        with patch("gguf.GGUFReader", return_value=reader):
+        with patch("modelship.preflight._gguf.SkimGGUFReader", return_value=reader):
             meta = _read_gguf_metadata("/fake/path.gguf")
 
         assert meta is not None
@@ -647,7 +647,7 @@ class TestReadGgufMetadataMla:
         from modelship.preflight.llama_cpp import _read_gguf_metadata
 
         reader = _FakeGGUFReader(_FUSED_FIELDS, _FUSED_MLA_TENSORS)
-        with patch("gguf.GGUFReader", return_value=reader):
+        with patch("modelship.preflight._gguf.SkimGGUFReader", return_value=reader):
             meta = _read_gguf_metadata("/fake/path.gguf")
 
         assert meta is not None
@@ -728,7 +728,7 @@ class TestAttentionBlockCount:
         pytest.importorskip("gguf")
         from modelship.preflight.llama_cpp import _read_gguf_metadata
 
-        with patch("gguf.GGUFReader", return_value=_FakeGGUFReader(fields, tensors)):
+        with patch("modelship.preflight._gguf.SkimGGUFReader", return_value=_FakeGGUFReader(fields, tensors)):
             return _read_gguf_metadata("/fake/path.gguf")
 
     def test_recurrent_blocks_are_excluded(self):

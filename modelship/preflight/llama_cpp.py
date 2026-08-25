@@ -418,13 +418,13 @@ def _read_gguf_metadata(path: str) -> _GGUFMeta | None:
     """Reads the architecture-relevant header fields from a GGUF file.
     `GGUFReader` mmaps and parses metadata only, no tensor data."""
     try:
-        from gguf import GGUFReader
+        from modelship.preflight._gguf import SkimGGUFReader
     except Exception:
         logger.debug("preflight: gguf package not available", exc_info=True)
         return None
 
     try:
-        reader = GGUFReader(path)
+        reader = SkimGGUFReader(path)
     except Exception:
         logger.debug("preflight: GGUFReader failed to open %s", path, exc_info=True)
         return None
