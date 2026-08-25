@@ -699,3 +699,59 @@ class TestLlamaServerPreflightGpuMla:
             rec = LlamaServerPreflight().recommend(cfg, hw)
 
         assert rec["n_ctx"] == 163840
+
+
+# Mirrors the real Qwen3.8-27B GGUF: 65 blocks, of which 48 are Gated DeltaNet
+# (ssm_*) and 17 carry attention K/V.
+_QWEN35_FIELDS = {
+    "general.architecture": "qwen35",
+    "qwen35.block_count": 65,
+    "qwen35.attention.head_count": 24,
+    "qwen35.attention.head_count_kv": 4,
+    "qwen35.attention.key_length": 256,
+    "qwen35.attention.value_length": 256,
+    "qwen35.embedding_length": 5120,
+    "qwen35.context_length": 262144,
+}
+_QWEN35_ATTN_BLOCKS = [*range(3, 64, 4), 64]
+_QWEN35_TENSORS = [f"blk.{i}.{'attn_k.weight' if i in _QWEN35_ATTN_BLOCKS else 'ssm_conv1d.weight'}" for i in range(65)]
+
+
+class TestAttentionBlockCount:
+    """Hybrid recurrent archs cache KV only on their attention blocks; counting
+    every block overestimates kv/token by the hybrid ratio."""
+
+    def _meta(self, fields, tensors):
+        pytest.importorskip("gguf")
+        from modelship.preflight.llama_cpp import _read_gguf_metadata
+
+        with patch("gguf.GGUFReader", return_value=_FakeGGUFReader(fields, tensors)):
+            return _read_gguf_metadata("/fake/path.gguf")
+
+    def test_recurrent_blocks_are_excluded(self):
+        from modelship.preflight.llama_cpp import _kv_bytes_per_token
+
+        meta = self._meta(_QWEN35_FIELDS, _QWEN35_TENSORS)
+        assert meta is not None
+        assert meta.block_count == 65
+        assert meta.attn_block_count == 17
+        assert _kv_bytes_per_token(meta) == (256 + 256) * 17 * 4 * 2
+
+    def test_dense_model_counts_every_block(self):
+        fields = {**_QWEN35_FIELDS, "general.architecture": "llama", "llama.block_count": 4}
+        fields = {k.replace("qwen35.", "llama."): v for k, v in fields.items()}
+        meta = self._meta(fields, [f"blk.{i}.attn_k.weight" for i in range(4)])
+        assert meta is not None
+        assert meta.attn_block_count == meta.block_count == 4
+
+    def test_attention_free_model_falls_back(self):
+        # Dividing by a zero kv/token would blow up the callers.
+        fields = {**_QWEN35_FIELDS, "qwen35.block_count": 8}
+        meta = self._meta(fields, [f"blk.{i}.ssm_conv1d.weight" for i in range(8)])
+        assert meta is not None
+        assert meta.attn_block_count == 8
+
+    def test_unreadable_tensor_list_falls_back(self):
+        meta = self._meta(_QWEN35_FIELDS, None)
+        assert meta is not None
+        assert meta.attn_block_count == meta.block_count == 65

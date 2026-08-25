@@ -54,6 +54,11 @@ _PARTIAL_OFFLOAD_NCTX_TARGET = 8192
 # keeps only the first shard's path, so weight-bytes sums all of them.
 _SHARD_SUFFIX_RE = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$")
 
+# Per-block tensors are named `blk.<index>.<role>` across every llama.cpp arch.
+_BLOCK_TENSOR_RE = re.compile(r"^blk\.(\d+)\.(.+)$")
+# Role prefixes that mark a block as recurrent (SSM/Mamba, RWKV time-mixing).
+_RECURRENT_TENSOR_PREFIXES = ("ssm_", "time_mix_")
+
 
 class LlamaServerPreflight:
     """Sizes the `llama_server` loader's launch args. Branches on
@@ -354,7 +359,16 @@ def _recommend_threads(config: ModelshipModelConfig) -> dict[str, Any]:
 
 
 class _GGUFMeta:
-    __slots__ = ("block_count", "context_length", "head_count_kv", "head_dim", "mla", "sliding", "v_head_dim")
+    __slots__ = (
+        "attn_block_count",
+        "block_count",
+        "context_length",
+        "head_count_kv",
+        "head_dim",
+        "mla",
+        "sliding",
+        "v_head_dim",
+    )
 
     def __init__(
         self,
@@ -365,8 +379,11 @@ class _GGUFMeta:
         sliding: SlidingWindowInfo | None = None,
         v_head_dim: int | None = None,
         mla: MLAInfo | None = None,
+        attn_block_count: int | None = None,
     ) -> None:
         self.block_count = block_count
+        # On a hybrid, only the attention blocks hold a token-growing KV cache.
+        self.attn_block_count = block_count if attn_block_count is None else attn_block_count
         self.head_count_kv = head_count_kv
         self.head_dim = head_dim
         self.context_length = context_length
@@ -458,6 +475,7 @@ def _read_gguf_metadata(path: str) -> _GGUFMeta | None:
         sliding=sliding,
         v_head_dim=int(v_head_dim),
         mla=mla,
+        attn_block_count=_attention_block_count(reader),
     )
 
 
@@ -474,6 +492,31 @@ def _resolve_mla_gguf(reader: Any, arch: str, num_heads: int | None) -> MLAInfo 
     # Per-head dims stay 0: a split conversion reports key/value_length as the
     # compressed dims, and only the latent size feeds this loader's estimate.
     return MLAInfo(kv_lora_rank, qk_rope_head_dim, 0, 0, num_heads)
+
+
+def _attention_block_count(reader: Any) -> int | None:
+    """Blocks holding a token-growing KV cache, i.e. every block that isn't
+    recurrent. Keyed on tensor names rather than the arch string, so it covers
+    any hybrid llama.cpp supports. None when it can't be determined."""
+    try:
+        names = [t.name for t in reader.tensors]
+    except (AttributeError, TypeError):
+        logger.debug("preflight: GGUF reader exposes no tensor list", exc_info=True)
+        return None
+
+    recurrent: dict[int, bool] = {}
+    for name in names:
+        match = _BLOCK_TENSOR_RE.match(name)
+        if match is None:
+            continue
+        index = int(match.group(1))
+        recurrent[index] = recurrent.get(index, False) or match.group(2).startswith(_RECURRENT_TENSOR_PREFIXES)
+
+    if not recurrent:
+        return None
+    count = sum(1 for is_recurrent in recurrent.values() if not is_recurrent)
+    # Callers divide by kv_per_token, so never hand back a zero.
+    return count or None
 
 
 def _has_split_mla_tensors(reader: Any) -> bool:
@@ -618,6 +661,6 @@ def _kv_bytes_per_token(meta: _GGUFMeta) -> int | None:
     """Bytes of KV cache per token across all layers; element size fixed at
     fp16 (no `type_k`/`type_v` override exists)."""
     if meta.mla is not None:
-        return mla_kv_bytes_per_token(meta.mla, _DEFAULT_KV_DTYPE_BYTES, meta.block_count)
+        return mla_kv_bytes_per_token(meta.mla, _DEFAULT_KV_DTYPE_BYTES, meta.attn_block_count)
     # Summed separately, not `2 *`: MLA geometry caches a narrower V than K.
-    return (meta.head_dim + meta.v_head_dim) * meta.block_count * meta.head_count_kv * _DEFAULT_KV_DTYPE_BYTES
+    return (meta.head_dim + meta.v_head_dim) * meta.attn_block_count * meta.head_count_kv * _DEFAULT_KV_DTYPE_BYTES
