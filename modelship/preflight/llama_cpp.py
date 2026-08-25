@@ -6,6 +6,8 @@ from typing import Any
 
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.logging import get_logger
+from modelship.preflight._mla import MLAInfo
+from modelship.preflight._mla import kv_bytes_per_token as mla_kv_bytes_per_token
 from modelship.preflight._sliding_window import SlidingWindowInfo, fit_len_with_sliding
 from modelship.preflight.base import HardwareProfile, gpu_share_bytes
 
@@ -352,7 +354,7 @@ def _recommend_threads(config: ModelshipModelConfig) -> dict[str, Any]:
 
 
 class _GGUFMeta:
-    __slots__ = ("block_count", "context_length", "head_count_kv", "head_dim", "sliding")
+    __slots__ = ("block_count", "context_length", "head_count_kv", "head_dim", "mla", "sliding", "v_head_dim")
 
     def __init__(
         self,
@@ -361,12 +363,16 @@ class _GGUFMeta:
         head_dim: int,
         context_length: int | None,
         sliding: SlidingWindowInfo | None = None,
+        v_head_dim: int | None = None,
+        mla: MLAInfo | None = None,
     ) -> None:
         self.block_count = block_count
         self.head_count_kv = head_count_kv
         self.head_dim = head_dim
         self.context_length = context_length
         self.sliding = sliding
+        self.v_head_dim = head_dim if v_head_dim is None else v_head_dim
+        self.mla = mla
 
 
 def _weight_bytes(path: str) -> int:
@@ -436,13 +442,46 @@ def _read_gguf_metadata(path: str) -> _GGUFMeta | None:
     if not (block_count and head_count_kv and head_dim):
         return None
 
+    # No value_length_swa exists to pair with key_length_swa, so only trust a
+    # distinct V width when there's no SWA.
+    v_head_dim = head_dim
+    if sliding is None:
+        v_head_dim = _read_int(reader, f"{arch}.attention.value_length") or head_dim
+
+    mla = _resolve_mla_gguf(reader, arch, head_count)
+
     return _GGUFMeta(
         block_count=int(block_count),
         head_count_kv=int(head_count_kv),
         head_dim=int(head_dim),
         context_length=int(context_length) if context_length else None,
         sliding=sliding,
+        v_head_dim=int(v_head_dim),
+        mla=mla,
     )
+
+
+def _resolve_mla_gguf(reader: Any, arch: str, num_heads: int | None) -> MLAInfo | None:
+    """GGUF equivalent of vllm.py's `_resolve_mla`, gated on the split
+    `attn_k_b`/`attn_v_b` tensors: llama.cpp caches the compressed latent only
+    when they're present, else full per-head K/V."""
+    if not _has_split_mla_tensors(reader):
+        return None
+    kv_lora_rank = _read_int(reader, f"{arch}.attention.kv_lora_rank")
+    qk_rope_head_dim = _read_int(reader, f"{arch}.rope.dimension_count")
+    if not (kv_lora_rank and qk_rope_head_dim and num_heads):
+        return None
+    # Per-head dims stay 0: a split conversion reports key/value_length as the
+    # compressed dims, and only the latent size feeds this loader's estimate.
+    return MLAInfo(kv_lora_rank, qk_rope_head_dim, 0, 0, num_heads)
+
+
+def _has_split_mla_tensors(reader: Any) -> bool:
+    try:
+        return any(t.name.endswith("attn_k_b.weight") for t in reader.tensors)
+    except (AttributeError, TypeError):
+        logger.debug("preflight: GGUF reader exposes no tensor list", exc_info=True)
+        return False
 
 
 def _as_list(val: Any) -> list | None:
@@ -576,6 +615,9 @@ def _sliding_log_suffix(sliding: SlidingWindowInfo | None) -> str:
 
 
 def _kv_bytes_per_token(meta: _GGUFMeta) -> int | None:
-    """Bytes of KV cache per token across all layers; `2 *` for K and V,
-    element size fixed at fp16 (no `type_k`/`type_v` override exists)."""
-    return 2 * meta.block_count * meta.head_count_kv * meta.head_dim * _DEFAULT_KV_DTYPE_BYTES
+    """Bytes of KV cache per token across all layers; element size fixed at
+    fp16 (no `type_k`/`type_v` override exists)."""
+    if meta.mla is not None:
+        return mla_kv_bytes_per_token(meta.mla, _DEFAULT_KV_DTYPE_BYTES, meta.block_count)
+    # Summed separately, not `2 *`: MLA geometry caches a narrower V than K.
+    return (meta.head_dim + meta.v_head_dim) * meta.block_count * meta.head_count_kv * _DEFAULT_KV_DTYPE_BYTES

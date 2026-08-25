@@ -1076,6 +1076,142 @@ class TestCudagraphEstimation:
         rec_eager = VllmPreflight().recommend(cfg_eager, hw)
         assert rec_eager["max_model_len"] > rec_graphs["max_model_len"]
 
+    def test_mla_chunked_prefill_workspace_matches_deepseek_v2_lite_oom(self):
+        # Anchored against a real DeepSeek-V2-Lite-AWQ OOM: PyTorch reported
+        # "Tried to allocate 512.00 MiB" for exactly this buffer.
+        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
+
+        mla = _resolve_mla(_MLA_CFG)
+        assert mla is not None
+        workspace = _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 1)
+        assert workspace == 512 * 1024**2
+
+
+# DeepSeek-V2-Lite's real config.json fields (deepseek-ai/DeepSeek-V2-Lite).
+_MLA_CFG: dict = {
+    "num_hidden_layers": 27,
+    "num_attention_heads": 16,
+    "num_key_value_heads": 16,
+    "hidden_size": 2048,
+    "kv_lora_rank": 512,
+    "qk_rope_head_dim": 64,
+    "qk_nope_head_dim": 128,
+    "v_head_dim": 128,
+    "torch_dtype": "bfloat16",
+    "max_position_embeddings": 163840,
+}
+
+
+class TestMlaKvCache:
+    """MLA stores one shared compressed latent per token, not per-head K/V —
+    both the KV-bytes formula and TP sharding need a different rule."""
+
+    def test_resolve_mla_detects_deepseek_v2_lite(self):
+        from modelship.preflight.vllm import MLAInfo, _resolve_mla
+
+        assert _resolve_mla(_MLA_CFG) == MLAInfo(
+            kv_lora_rank=512, qk_rope_head_dim=64, qk_nope_head_dim=128, v_head_dim=128, num_heads=16
+        )
+
+    def test_resolve_mla_none_for_ordinary_gqa(self):
+        from modelship.preflight.vllm import _resolve_mla
+
+        assert _resolve_mla(_HYBRID_CFG) is None
+
+    def test_kv_bytes_per_token_matches_deepseek_v2_lite(self):
+        from modelship.preflight.vllm import _kv_bytes_per_token
+
+        per_token, max_pos = _kv_bytes_per_token(_MLA_CFG, _MLA_CFG, _make_config())
+        # (kv_lora_rank + qk_rope_head_dim) * dtype_bytes * num_layers = 576 * 2 * 27.
+        assert per_token == 31104
+        assert max_pos == 163840
+
+    def test_kv_bytes_far_below_generic_per_head_formula(self):
+        from modelship.preflight.vllm import _kv_bytes_per_token
+
+        mla_per_token, _ = _kv_bytes_per_token(_MLA_CFG, _MLA_CFG, _make_config())
+        generic_cfg = dict(_MLA_CFG)
+        del generic_cfg["kv_lora_rank"]
+        generic_per_token, _ = _kv_bytes_per_token(generic_cfg, generic_cfg, _make_config())
+        assert mla_per_token is not None and generic_per_token is not None
+        assert mla_per_token * 7 < generic_per_token
+
+    def test_divide_kv_by_tp_does_not_shard_mla(self):
+        # num_key_value_heads=16 divides tp_size=2 cleanly, but MLA's latent
+        # is replicated per rank, not head-sharded — must not shrink.
+        from modelship.preflight.vllm import _divide_kv_by_tp
+
+        assert _divide_kv_by_tp(31104, _MLA_CFG, 2) == 31104
+
+    def test_workspace_shrinks_with_tp(self):
+        # The opposite rule to the latent cache above: the up-projection is
+        # head-sharded, so the buffer scales down by tp.
+        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
+
+        mla = _resolve_mla(_MLA_CFG)
+        assert mla is not None
+        at_1 = _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 1)
+        at_4 = _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 4)
+        assert at_4 == at_1 // 4
+
+    def test_workspace_keeps_one_head_when_tp_exceeds_head_count(self):
+        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
+
+        mla = _resolve_mla(_MLA_CFG)
+        assert mla is not None
+        assert _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 64) > 0
+
+    def test_workspace_floors_at_four_pages_per_seq(self):
+        # Short context, many slots: the 4-pages-per-slot term beats 8 * max_model_len.
+        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
+
+        mla = _resolve_mla(_MLA_CFG)
+        assert mla is not None
+        config = _make_config(vllm_kwargs={"max_model_len": 1024, "max_num_seqs": 1024})
+        row_bytes = mla.num_heads * (mla.qk_nope_head_dim + mla.v_head_dim) * 2
+        assert _mla_chunked_prefill_workspace_bytes(_MLA_CFG, config, 2, mla, 1) == 65536 * row_bytes
+
+    def test_workspace_floor_beats_the_row_cap(self):
+        # The one-page-per-slot floor is applied after the cap, so it can exceed it.
+        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
+
+        mla = _resolve_mla(_MLA_CFG)
+        assert mla is not None
+        config = _make_config(vllm_kwargs={"max_model_len": 1024, "max_num_seqs": 8192})
+        row_bytes = mla.num_heads * (mla.qk_nope_head_dim + mla.v_head_dim) * 2
+        assert _mla_chunked_prefill_workspace_bytes(_MLA_CFG, config, 2, mla, 1) == 8192 * 16 * row_bytes
+
+    def test_recommend_lowers_gpu_memory_utilization_with_cudagraphs(self, tmp_path):
+        # vLLM's own CUDA-graph memory profiler doesn't reserve room for this
+        # workspace; preflight must shrink gpu_memory_utilization to compensate.
+        snapshot = _write_model_snapshot(tmp_path, config_json=_MLA_CFG, weight_bytes=5 * 1024**3)
+        hw = HardwareProfile(gpus=[GPUInfo(0, 16 * 1024**3, "test")])
+        rec = VllmPreflight().recommend(_make_config(resolved_path=str(snapshot)), hw)
+        assert "gpu_memory_utilization" in rec
+        assert rec["gpu_memory_utilization"] < default_gpu_memory_utilization(_make_config())
+
+    def test_recommend_reclaims_gpu_memory_utilization_at_higher_tp(self, tmp_path):
+        snapshot = _write_model_snapshot(tmp_path, config_json=_MLA_CFG, weight_bytes=5 * 1024**3)
+        gpus = [GPUInfo(i, 16 * 1024**3, "test") for i in range(4)]
+
+        def _gmu(tp):
+            cfg = _make_config(resolved_path=str(snapshot), vllm_kwargs={"tensor_parallel_size": tp}, num_gpus=tp)
+            return VllmPreflight().recommend(cfg, HardwareProfile(gpus=gpus[:tp]))["gpu_memory_utilization"]
+
+        assert _gmu(4) > _gmu(1)
+
+    def test_recommend_leaves_gpu_memory_utilization_unset_when_eager(self, tmp_path):
+        snapshot = _write_model_snapshot(tmp_path, config_json=_MLA_CFG, weight_bytes=5 * 1024**3)
+        hw = HardwareProfile(gpus=[GPUInfo(0, 16 * 1024**3, "test")])
+        cfg = _make_config(resolved_path=str(snapshot), vllm_kwargs={"enforce_eager": True})
+        assert "gpu_memory_utilization" not in VllmPreflight().recommend(cfg, hw)
+
+    def test_recommend_leaves_gpu_memory_utilization_unset_for_ordinary_model(self, tmp_path):
+        snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=5 * 1024**3)
+        hw = HardwareProfile(gpus=[GPUInfo(0, 16 * 1024**3, "test")])
+        rec = VllmPreflight().recommend(_make_config(resolved_path=str(snapshot)), hw)
+        assert "gpu_memory_utilization" not in rec
+
 
 # Hybrid config mirroring Qwen3.5-4B: 32 layers, 8 full-attention + 24 linear.
 _HYBRID_CFG: dict = {

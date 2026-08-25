@@ -14,10 +14,34 @@ from modelship.infer.infer_config import (
     ModelUsecase,
 )
 from modelship.preflight import GPUInfo, HardwareProfile, merge_with_user_overrides
+from modelship.preflight._mla import MLAInfo
 from modelship.preflight._sliding_window import SlidingWindowInfo
 from modelship.preflight.llama_cpp import LlamaServerPreflight, _GGUFMeta, _weight_bytes
 
 _LLAMA_META = _GGUFMeta(block_count=32, head_count_kv=8, head_dim=128, context_length=131072)
+
+# DeepSeek-V2-Lite converted before llama.cpp's MLA support: fused attn_kv_b,
+# so the cache holds full per-head K/V. kv/token = (192+128)*27*16*2 = 276480 B,
+# matching a real deploy's kv-cache cudaMalloc.
+_MLA_LEGACY_META = _GGUFMeta(
+    block_count=27,
+    head_count_kv=16,
+    head_dim=192,
+    context_length=163840,
+    v_head_dim=128,
+)
+
+# Same model converted with split attn_k_b/attn_v_b: llama.cpp caches the
+# compressed latent, and key/value_length become the compressed dims
+# (576/512, not 192/128). kv/token = (512+64)*27*2 = 31104 B.
+_MLA_COMPRESSED_META = _GGUFMeta(
+    block_count=27,
+    head_count_kv=16,
+    head_dim=576,
+    context_length=163840,
+    v_head_dim=512,
+    mla=MLAInfo(kv_lora_rank=512, qk_rope_head_dim=64, qk_nope_head_dim=0, v_head_dim=0, num_heads=16),
+)
 
 # Gemma-4-shaped: 48 layers, 40 sliding (window 1024) + 8 full, matching the
 # real GGUF header. kv/token = 2*48*8*256*2 = 393216 B.
@@ -38,12 +62,18 @@ class _FakeGGUFField:
         return self._value
 
 
+class _FakeGGUFTensor:
+    def __init__(self, name):
+        self.name = name
+
+
 class _FakeGGUFReader:
     """Minimal stand-in for `gguf.GGUFReader` — `_read_field_value` only calls
-    `.get_field(key).contents()`."""
+    `.get_field(key).contents()`, and MLA detection reads `.tensors`."""
 
-    def __init__(self, fields: dict):
+    def __init__(self, fields: dict, tensor_names: list[str] | None = None):
         self._fields = fields
+        self.tensors = [_FakeGGUFTensor(n) for n in (tensor_names or [])]
 
     def get_field(self, key: str):
         if key not in self._fields:
@@ -563,3 +593,109 @@ class TestLlamaServerPreflightCpuSliding:
         assert rec["n_ctx"] == 262144
         # Naive linear division of the same budget lands at 50432 tokens.
         assert rec["n_ctx"] > 50432
+
+
+def _deepseek_fields(*, key_length: int, value_length: int) -> dict:
+    return {
+        "general.architecture": "deepseek2",
+        "deepseek2.block_count": 27,
+        "deepseek2.attention.head_count": 16,
+        "deepseek2.attention.head_count_kv": 16,
+        "deepseek2.embedding_length": 2048,
+        "deepseek2.attention.key_length": key_length,
+        "deepseek2.attention.value_length": value_length,
+        "deepseek2.attention.kv_lora_rank": 512,
+        "deepseek2.rope.dimension_count": 64,
+        "deepseek2.context_length": 163840,
+    }
+
+
+# Both taken from the real files: a fused conversion reports per-head dims, a
+# split one reports the compressed dims instead.
+_FUSED_FIELDS = _deepseek_fields(key_length=192, value_length=128)
+_SPLIT_FIELDS = _deepseek_fields(key_length=576, value_length=512)
+
+# One per block, as a real conversion ships them.
+_SPLIT_MLA_TENSORS = [f"blk.{i}.attn_{p}_b.weight" for i in range(27) for p in ("k", "v")]
+_FUSED_MLA_TENSORS = [f"blk.{i}.attn_kv_b.weight" for i in range(27)]
+
+
+class TestReadGgufMetadataMla:
+    """`_read_gguf_metadata` against fake readers shaped like the two real
+    DeepSeek-V2-Lite GGUF conversions."""
+
+    def test_split_tensors_resolve_compressed_mla(self):
+        pytest.importorskip("gguf")
+        from modelship.preflight.llama_cpp import _read_gguf_metadata
+
+        reader = _FakeGGUFReader(_SPLIT_FIELDS, _SPLIT_MLA_TENSORS)
+        with patch("gguf.GGUFReader", return_value=reader):
+            meta = _read_gguf_metadata("/fake/path.gguf")
+
+        assert meta is not None
+        assert meta.mla == MLAInfo(
+            kv_lora_rank=512, qk_rope_head_dim=64, qk_nope_head_dim=0, v_head_dim=0, num_heads=16
+        )
+
+    def test_fused_tensors_leave_mla_unset(self):
+        # Same metadata, pre-MLA tensor layout: detection must not fire on
+        # metadata alone, or the compressed formula underestimates 8.9x.
+        pytest.importorskip("gguf")
+        from modelship.preflight.llama_cpp import _read_gguf_metadata
+
+        reader = _FakeGGUFReader(_FUSED_FIELDS, _FUSED_MLA_TENSORS)
+        with patch("gguf.GGUFReader", return_value=reader):
+            meta = _read_gguf_metadata("/fake/path.gguf")
+
+        assert meta is not None
+        assert meta.mla is None
+        assert (meta.head_dim, meta.v_head_dim) == (192, 128)
+
+
+class TestKvBytesPerTokenMla:
+    def test_fused_matches_real_deploy_oom(self):
+        # Anchored to a real DeepSeek-V2-Lite-Chat deploy: ggml reported
+        # "failed to allocate CUDA0 buffer of size 24347934720" at n_ctx=88064,
+        # i.e. exactly 276480 B/token.
+        from modelship.preflight.llama_cpp import _kv_bytes_per_token
+
+        assert _kv_bytes_per_token(_MLA_LEGACY_META) == 276480
+
+    def test_split_uses_compressed_latent(self):
+        from modelship.preflight.llama_cpp import _kv_bytes_per_token
+
+        assert _kv_bytes_per_token(_MLA_COMPRESSED_META) == 31104
+
+    def test_symmetric_archs_are_unchanged(self):
+        # The old `2 * head_dim` form, still exact when V is as wide as K.
+        from modelship.preflight.llama_cpp import _kv_bytes_per_token
+
+        assert _kv_bytes_per_token(_LLAMA_META) == 2 * 32 * 8 * 128 * 2
+        assert _kv_bytes_per_token(_GEMMA4_SLIDING_META) == 2 * 48 * 8 * 256 * 2
+
+
+class TestLlamaServerPreflightGpuMla:
+    def test_fused_sizes_ctx_to_full_per_head_cache(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        hw = HardwareProfile(gpus=[GPUInfo(0, 30 * 1024**3, "test")], ram_bytes=64 * 1024**3)
+
+        with (
+            patch("modelship.preflight.llama_cpp._read_gguf_metadata", return_value=_MLA_LEGACY_META),
+            patch("modelship.preflight.llama_cpp._weight_bytes", return_value=4 * 1024**3),
+        ):
+            rec = LlamaServerPreflight().recommend(cfg, hw)
+
+        assert rec["n_gpu_layers"] == 28
+        assert rec["n_ctx"] == 84480
+
+    def test_split_reaches_context_cap_on_the_same_budget(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        hw = HardwareProfile(gpus=[GPUInfo(0, 30 * 1024**3, "test")], ram_bytes=64 * 1024**3)
+
+        with (
+            patch("modelship.preflight.llama_cpp._read_gguf_metadata", return_value=_MLA_COMPRESSED_META),
+            patch("modelship.preflight.llama_cpp._weight_bytes", return_value=4 * 1024**3),
+        ):
+            rec = LlamaServerPreflight().recommend(cfg, hw)
+
+        assert rec["n_ctx"] == 163840
