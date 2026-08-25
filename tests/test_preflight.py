@@ -1161,6 +1161,26 @@ class TestMlaKvCache:
         assert mla is not None
         assert _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 64) > 0
 
+    def test_workspace_floors_at_four_pages_per_seq(self):
+        # Short context, many slots: the 4-pages-per-slot term beats 8 * max_model_len.
+        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
+
+        mla = _resolve_mla(_MLA_CFG)
+        assert mla is not None
+        config = _make_config(vllm_kwargs={"max_model_len": 1024, "max_num_seqs": 1024})
+        row_bytes = mla.num_heads * (mla.qk_nope_head_dim + mla.v_head_dim) * 2
+        assert _mla_chunked_prefill_workspace_bytes(_MLA_CFG, config, 2, mla, 1) == 65536 * row_bytes
+
+    def test_workspace_floor_beats_the_row_cap(self):
+        # The one-page-per-slot floor is applied after the cap, so it can exceed it.
+        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
+
+        mla = _resolve_mla(_MLA_CFG)
+        assert mla is not None
+        config = _make_config(vllm_kwargs={"max_model_len": 1024, "max_num_seqs": 8192})
+        row_bytes = mla.num_heads * (mla.qk_nope_head_dim + mla.v_head_dim) * 2
+        assert _mla_chunked_prefill_workspace_bytes(_MLA_CFG, config, 2, mla, 1) == 8192 * 16 * row_bytes
+
     def test_recommend_lowers_gpu_memory_utilization_with_cudagraphs(self, tmp_path):
         # vLLM's own CUDA-graph memory profiler doesn't reserve room for this
         # workspace; preflight must shrink gpu_memory_utilization to compensate.

@@ -62,6 +62,9 @@ _UNKNOWN_CONTEXT_LENGTH_CAP = 32768
 # MLACommonMetadataBuilder.determine_chunked_prefill_workspace_size.
 _MLA_WORKSPACE_ROW_CAP = 65536
 
+# vLLM's SchedulerConfig.DEFAULT_MAX_NUM_SEQS, used when the config leaves it unset.
+_VLLM_DEFAULT_MAX_NUM_SEQS = 128
+
 # Safety margin on the MLA workspace's gpu_util reduction, covering PyTorch
 # CUDA allocator rounding/fragmentation on top of the raw tensor size.
 _MLA_WORKSPACE_SAFETY_MARGIN = 1.1
@@ -556,7 +559,10 @@ def _mla_chunked_prefill_workspace_bytes(
         or text_cfg.get("max_position_embeddings")
         or _UNKNOWN_CONTEXT_LENGTH_CAP
     )
-    rows = min(8 * max_model_len, _MLA_WORKSPACE_ROW_CAP)
+    # Larger of 8 full-length requests and 4 pages per slot, capped, then
+    # re-floored at one page per slot — that floor is applied after the cap.
+    pages = (config.vllm_engine_kwargs.max_num_seqs or _VLLM_DEFAULT_MAX_NUM_SEQS) * _DEFAULT_BLOCK_SIZE
+    rows = max(min(max(8 * max_model_len, 4 * pages), _MLA_WORKSPACE_ROW_CAP), pages)
     # The up-projection runs on this rank's shard of the heads, so unlike the
     # replicated latent cache this buffer does shrink with TP.
     local_heads = max(mla.num_heads // max(tp_size, 1), 1)
