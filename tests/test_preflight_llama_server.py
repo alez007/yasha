@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import patch
 
@@ -71,9 +72,11 @@ class _FakeGGUFReader:
     """Minimal stand-in for `gguf.GGUFReader` — `_read_field_value` only calls
     `.get_field(key).contents()`, and MLA detection reads `.tensors`."""
 
-    def __init__(self, fields: dict, tensor_names: list[str] | None = None):
+    def __init__(self, fields: dict, tensor_names: Sequence[str] | None = ()):
         self._fields = fields
-        self.tensors = [_FakeGGUFTensor(n) for n in (tensor_names or [])]
+        # Explicit None models a reader with no usable tensor list; the default
+        # empty tuple is just "no tensors declared".
+        self.tensors = None if tensor_names is None else [_FakeGGUFTensor(n) for n in tensor_names]
 
     def get_field(self, key: str):
         if key not in self._fields:
