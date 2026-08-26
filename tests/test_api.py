@@ -624,3 +624,50 @@ class TestHandleResponse:
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
+
+    @pytest.mark.asyncio
+    async def test_stream_error_after_first_chunk_yields_sse_error_not_raise(self, api):
+        """Failure between chunks: raising after headers are committed just aborts the
+        connection with no body, so it must yield a parseable SSE error chunk instead."""
+        import json
+
+        from fastapi.responses import StreamingResponse
+
+        async def mock_gen():
+            yield "data: chunk1\n\n"
+            raise RuntimeError("boundary dropped")
+            yield  # pragma: no cover — unreachable, keeps this an async generator
+
+        watcher = MagicMock()
+        result = await api._handle_response(mock_gen(), watcher, "test-model", "create_chat_completion")
+        assert isinstance(result, StreamingResponse)
+
+        chunks = [chunk async for chunk in result.body_iterator]
+        assert chunks[0] == "data: chunk1\n\n"
+        assert chunks[-1] == "data: [DONE]\n\n"
+        error_chunk = chunks[-2]
+        assert error_chunk.startswith("data: ")
+        body = json.loads(error_chunk[len("data: ") :])
+        assert body["error"]["type"] == "api_error"
+        watcher.stop.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_stream_error_for_responses_endpoint_yields_response_failed_event(self, api):
+        """/v1/responses uses typed `event: <type>` framing, not bare `data:` lines —
+        the error chunk must match."""
+        from fastapi.responses import StreamingResponse
+
+        async def mock_gen():
+            yield 'event: response.output_text.delta\ndata: {"type": "response.output_text.delta"}\n\n'
+            raise RuntimeError("boundary dropped")
+            yield  # pragma: no cover — unreachable, keeps this an async generator
+
+        watcher = MagicMock()
+        result = await api._handle_response(mock_gen(), watcher, "test-model", "create_response")
+        assert isinstance(result, StreamingResponse)
+
+        chunks = [chunk async for chunk in result.body_iterator]
+        error_chunk = chunks[-2]
+        assert error_chunk.startswith("event: response.failed\n")
+        assert '"status": "failed"' in error_chunk
+        watcher.stop.assert_called_once()

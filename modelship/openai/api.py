@@ -65,6 +65,7 @@ from modelship.openai.protocol import (
 from modelship.openai.protocol.responses.adapter import UnsupportedResponsesFeatureError
 from modelship.openai.state import responses as responses_state
 from modelship.openai.utils import responses as responses_utils
+from modelship.openai.utils.chat import encode_error_sse
 from modelship.state import get_state_store
 from modelship.utils import random_uuid
 
@@ -154,6 +155,21 @@ class OpenaiModelList(BaseModel):
 
 def _error_response(result: ErrorResponse) -> JSONResponse:
     return JSONResponse(content=result.model_dump(mode="json"), status_code=result._http_status)
+
+
+def _stream_error_chunk(endpoint: str) -> str:
+    """SSE-encode a failure between chunks, after headers are already committed to 200
+    — raising would just abort the connection with no body. Message is generic; details
+    go to the server log instead."""
+    if endpoint == "create_response":
+        event = {
+            "type": "response.failed",
+            "sequence_number": 0,
+            "response": {"status": "failed", "error": {"message": "Internal error during generation"}},
+        }
+        return f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
+    error = create_error_response(message="Internal error during generation", err_type="api_error", status_code=500)
+    return encode_error_sse(error)
 
 
 def _validation_error_from_cause(cause: BaseException) -> ErrorResponse:
@@ -499,7 +515,9 @@ class ModelshipAPI:
                 except Exception:
                     REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "stream_error"})
                     REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
-                    raise
+                    logger.exception("stream failed mid-response endpoint=%s model=%s", endpoint, model)
+                    yield _stream_error_chunk(endpoint)
+                    yield "data: [DONE]\n\n"
                 finally:
                     REQUEST_DURATION_SECONDS.observe(
                         time.monotonic() - start, tags={"model": model, "endpoint": endpoint}
