@@ -454,6 +454,7 @@ class ModelshipAPI:
             if isinstance(first, ErrorResponse):
                 REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "inference_error"})
                 REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
+                logger.info("Inference error for model=%s: %s", model, first.error.message)
                 return _error_response(first)
 
             if isinstance(first, Response):
@@ -996,6 +997,7 @@ class ModelshipAPI:
             if isinstance(first, ErrorResponse):
                 REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "inference_error"})
                 REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
+                logger.info("Inference error for model=%s: %s", model, first.error.message)
                 return _error_response(first)
 
             assert isinstance(first, ChatCompletionResponse)

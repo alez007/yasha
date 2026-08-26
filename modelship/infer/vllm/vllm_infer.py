@@ -487,8 +487,10 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         try:
             result = await engine_ops.render_and_params(self.openai_serving_render, vllm_request)
         except VllmValidationError as exc:
+            logger.info("Validation error rendering chat request: %s", exc)
             return _to_error_response(exc)
         if isinstance(result, VllmErrorResponse):
+            logger.info("Validation error rendering chat request: %s", result.error.message)
             return _to_error_response(result)
         engine_input, sampling_params = result
         return _VllmPrepared(vllm_request, engine_input, sampling_params)
@@ -561,9 +563,17 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             )
         except UnsupportedContentError as exc:
             return _to_error_response(exc)
-        vllm_request = engine_ops.build_vllm_request(
-            request, self.model_config.chat_template_kwargs, cache_salt=raw_request.identity
-        )
+        try:
+            vllm_request = engine_ops.build_vllm_request(
+                request, self.model_config.chat_template_kwargs, cache_salt=raw_request.identity
+            )
+        except ValidationError as exc:
+            # pydantic's .args is () here (str(exc) is the only useful message),
+            # matching api.py's _validation_error_from_cause for the same reason.
+            logger.info("Validation error building vllm request: %s", exc)
+            return create_error_response(
+                message=str(exc), err_type="invalid_request_error", status_code=HTTPStatus.BAD_REQUEST
+            )
         return await self._render_bundle(vllm_request)
 
     async def _create_chat_completion_stream(
