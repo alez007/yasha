@@ -721,12 +721,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                 chat_request, self.model_config.chat_template_kwargs, cache_salt=raw_request.identity
             )
         except ValidationError as exc:
-            # pydantic's .args is () here (str(exc) is the only useful message),
-            # matching api.py's _validation_error_from_cause for the same reason.
+            # Same 400 as the `responses_request_to_chat` failure above.
             logger.info("Validation error building vllm request: %s", exc)
-            return create_error_response(
-                message=str(exc), err_type="invalid_request_error", status_code=HTTPStatus.BAD_REQUEST
-            )
+            return responses_validation_error(exc)
         return await self._render_bundle(vllm_request)
 
     async def _create_response_no_stream(
