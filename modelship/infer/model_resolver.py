@@ -56,7 +56,7 @@ class _ModelDownloadProgress:
                 self._thread = threading.Thread(target=self._heartbeat, daemon=True)
                 started_thread = self._thread
         if started_thread is not None:
-            if self.total_bytes:
+            if self.total_bytes is not None:
                 logger.info("%s: downloading (%.0f MiB total)", self.repo, self.total_bytes / _MIB)
             else:
                 logger.info("%s: downloading", self.repo)
@@ -68,7 +68,7 @@ class _ModelDownloadProgress:
 
     def _describe(self) -> str:
         mb, rate = self._stats()
-        if self.total_bytes:
+        if self.total_bytes is not None and self.total_bytes > 0:
             pct = 100 * self.downloaded_bytes / self.total_bytes
             return (
                 f"{self.repo}: downloading {pct:3.0f}% ({mb:.0f}/{self.total_bytes / _MIB:.0f} MiB, {rate:.1f} MiB/s)"
