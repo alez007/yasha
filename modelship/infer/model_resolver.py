@@ -1,8 +1,12 @@
 import fnmatch
+import threading
+import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import NamedTuple
 
 from huggingface_hub import hf_hub_download, model_info, snapshot_download
+from huggingface_hub.utils import filter_repo_objects  # pyright: ignore[reportPrivateImportUsage]
 from tqdm.asyncio import tqdm_asyncio
 
 from modelship.logging import get_logger
@@ -19,19 +23,95 @@ __all__ = [
 
 logger = get_logger("startup")
 
+_MIB = 1024 * 1024
+_HEARTBEAT_INTERVAL_SECONDS = 15
+
+# Read by every worker thread hf_hub_download/snapshot_download spawns, so
+# one model's files all report into a single aggregate.
+_active_download: "_ModelDownloadProgress | None" = None
+
+
+class _ModelDownloadProgress:
+    """Aggregates byte progress across a model's files: a start line, a
+    heartbeat every `_HEARTBEAT_INTERVAL_SECONDS` regardless of whether bytes
+    moved (tqdm's `mininterval` only throttles `update()` calls that already
+    happen; HF's 10 MiB read chunks mean those can stop firing for minutes on
+    a slow link), and a completion line. Starts lazily on the first byte, so
+    a fully-cached call stays silent."""
+
+    def __init__(self, repo: str, total_bytes: int | None) -> None:
+        self.repo = repo
+        self.total_bytes = total_bytes
+        self.downloaded_bytes = 0
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._start_t = 0.0
+
+    def add(self, n: int) -> None:
+        started_thread: threading.Thread | None = None
+        with self._lock:
+            self.downloaded_bytes += n
+            if self._thread is None:
+                self._start_t = time.monotonic()
+                self._thread = threading.Thread(target=self._heartbeat, daemon=True)
+                started_thread = self._thread
+        if started_thread is not None:
+            if self.total_bytes:
+                logger.info("%s: downloading (%.0f MiB total)", self.repo, self.total_bytes / _MIB)
+            else:
+                logger.info("%s: downloading", self.repo)
+            started_thread.start()
+
+    def _heartbeat(self) -> None:
+        while not self._stop.wait(_HEARTBEAT_INTERVAL_SECONDS):
+            logger.info("%s", self._describe())
+
+    def _describe(self) -> str:
+        mb, rate = self._stats()
+        if self.total_bytes:
+            pct = 100 * self.downloaded_bytes / self.total_bytes
+            return (
+                f"{self.repo}: downloading {pct:3.0f}% ({mb:.0f}/{self.total_bytes / _MIB:.0f} MiB, {rate:.1f} MiB/s)"
+            )
+        return f"{self.repo}: downloading {mb:.0f} MiB ({rate:.1f} MiB/s)"
+
+    def _stats(self) -> tuple[float, float]:
+        elapsed = max(time.monotonic() - self._start_t, 1e-9)
+        mb = self.downloaded_bytes / _MIB
+        return mb, mb / elapsed
+
+    def finish(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+            logger.info("%s: download complete (%.0f MiB, %.1f MiB/s)", self.repo, *self._stats())
+
 
 class _DownloadProgressLogger(tqdm_asyncio):
-    """`tqdm_class` for `hf_hub_download`/`snapshot_download`. Throttles progress
-    logging to once a minute; not a subclass of HF's own tqdm wrapper, so its
-    TTY/log-level disable checks don't apply."""
+    """`tqdm_class` for `hf_hub_download`/`snapshot_download`. Feeds chunks to
+    the active `_ModelDownloadProgress` instead of logging itself — one
+    instance exists per file, but logging is keyed by model."""
 
-    def __init__(self, *args, **kwargs):
-        kwargs.setdefault("mininterval", 60)
-        kwargs.setdefault("bar_format", "{desc}: downloading {percentage:3.0f}% ({n_fmt}/{total_fmt}, {rate_fmt})")
-        super().__init__(*args, **kwargs)
+    def update(self, n: float | None = 1):
+        result = super().update(n)
+        if _active_download is not None and n is not None and n > 0:
+            _active_download.add(int(n))
+        return result
 
     def display(self, msg=None, pos=None):
-        logger.info("%s", self)
+        pass
+
+
+def _sum_sizes(files: Iterable[str], sizes_by_file: dict[str, int | None]) -> int | None:
+    """Total bytes for `files`, or None if any of them is missing size metadata."""
+    total = 0
+    for f in files:
+        size = sizes_by_file.get(f)
+        if size is None:
+            return None
+        total += size
+    return total
 
 
 class ModelDownloadError(Exception):
@@ -87,7 +167,8 @@ class PinnedSource(NamedTuple):
     refs it's None, and `download_filename` XOR `download_patterns` tells
     `download_model_source` whether to use `hf_hub_download` or
     `snapshot_download`; `first_shard` picks the entry-point file out of a
-    multi-file snapshot."""
+    multi-file snapshot. `total_bytes` sums every file that will be pulled
+    (None if any is missing size metadata)."""
 
     resolved_path: str | None
     repo: str | None
@@ -95,6 +176,7 @@ class PinnedSource(NamedTuple):
     download_filename: str | None
     download_patterns: list[str] | None
     first_shard: str | None
+    total_bytes: int | None
 
     @property
     def resolves_to_gguf(self) -> bool:
@@ -149,14 +231,15 @@ def check_model_source(model_ref: str, trust_remote_code: bool = False) -> Pinne
                     matches[0].name,
                 )
             resolved = matches[0].absolute()
-            return PinnedSource(str(resolved), None, None, None, None, None)
+            return PinnedSource(str(resolved), None, None, None, None, None, None)
 
         resolved = path.absolute()
-        return PinnedSource(str(resolved), None, None, None, None, None)
+        return PinnedSource(str(resolved), None, None, None, None, None, None)
 
-    # HF Resolve
+    # HF Resolve. files_metadata=True surfaces each sibling's byte size, for
+    # the aggregate download-progress total below.
     try:
-        info = model_info(source)
+        info = model_info(source, files_metadata=True)
     except Exception as e:
         raise RuntimeError(f"Failed to fetch info for HF repo {source!r}: {e}") from e
 
@@ -164,6 +247,7 @@ def check_model_source(model_ref: str, trust_remote_code: bool = False) -> Pinne
         raise RuntimeError(f"HF repo {source!r} returned no file listing")
 
     repo_files = [s.rfilename for s in info.siblings]
+    sizes_by_file = {s.rfilename: s.size for s in info.siblings}
     revision = info.sha
 
     if selector:
@@ -183,10 +267,12 @@ def check_model_source(model_ref: str, trust_remote_code: bool = False) -> Pinne
                 source,
                 matches[0],
             )
-            return PinnedSource(None, source, revision, None, [selector], matches[0])
+            return PinnedSource(
+                None, source, revision, None, [selector], matches[0], _sum_sizes(matches, sizes_by_file)
+            )
 
         # Single match: download via hf_hub_download
-        return PinnedSource(None, source, revision, matches[0], None, None)
+        return PinnedSource(None, source, revision, matches[0], None, None, sizes_by_file.get(matches[0]))
 
     # No selector: detect a multi-variant GGUF repo and require an explicit pick.
     # This catches the common `model: org/repo-GGUF` mistake before the loader
@@ -205,38 +291,48 @@ def check_model_source(model_ref: str, trust_remote_code: bool = False) -> Pinne
     # would break it. The implicit "the only GGUF" is unambiguous.
     if len(ggufs) == 1:
         logger.info("HF repo %r has a single GGUF (%s); will resolve to its file path", source, ggufs[0])
-        return PinnedSource(None, source, revision, ggufs[0], None, None)
+        return PinnedSource(None, source, revision, ggufs[0], None, None, sizes_by_file.get(ggufs[0]))
 
     # Full snapshot with universal filter
     patterns = _select_patterns(repo_files, trust_remote_code=trust_remote_code)
-    return PinnedSource(None, source, revision, None, patterns, None)
+    matched_files = list(filter_repo_objects(repo_files, allow_patterns=patterns))
+    return PinnedSource(None, source, revision, None, patterns, None, _sum_sizes(matched_files, sizes_by_file))
 
 
 def download_model_source(pinned: PinnedSource) -> str:
     """Download (or confirm already-cached) *pinned* and return its final
     absolute local path. A no-op for local refs. For HF refs,
     `hf_hub_download`/`snapshot_download` check their own cache first, so
-    calling this when the files are already present is cheap."""
+    calling this when the files are already present is cheap — and stays
+    silent, since `_ModelDownloadProgress` only starts logging once a byte
+    actually arrives."""
     if pinned.resolved_path is not None:
         return pinned.resolved_path
 
     assert pinned.repo is not None  # PinnedSource invariant: local xor repo
 
-    if pinned.download_filename is not None:
-        return hf_hub_download(
-            pinned.repo, pinned.download_filename, revision=pinned.revision, tqdm_class=_DownloadProgressLogger
-        )
+    global _active_download
+    progress = _ModelDownloadProgress(pinned.repo, pinned.total_bytes)
+    _active_download = progress
+    try:
+        if pinned.download_filename is not None:
+            return hf_hub_download(
+                pinned.repo, pinned.download_filename, revision=pinned.revision, tqdm_class=_DownloadProgressLogger
+            )
 
-    assert pinned.download_patterns is not None
-    snapshot_dir = snapshot_download(
-        pinned.repo,
-        revision=pinned.revision,
-        allow_patterns=pinned.download_patterns,
-        tqdm_class=_DownloadProgressLogger,
-    )
-    if pinned.first_shard is not None:
-        return str(Path(snapshot_dir, pinned.first_shard).absolute())
-    return snapshot_dir
+        assert pinned.download_patterns is not None
+        snapshot_dir = snapshot_download(
+            pinned.repo,
+            revision=pinned.revision,
+            allow_patterns=pinned.download_patterns,
+            tqdm_class=_DownloadProgressLogger,
+        )
+        if pinned.first_shard is not None:
+            return str(Path(snapshot_dir, pinned.first_shard).absolute())
+        return snapshot_dir
+    finally:
+        progress.finish()
+        _active_download = None
 
 
 def resolve_model_source(model_ref: str, trust_remote_code: bool = False) -> str:

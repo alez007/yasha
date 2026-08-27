@@ -20,6 +20,7 @@ _PIN = PinnedSource(
     download_filename="model.safetensors",
     download_patterns=None,
     first_shard=None,
+    total_bytes=None,
 )
 
 
