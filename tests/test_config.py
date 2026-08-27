@@ -2,6 +2,8 @@
 
 import subprocess
 import sys
+from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from pydantic import ValidationError
@@ -663,6 +665,36 @@ class TestAutoscalingConfig:
         assert a.fingerprint() == b.fingerprint() == plain.fingerprint()
 
 
+class TestStrictSchema:
+    """`extra="forbid"`: an unknown key is a typo, and reaches the same error from
+    models.yaml and from the CLI flags generated off these same fields."""
+
+    _BASE: ClassVar[dict] = {"name": "m", "model": "x.gguf", "usecase": "generate", "loader": "llama_server"}
+
+    def test_unknown_root_key_rejected(self):
+        with pytest.raises(ValidationError, match="n_ctx"):
+            ModelshipModelConfig.model_validate({**self._BASE, "n_ctx": 4096})
+
+    def test_unknown_nested_key_rejected(self):
+        with pytest.raises(ValidationError, match="n_ctxx"):
+            ModelshipModelConfig.model_validate({**self._BASE, "llama_server_config": {"n_ctxx": 4096}})
+
+    def test_vllm_engine_kwargs_model_rejected(self):
+        raw = {**self._BASE, "model": "org/m", "loader": "vllm", "vllm_engine_kwargs": {"model": "other/m"}}
+        with pytest.raises(ValidationError, match=r"vllm_engine_kwargs\.model cannot be set"):
+            ModelshipModelConfig.model_validate(raw)
+
+    @pytest.mark.parametrize(
+        "path",
+        sorted((Path(__file__).resolve().parent.parent / "config" / "examples").glob("*.yaml")),
+        ids=lambda p: p.name,
+    )
+    def test_shipped_examples_validate(self, path):
+        from modelship.deploy.config import load_yaml_config
+
+        assert load_yaml_config(str(path)).models
+
+
 class TestPreRayImportChain:
     """These modules run before resolve_ray_auth_env(), and ray latches RAY_AUTH_MODE at
     import; subprocess-based since ray is already in sys.modules by suite time.
@@ -674,6 +706,7 @@ class TestPreRayImportChain:
             "modelship.utils.model_ref",
             "modelship.utils.config_schema",
             "modelship.utils.cli",
+            "modelship.utils.model_flags",
             "modelship.deploy.config",
             "modelship.launcher",
         ],

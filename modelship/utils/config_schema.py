@@ -7,7 +7,7 @@ import os
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from modelship.logging import get_logger
 from modelship.utils import is_pathy
@@ -58,7 +58,14 @@ class ModelLoader(StrEnum):
     sherpa_onnx = "sherpa_onnx"
 
 
-class VllmEngineConfig(BaseModel):
+class _StrictModel(BaseModel):
+    """Base for every models.yaml schema. `extra="forbid"` so an unknown key is a
+    hard error rather than a silently ignored typo, on both the file and CLI surfaces."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class VllmEngineConfig(_StrictModel):
     model: str = ""
     tensor_parallel_size: int = 1
     pipeline_parallel_size: int = 1
@@ -93,13 +100,13 @@ class VllmEngineConfig(BaseModel):
     mm_processor_kwargs: dict[str, Any] | None = None
 
 
-class DiffusersConfig(BaseModel):
+class DiffusersConfig(_StrictModel):
     torch_dtype: str = "float16"
     num_inference_steps: int = 30
     guidance_scale: float = 7.5
 
 
-class LlamaServerConfig(BaseModel):
+class LlamaServerConfig(_StrictModel):
     """Tunables for the ``llama_server`` loader, which drives a `llama-server`
     subprocess over its native OpenAI-compatible HTTP API."""
 
@@ -144,7 +151,7 @@ class LlamaServerConfig(BaseModel):
     extra_args: list[str] = Field(default_factory=list)
 
 
-class WhispercppConfig(BaseModel):
+class WhispercppConfig(_StrictModel):
     """Tunables for the ``whispercpp`` loader, which runs whisper.cpp in-process
     via `pywhispercpp` bindings (no subprocess)."""
 
@@ -155,7 +162,7 @@ class WhispercppConfig(BaseModel):
     models_dir: str | None = None
 
 
-class StableDiffusionCppConfig(BaseModel):
+class StableDiffusionCppConfig(_StrictModel):
     """Tunables for the CPU-only `stable_diffusion_cpp` image loader
     (stable-diffusion.cpp via stable-diffusion-cpp-python). `sample_steps` and
     `cfg_scale` are the sd.cpp analogues of DiffusersConfig's
@@ -185,7 +192,7 @@ class StableDiffusionCppConfig(BaseModel):
     model_kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
-class AutoscalingConfig(BaseModel):
+class AutoscalingConfig(_StrictModel):
     """Per-model Ray Serve autoscaling bounds.
 
     Maps to the subset of Ray Serve's ``autoscaling_config`` that's useful for
@@ -233,7 +240,7 @@ class AutoscalingConfig(BaseModel):
         return out
 
 
-class ModelshipModelConfig(BaseModel):
+class ModelshipModelConfig(_StrictModel):
     name: str
     model: str | None = None
     usecase: ModelUsecase
@@ -325,6 +332,17 @@ class ModelshipModelConfig(BaseModel):
             )
         if self.usecase is not ModelUsecase.tts:
             raise ValueError(f"loader='sherpa_onnx' only supports usecase='tts' (v1 scope), got {self.usecase!r}")
+        return self
+
+    @model_validator(mode="after")
+    def reject_derived_vllm_model(self):
+        # vllm_infer overwrites this with the resolved source path, so a user value
+        # is silently discarded. Reject it instead of ignoring it.
+        if self.loader == ModelLoader.vllm and "model" in self.vllm_engine_kwargs.model_fields_set:
+            raise ValueError(
+                "vllm_engine_kwargs.model cannot be set: the engine always loads the resolved "
+                "top-level `model:` source. Set that instead."
+            )
         return self
 
     @model_validator(mode="after")
@@ -434,7 +452,7 @@ def default_gpu_memory_utilization(config: ModelshipModelConfig) -> float:
     return _VLLM_GPU_DEFAULT_GPU_MEMORY_UTILIZATION
 
 
-class ModelshipConfig(BaseModel):
+class ModelshipConfig(_StrictModel):
     models: list[ModelshipModelConfig]
 
     @model_validator(mode="after")

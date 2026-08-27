@@ -494,6 +494,31 @@ class TestEstimateWeightFootprint:
 
 
 class TestVllmPreflight:
+    def test_recommendation_keys_are_engine_config_fields(self, tmp_path):
+        """vllm_infer feeds the merged recommendation back through VllmEngineConfig,
+        which forbids extras — a key that isn't a field fails at actor init."""
+        snapshot = _write_model_snapshot(
+            tmp_path,
+            config_json={
+                "num_hidden_layers": 48,
+                "num_attention_heads": 32,
+                "num_key_value_heads": 16,
+                "hidden_size": 5120,
+                "head_dim": 160,
+                "torch_dtype": "bfloat16",
+                "max_position_embeddings": 32768,
+            },
+            weight_bytes=19 * 1024**3,
+        )
+        for num_gpus, hw in (
+            (1, HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])),
+            (1, HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])),
+        ):
+            cfg = _make_config(resolved_path=str(snapshot), num_gpus=num_gpus)
+            rec = VllmPreflight().recommend(cfg, hw)
+            assert rec
+            VllmEngineConfig(**rec)
+
     def test_no_gpus_returns_empty(self):
         cfg = _make_config(resolved_path="/nonexistent")
         assert VllmPreflight().recommend(cfg, HardwareProfile()) == {}

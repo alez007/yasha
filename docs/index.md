@@ -64,8 +64,9 @@ wants ~8 GB of free RAM; `--num-cpus 4` reserves four cores for it, so lower it
 if the container has fewer (the deploy waits for resources it can't get). On a
 small box, swap in `lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf`.
 
-Deploying several models at once, or tuning the nested config blocks, uses a
-`models.yaml` instead — see [Model Configuration](model-configuration.md).
+Deploying several models at once uses a `models.yaml` instead; one model's
+tuning blocks have flags too (`--llama-server-config.n-ctx 8192`) — see
+[Model Configuration](model-configuration.md).
 Hitting an error? Check [Troubleshooting](troubleshooting.md).
 
 ??? note "Prefer `curl`?"

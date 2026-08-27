@@ -9,20 +9,13 @@ from pathlib import Path
 
 from modelship.utils import parse_memory_bytes
 from modelship.utils.config_schema import ModelLoader, ModelUsecase
-from modelship.utils.model_ref import parse_model_ref
-
-# The models.yaml keys the model flags surface, in config-key form. Single
-# source of truth for what a --model deploy can express.
-MODEL_ARG_KEYS = (
-    "name",
-    "model",
-    "usecase",
-    "loader",
-    "num_gpus",
-    "num_cpus",
-    "num_replicas",
-    "max_ongoing_requests",
+from modelship.utils.model_flags import (
+    MODEL_ARG_KEYS,
+    add_generated_model_args,
+    any_generated_arg_set,
+    apply_generated_args,
 )
+from modelship.utils.model_ref import parse_model_ref
 
 # Marks a `--model` path as a file rather than a directory when it doesn't
 # exist yet, so name inference can still take the stem.
@@ -51,7 +44,13 @@ _STRING_ARG_TO_ENV: dict[str, str] = {
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Modelship — serve LLMs with Ray Serve")
+    # Explicit prog/usage: the generated model flags make argparse's own usage line
+    # ~90 lines, which it reprints on every error.
+    parser = argparse.ArgumentParser(
+        prog="mship deploy",
+        usage="mship deploy [options] [--model REF [--<block>.<key> VALUE ...]]",
+        description="Modelship — serve LLMs with Ray Serve",
+    )
     parser.add_argument("--config", help="Path to models.yaml config file (default: config/models.yaml)")
     parser.add_argument("--cache-dir", help="Model cache directory (env: MSHIP_CACHE_DIR)")
     parser.add_argument(
@@ -236,6 +235,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     _add_model_args(parser)
     args = parser.parse_args(argv)
+    if args.model is None and any_generated_arg_set(args):
+        parser.error("the model tuning flags configure the model --model deploys; pass --model, or use --config.")
     if args.model is not None and args.config is not None:
         # Rejected here rather than in resolve_input_models so both entry points fail
         # before the driver starts a Ray head.
@@ -254,9 +255,10 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
     """
     group = parser.add_argument_group(
         "single-model deploy",
-        "Deploy one model with no config file. Use --config for several models, or for "
-        "the nested tuning blocks (vllm_engine_kwargs, llama_server_config, "
-        "autoscaling_config, ...), which have no flags.",
+        "Deploy one model with no config file; use --config for several. The nested "
+        "tuning blocks are generated from the same schema, one flag per key, named for "
+        "its config path: --llama-server-config.n-ctx 8192. Their values are read as "
+        "YAML, i.e. the text you'd write after the colon in models.yaml.",
     )
     group.add_argument(
         "--model",
@@ -273,6 +275,7 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--num-cpus", type=float, help="CPUs to reserve (default: 0.1)")
     group.add_argument("--num-replicas", type=int, help="Fixed replica count (default: 1)")
     group.add_argument("--max-ongoing-requests", type=int, help="Per-replica concurrency cap")
+    add_generated_model_args(parser)
 
 
 def model_from_args(args: argparse.Namespace) -> dict | None:
@@ -291,6 +294,7 @@ def model_from_args(args: argparse.Namespace) -> dict | None:
         value = getattr(args, key, None)
         if value is not None:
             raw[key] = value
+    apply_generated_args(args, raw)
     return raw
 
 

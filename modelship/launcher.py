@@ -123,9 +123,14 @@ def _validate_config(args: argparse.Namespace) -> ModelshipConfig | None:
 
 
 def _flagged(error: ValidationError) -> str:
-    """Rewrite pydantic's `models.0.<field>` locations as `--<field>` so a
-    single-model deploy reports its own flags, not a models.yaml shape."""
-    return re.sub(r"\bmodels\.\d+\.([a-z_]+)", lambda m: f"--{m.group(1).replace('_', '-')}", str(error))
+    """Rewrite pydantic's `models.0.<block>.<field>` locations as
+    `--<block>.<field>` so a single-model deploy reports its own flags, not a
+    models.yaml shape."""
+    return re.sub(
+        r"\bmodels\.\d+\.([a-z_]+)(?:\.([a-z_]+))?",
+        lambda m: "--" + ".".join(part for part in m.groups() if part).replace("_", "-"),
+        str(error),
+    )
 
 
 def _check_loader_capabilities(loaders: set[str]) -> None:

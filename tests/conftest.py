@@ -1,6 +1,7 @@
 """Shared test fixtures, including the integration suite's session-scoped cluster
 infrastructure shared by every `@pytest.mark.integration` file."""
 
+import json
 import os
 import subprocess
 import time
@@ -12,7 +13,7 @@ import pytest
 import yaml
 
 import modelship.infer.infer_config as infer_config
-from modelship.utils.cli import MODEL_ARG_KEYS
+from modelship.utils.model_flags import GENERATED_MODEL_ARGS, MODEL_ARG_KEYS
 from openai import OpenAI
 
 
@@ -215,16 +216,32 @@ MODEL_CONFIGS: dict[str, dict] = {
 }
 
 
-def cli_expressible(config: dict) -> bool:
-    """Whether the model flags can express this entry: they carry only the
-    root-level scalars, so a nested tuning block means a config file."""
-    return set(config) <= set(MODEL_ARG_KEYS)
+# Half the single-model call sites deploy through the CLI flags and half through a
+# models.yaml, so the same integration suite covers both surfaces. Split on sorted
+# position rather than hash(): str hashing is salted per process.
+CLI_ROUTED = frozenset(name for i, name in enumerate(sorted(MODEL_CONFIGS)) if i % 2 == 0)
+
+_OPTION_BY_PATH = {arg.path: arg.option for arg in GENERATED_MODEL_ARGS}
+
+
+def cli_routed(config: dict) -> bool:
+    """Whether a lone model deploys via the `--model` flags rather than a config file."""
+    return config["name"] in CLI_ROUTED
 
 
 def _model_flags(config: dict) -> list[str]:
+    """The `mship deploy` flags for one models.yaml entry: root keys by name, a
+    nested block one flag per leaf. Generated flags take YAML text, and json.dumps
+    emits valid YAML for every value shape here."""
     flags: list[str] = []
     for key, value in config.items():
-        flags += [f"--{key.replace('_', '-')}", str(value)]
+        if key in MODEL_ARG_KEYS:
+            flags += [f"--{key.replace('_', '-')}", str(value)]
+        elif (key,) in _OPTION_BY_PATH:
+            flags += [_OPTION_BY_PATH[(key,)], json.dumps(value)]
+        else:
+            for sub_key, sub_value in value.items():
+                flags += [_OPTION_BY_PATH[(key, sub_key)], json.dumps(sub_value)]
     return flags
 
 
@@ -245,7 +262,7 @@ class _Deployer:
 
         slug = "+".join(sorted(wanted)) or "empty"
         configs = [MODEL_CONFIGS[n] for n in sorted(wanted)]
-        if len(configs) == 1 and cli_expressible(configs[0]):
+        if len(configs) == 1 and cli_routed(configs[0]):
             input_args = _model_flags(configs[0])
         else:
             input_args = ["--config", str(self._write_config(f"models-{slug}.yaml", configs))]
