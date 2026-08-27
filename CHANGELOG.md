@@ -4,6 +4,51 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.14] - 2026-08-27
+
+### Added
+- set the nested loader-config blocks from mship deploy flags
+- aggregate HF model download progress and add a heartbeat
+- provision llama-server in the dev container
+
+### Fixed
+- derive gpu_memory_utilization in the bench harness too
+- reject out-of-range resource values, and name the flags in the tuning-flag error
+- use explicit None checks for total_bytes instead of truthiness
+- move HF_HUB_DISABLE_XET default out of model_resolver's import side effect
+- drop private filter_repo_objects dep, don't log success on a failed download
+- disable hf_xet by default to avoid its intermittent download stalls
+- derive the mid-stream response.failed event from the frames already sent
+- emit an SSE error chunk on mid-stream failures instead of aborting
+- log structured fields instead of raw inference error messages
+- log silent ErrorResponse paths and validate tool_choice at the source
+- read tensor names from every shard of a sharded GGUF
+- fall back safely when a GGUF's tensor list is incomplete
+- count only attention blocks when sizing GGUF KV cache
+- size hybrid models correctly in vLLM preflight
+- mirror vLLM's max_num_seqs floors in the MLA workspace estimate
+- shard the MLA prefill workspace estimate by tensor_parallel_size
+- account for MLA attention in llama_server preflight sizing
+- account for MLA attention in vllm preflight sizing
+- account for sliding-window attention in llama_server GGUF preflight
+- clamp _fit_len_with_sliding to ctx_cap on every return path
+- regenerate bootstrap pins for the transformers 5.14.1 bump
+- pin transformers to 5.14.1, newest version Gemma 4 works with
+- account for sliding-window attention in vLLM KV-cache preflight
+
+### Changed
+- cover the preflight shapes that recommend a derived gpu_memory_utilization
+- drop the vllm engine kwargs modelship sets or ignores itself
+- bump devcontainer node feature to 22
+- skip oversized arrays when reading GGUF metadata
+- make the unreadable-tensor-list fallback actually unreadable
+- consolidate comments in llama_cpp.py to house length
+- trim comments in the sliding-window preflight fix to house length
+- cover llama_server GGUF sliding-window preflight
+- extract sliding-window KV math into a shared preflight module
+- cover the CPU sliding-window preflight path
+- update Open Responses conformance result to Gemma 4
+
 ## [0.7.13] - 2026-08-19
 
 ### Added
