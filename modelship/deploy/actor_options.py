@@ -51,6 +51,7 @@ def build_cache_env_vars() -> dict[str, str]:
     base_cache = resolve_cache_root()
     env_vars = {
         "HF_HOME": os.environ.get("HF_HOME", f"{base_cache}/huggingface"),
+        "HF_HUB_DISABLE_XET": os.environ.get("HF_HUB_DISABLE_XET", "1"),
         "VLLM_CACHE_ROOT": os.environ.get("VLLM_CACHE_ROOT", f"{base_cache}/vllm"),
         "FLASHINFER_CACHE_DIR": os.environ.get("FLASHINFER_CACHE_DIR", f"{base_cache}/flashinfer"),
         # Triton JITs kernels at import for some archs

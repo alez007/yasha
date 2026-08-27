@@ -34,6 +34,7 @@ _GGUF_PIN = PinnedSource(
     download_filename="model-Q4_K_M.gguf",
     download_patterns=None,
     first_shard=None,
+    total_bytes=None,
 )
 _SNAPSHOT_PIN = PinnedSource(
     resolved_path=None,
@@ -42,6 +43,7 @@ _SNAPSHOT_PIN = PinnedSource(
     download_filename=None,
     download_patterns=["*.safetensors"],
     first_shard=None,
+    total_bytes=None,
 )
 
 

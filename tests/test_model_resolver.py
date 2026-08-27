@@ -18,7 +18,7 @@ from modelship.infer.model_resolver import (
 
 
 def _model_info(files: list[str], sha: str = "deadbeef"):
-    return MagicMock(sha=sha, siblings=[MagicMock(rfilename=f) for f in files])
+    return MagicMock(sha=sha, siblings=[MagicMock(rfilename=f, size=None) for f in files])
 
 
 class TestParseModelRef:
@@ -215,7 +215,7 @@ class TestCheckHfRepoDoesNoDownload:
             patch("modelship.infer.model_resolver.snapshot_download") as mock_snap,
         ):
             check_model_source("Qwen/Qwen3-7B")
-            mock_info.assert_called_once_with("Qwen/Qwen3-7B")
+            mock_info.assert_called_once_with("Qwen/Qwen3-7B", files_metadata=True)
             mock_dl.assert_not_called()
             mock_snap.assert_not_called()
 
@@ -329,23 +329,23 @@ class TestResolveHfRepo:
 
 class TestPinnedSourceResolvesToGguf:
     def test_local_file_gguf(self):
-        pinned = PinnedSource("/models/x.gguf", None, None, None, None, None)
+        pinned = PinnedSource("/models/x.gguf", None, None, None, None, None, None)
         assert pinned.resolves_to_gguf
 
     def test_local_dir_not_gguf(self):
-        pinned = PinnedSource("/models/snapshot", None, None, None, None, None)
+        pinned = PinnedSource("/models/snapshot", None, None, None, None, None, None)
         assert not pinned.resolves_to_gguf
 
     def test_hf_single_file_download_gguf(self):
-        pinned = PinnedSource(None, "org/repo", "sha", "model.gguf", None, None)
+        pinned = PinnedSource(None, "org/repo", "sha", "model.gguf", None, None, None)
         assert pinned.resolves_to_gguf
 
     def test_hf_shard_gguf(self):
-        pinned = PinnedSource(None, "org/repo", "sha", None, ["*.gguf"], "model-00001-of-00002.gguf")
+        pinned = PinnedSource(None, "org/repo", "sha", None, ["*.gguf"], "model-00001-of-00002.gguf", None)
         assert pinned.resolves_to_gguf
 
     def test_hf_full_snapshot_not_gguf(self):
-        pinned = PinnedSource(None, "org/repo", "sha", None, ["*.safetensors"], None)
+        pinned = PinnedSource(None, "org/repo", "sha", None, ["*.safetensors"], None, None)
         assert not pinned.resolves_to_gguf
 
 
@@ -353,7 +353,7 @@ class TestDownloadErrorClassification:
     def test_download_failure_is_not_wrapped_by_download_model_source(self):
         # download_model_source raises whatever hf raises; wrapping into
         # ModelDownloadError is BaseInfer.ensure_downloaded's job (it needs the model name).
-        pinned = PinnedSource(None, "org/repo", "sha", "model.safetensors", None, None)
+        pinned = PinnedSource(None, "org/repo", "sha", "model.safetensors", None, None, None)
         with (
             patch("modelship.infer.model_resolver.hf_hub_download", side_effect=OSError("disk full")),
             pytest.raises(OSError, match="disk full"),

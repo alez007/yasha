@@ -12,6 +12,7 @@ _BASE_CACHE = resolve_cache_root()
 os.environ.setdefault("HF_HOME", f"{_BASE_CACHE}/huggingface")
 os.environ.setdefault("VLLM_CACHE_ROOT", f"{_BASE_CACHE}/vllm")
 os.environ.setdefault("FLASHINFER_CACHE_DIR", f"{_BASE_CACHE}/flashinfer")
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 # Sets RAY_LOG_LEVEL/etc. from MSHIP_LOG_LEVEL before `import ray`, which latches
 # them at import time — env-var only since argv parsing happens after this import.
