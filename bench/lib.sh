@@ -371,10 +371,15 @@ if loader == "llama_server":
         print("LAUNCH PARITY PASSED for llama_server.")
 
 elif loader == "vllm":
-    m_match = re.search(r"initialising vllm engine with args:\s*(\{.*\})", m_content)
+    # Derived, so modelship logs it beside the kwargs dict, not inside it.
+    m_match = re.search(
+        r"initialising vllm engine with args:\s*(\{.*\})\s*\(model=.*?gpu_memory_utilization=([\d.]+)\)",
+        m_content,
+    )
     if not m_match:
         sys.exit("Could not find 'initialising vllm engine with args:' in modelship log")
     m_dict = ast.literal_eval(m_match.group(1))
+    m_dict["gpu_memory_utilization"] = float(m_match.group(2))
 
     b_match = re.search(r"rawvllm exec:\s*(.*)", b_content)
     if not b_match:

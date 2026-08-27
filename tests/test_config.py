@@ -617,6 +617,14 @@ class TestAutoscalingConfig:
         assert a.fingerprint() == b.fingerprint() == plain.fingerprint()
 
 
+def _repo_yaml_configs() -> list[Path]:
+    """Every models.yaml checked into the repo."""
+    root = Path(__file__).resolve().parent.parent
+    paths = sorted((root / "config" / "examples").glob("*.yaml")) + sorted((root / "bench" / "configs").glob("*.yaml"))
+    assert len(paths) > 10, f"config discovery found only {len(paths)} files — did a directory move?"
+    return paths
+
+
 class TestStrictSchema:
     """`extra="forbid"`: an unknown key is a typo, and reaches the same error from
     models.yaml and from the CLI flags generated off these same fields."""
@@ -659,10 +667,11 @@ class TestStrictSchema:
 
     @pytest.mark.parametrize(
         "path",
-        sorted((Path(__file__).resolve().parent.parent / "config" / "examples").glob("*.yaml")),
-        ids=lambda p: p.name,
+        sorted(_repo_yaml_configs()),
+        ids=lambda p: f"{p.parent.name}/{p.name}",
     )
-    def test_shipped_examples_validate(self, path):
+    def test_checked_in_configs_validate(self, path):
+        """bench/configs included: nothing else in CI validates them."""
         from modelship.deploy.config import load_yaml_config
 
         assert load_yaml_config(str(path)).models

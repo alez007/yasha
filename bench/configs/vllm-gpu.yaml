@@ -13,7 +13,3 @@ models:
     vllm_engine_kwargs:
       tensor_parallel_size: 1
       max_model_len: 8192
-      # Keep this equal to num_gpus: for fractional num_gpus modelship overrides
-      # gpu_memory_utilization to num_gpus, so a different value here would make
-      # the raw-vLLM phase (which reads this field verbatim) an unfair comparison.
-      gpu_memory_utilization: 0.9

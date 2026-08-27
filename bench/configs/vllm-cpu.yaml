@@ -17,9 +17,3 @@ models:
     vllm_engine_kwargs:
       tensor_parallel_size: 1
       max_model_len: 8192
-      # vLLM's CPU backend repurposes this as the fraction of HOST RAM to
-      # reserve for the KV cache (not VRAM) — set explicitly (rather than
-      # relying on modelship's num_gpus==0 default of 0.4) since the raw
-      # phase reads this field verbatim and must match. See
-      # config/examples/vllm-cpu.yaml.
-      gpu_memory_utilization: 0.4

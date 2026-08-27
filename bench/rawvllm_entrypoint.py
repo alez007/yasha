@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from modelship.infer.infer_config import ModelLoader, ModelshipConfig
+from modelship.infer.infer_config import ModelLoader, ModelshipConfig, resolve_gpu_memory_utilization
 
 CONFIG_PATH = Path(os.environ.get("MSHIP_CONFIG", "/modelship/config/models.yaml"))
 
@@ -32,12 +32,8 @@ def main() -> int:
     args += ["--tensor-parallel-size", str(k.tensor_parallel_size)]
     args += ["--pipeline-parallel-size", str(k.pipeline_parallel_size)]
     args += ["--dtype", k.dtype]
-    from modelship.infer.infer_config import default_gpu_memory_utilization
-
-    gmu = k.gpu_memory_utilization
-    if gmu is None:
-        gmu = default_gpu_memory_utilization(m)
-    args += ["--gpu-memory-utilization", str(gmu)]
+    # Derived, not a config key: the modelship phase resolves it from this same call.
+    args += ["--gpu-memory-utilization", str(resolve_gpu_memory_utilization(m))]
     if k.max_model_len is not None:
         args += ["--max-model-len", str(k.max_model_len)]
     if k.tokenizer:
