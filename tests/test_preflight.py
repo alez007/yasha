@@ -494,31 +494,66 @@ class TestEstimateWeightFootprint:
         assert _estimate_weight_footprint(str(not_a_dir)) == 0
 
 
+_DENSE_CFG = {
+    "num_hidden_layers": 48,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 16,
+    "hidden_size": 5120,
+    "head_dim": 160,
+    "torch_dtype": "bfloat16",
+    "max_position_embeddings": 32768,
+}
+
+
 class TestVllmPreflight:
-    def test_recommendation_keys_are_engine_config_fields(self, tmp_path):
-        """vllm_infer feeds the merged recommendation back through VllmEngineConfig,
-        which forbids extras — a key that isn't a field fails at actor init."""
-        snapshot = _write_model_snapshot(
-            tmp_path,
-            config_json={
-                "num_hidden_layers": 48,
-                "num_attention_heads": 32,
-                "num_key_value_heads": 16,
-                "hidden_size": 5120,
-                "head_dim": 160,
-                "torch_dtype": "bfloat16",
-                "max_position_embeddings": 32768,
-            },
-            weight_bytes=19 * 1024**3,
+    # The recommendation keys that aren't VllmEngineConfig fields. vllm_infer pops
+    # each one out of the merged kwargs before building the model, which forbids
+    # extras; gpu_memory_utilization goes to resolve_gpu_memory_utilization instead.
+    _ACTOR_POPPED = frozenset({"gpu_memory_utilization"})
+
+    def test_recommendation_survives_the_actor_merge(self, tmp_path):
+        """Every shape whose recommendation reaches VllmEngineConfig, including the
+        two that recommend a derived gpu_memory_utilization (MLA on GPU, and CPU) —
+        a dense GPU deploy is the only one that never emits it."""
+        cases = (
+            ("dense/40GiB", _DENSE_CFG, 1, HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])),
+            ("dense/80GiB", _DENSE_CFG, 1, HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])),
+            ("mla/40GiB", _MLA_CFG, 1, HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])),
+            ("dense/cpu", _DENSE_CFG, 0, HardwareProfile(ram_bytes=64 * 1024**3)),
         )
-        for num_gpus, hw in (
-            (1, HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])),
-            (1, HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])),
-        ):
+        for label, config_json, num_gpus, hw in cases:
+            case_dir = tmp_path / label.replace("/", "-")
+            case_dir.mkdir()
+            snapshot = _write_model_snapshot(case_dir, config_json=config_json, weight_bytes=19 * 1024**3)
             cfg = _make_config(resolved_path=str(snapshot), num_gpus=num_gpus)
             rec = VllmPreflight().recommend(cfg, hw)
-            assert rec
-            VllmEngineConfig(**rec)
+            assert rec, label
+            assert set(rec) - self._ACTOR_POPPED <= set(VllmEngineConfig.model_fields), label
+            VllmEngineConfig(**{k: v for k, v in rec.items() if k not in self._ACTOR_POPPED})
+
+    def test_popped_keys_are_the_ones_the_schema_rejects_by_name(self):
+        """Popping a key the schema doesn't declare derived would hide a typo:
+        forbid would have caught it, the pop swallows it."""
+        from modelship.utils.config_schema import _VLLM_DERIVED_KEYS
+
+        assert set(_VLLM_DERIVED_KEYS) >= self._ACTOR_POPPED
+
+    def test_gpu_memory_utilization_is_recommended_where_it_matters(self, tmp_path):
+        """Pins the asymmetry the merge test relies on: derived on CPU, absent on a
+        dense GPU deploy. If this flips, the case list above is no longer covering
+        both sides."""
+        recs = {}
+        for label, num_gpus, hw in (
+            ("gpu", 1, HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])),
+            ("cpu", 0, HardwareProfile(ram_bytes=64 * 1024**3)),
+        ):
+            case_dir = tmp_path / label
+            case_dir.mkdir()
+            snapshot = _write_model_snapshot(case_dir, config_json=_DENSE_CFG, weight_bytes=19 * 1024**3)
+            cfg = _make_config(resolved_path=str(snapshot), num_gpus=num_gpus)
+            recs[label] = VllmPreflight().recommend(cfg, hw)
+        assert "gpu_memory_utilization" not in recs["gpu"]
+        assert "gpu_memory_utilization" in recs["cpu"]
 
     def test_no_gpus_returns_empty(self):
         cfg = _make_config(resolved_path="/nonexistent")
