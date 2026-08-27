@@ -637,6 +637,27 @@ class TestStrictSchema:
             ModelshipModelConfig.model_validate(raw)
 
     @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("num_gpus", -1),
+            ("num_gpus", -0.5),
+            ("num_cpus", -2),
+            ("num_replicas", 0),
+            ("num_replicas", -1),
+            ("max_ongoing_requests", 0),
+        ],
+    )
+    def test_out_of_range_resource_values_rejected(self, key, value):
+        """A negative num_gpus read as "not fractional" all the way down to Ray,
+        which then got a reservation it can't satisfy."""
+        with pytest.raises(ValidationError, match="greater than or equal"):
+            ModelshipModelConfig.model_validate({**self._BASE, key: value})
+
+    def test_num_gpus_zero_and_fractional_still_allowed(self):
+        for value in (0, 0.5, 2):
+            assert ModelshipModelConfig.model_validate({**self._BASE, "num_gpus": value}).num_gpus == value
+
+    @pytest.mark.parametrize(
         "path",
         sorted((Path(__file__).resolve().parent.parent / "config" / "examples").glob("*.yaml")),
         ids=lambda p: p.name,

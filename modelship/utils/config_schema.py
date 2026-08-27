@@ -209,12 +209,15 @@ class ModelshipModelConfig(_StrictModel):
     model: str | None = None
     usecase: ModelUsecase
     loader: ModelLoader
-    num_gpus: float = 0
-    num_cpus: float = 0.1
-    num_replicas: int = 1
+    # Ray resource reservations: a negative value is meaningless to Ray and, for
+    # num_gpus, reads as "not fractional" everywhere downstream.
+    num_gpus: float = Field(default=0, ge=0)
+    num_cpus: float = Field(default=0.1, ge=0)
+    # Serve rejects < 1 deep in deployment; same for max_ongoing_requests.
+    num_replicas: int = Field(default=1, ge=1)
     # Load-driven replica scaling; mutually exclusive with the fixed num_replicas.
     autoscaling_config: AutoscalingConfig | None = None
-    max_ongoing_requests: int | None = None
+    max_ongoing_requests: int | None = Field(default=None, ge=1)
     vllm_engine_kwargs: VllmEngineConfig = Field(default_factory=VllmEngineConfig)
     diffusers_config: DiffusersConfig | None = None
     llama_server_config: LlamaServerConfig | None = None

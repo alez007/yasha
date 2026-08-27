@@ -282,7 +282,37 @@ class TestNestedFlags:
         with pytest.raises(SystemExit) as exc:
             _args("--llama-server-config.n-ctx", "8192")
         assert exc.value.code == 2
-        assert "pass --model" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "--llama-server-config.n-ctx" in err
+        assert "pass --model" in err
+
+    def test_tuning_flag_with_config_says_to_edit_the_file(self, capsys):
+        """--config is already what they passed, so pointing back at it doesn't help."""
+        with pytest.raises(SystemExit) as exc:
+            _args("--config", "models.yaml", "--llama-server-config.n-ctx", "8192")
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "--llama-server-config.n-ctx" in err
+        assert "entry in the config file" in err
+        assert "pass --model" not in err
+
+    def test_the_error_names_the_flags_that_triggered_it(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            _args(
+                "--llama-server-config.n-ctx",
+                "8192",
+                "--llama-server-config.parallel",
+                "2",
+                "--autoscaling-config.max-replicas",
+                "3",
+                "--chat-template-kwargs",
+                "{}",
+            )
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        # Capped at three, so a wide invocation doesn't dump every flag it set.
+        assert err.count("--") >= 3
+        assert ", ..." in err
 
     def test_unknown_nested_flag_is_rejected(self, capsys):
         with pytest.raises(SystemExit) as exc:

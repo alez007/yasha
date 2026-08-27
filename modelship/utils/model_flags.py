@@ -140,8 +140,9 @@ def add_generated_model_args(parser: argparse.ArgumentParser) -> None:
         )
 
 
-def any_generated_arg_set(args: argparse.Namespace) -> bool:
-    return any(getattr(args, arg.dest, UNSET) is not UNSET for arg in GENERATED_MODEL_ARGS)
+def set_generated_options(args: argparse.Namespace) -> tuple[str, ...]:
+    """The generated flags actually passed, named as the user typed them."""
+    return tuple(arg.option for arg in GENERATED_MODEL_ARGS if getattr(args, arg.dest, UNSET) is not UNSET)
 
 
 def apply_generated_args(args: argparse.Namespace, raw: dict) -> None:

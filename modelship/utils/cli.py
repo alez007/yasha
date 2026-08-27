@@ -12,8 +12,8 @@ from modelship.utils.config_schema import ModelLoader, ModelUsecase
 from modelship.utils.model_flags import (
     MODEL_ARG_KEYS,
     add_generated_model_args,
-    any_generated_arg_set,
     apply_generated_args,
+    set_generated_options,
 )
 from modelship.utils.model_ref import parse_model_ref
 
@@ -235,8 +235,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     _add_model_args(parser)
     args = parser.parse_args(argv)
-    if args.model is None and any_generated_arg_set(args):
-        parser.error("the model tuning flags configure the model --model deploys; pass --model, or use --config.")
+    tuning = set_generated_options(args)
+    if tuning and args.model is None:
+        shown = ", ".join(tuning[:3]) + (", ..." if len(tuning) > 3 else "")
+        if args.config is not None:
+            parser.error(
+                f"{shown}: the model tuning flags only apply to --model. Set these keys "
+                "on the model's entry in the config file instead."
+            )
+        parser.error(f"{shown}: the model tuning flags configure the model --model deploys; pass --model.")
     if args.model is not None and args.config is not None:
         # Rejected here rather than in resolve_input_models so both entry points fail
         # before the driver starts a Ray head.
