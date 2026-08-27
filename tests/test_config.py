@@ -16,7 +16,7 @@ from modelship.infer.infer_config import (
     ModelshipModelConfig,
     ModelUsecase,
     VllmEngineConfig,
-    default_gpu_memory_utilization,
+    resolve_gpu_memory_utilization,
 )
 
 
@@ -233,77 +233,30 @@ class TestModelshipModelConfig:
         )
         assert config.num_gpus == 0.70
 
-    def test_fractional_num_gpus_sets_gpu_memory_utilization(self):
-        # A fractional num_gpus is the single source of truth for the VRAM share:
-        # it must land on gpu_memory_utilization so the preflight + engine agree.
+    @pytest.mark.parametrize(("num_gpus", "expected"), [(0.5, 0.5), (1, 0.9), (0, 0.4)])
+    def test_gpu_memory_utilization_resolves_from_num_gpus(self, num_gpus, expected):
+        """A fractional num_gpus is the share Ray reserved, so it caps vLLM too;
+        anything else takes the loader-appropriate default (0.4 on CPU)."""
         config = ModelshipModelConfig(
             name="test-llm",
             model="some-model",
             usecase=ModelUsecase.generate,
             loader=ModelLoader.vllm,
-            num_gpus=0.5,
+            num_gpus=num_gpus,
         )
-        assert config.vllm_engine_kwargs.gpu_memory_utilization == 0.5
-        # and it's marked set, so it survives model_dump(exclude_unset=True)
-        assert "gpu_memory_utilization" in config.vllm_engine_kwargs.model_fields_set
+        assert resolve_gpu_memory_utilization(config) == expected
 
-    def test_explicit_gpu_memory_utilization_rejected_alongside_fractional_num_gpus(self):
-        with pytest.raises(ValidationError, match="cannot be set explicitly"):
+    @pytest.mark.parametrize(("key", "value"), [("gpu_memory_utilization", 0.6), ("model", "other/m")])
+    @pytest.mark.parametrize("num_gpus", [0, 0.5, 1])
+    def test_derived_engine_kwargs_rejected(self, key, value, num_gpus):
+        with pytest.raises(ValidationError, match="cannot be set"):
             ModelshipModelConfig(
                 name="test-llm",
                 model="some-model",
                 usecase=ModelUsecase.generate,
                 loader=ModelLoader.vllm,
-                num_gpus=0.5,
-                vllm_engine_kwargs={"gpu_memory_utilization": 0.6},
-            )
-
-    def test_whole_gpu_leaves_gpu_memory_utilization_unset(self):
-        # Left None rather than eagerly written as 0.9: default_gpu_memory_utilization()
-        # resolves it lazily so an unset field is never confused with a real value.
-        config = ModelshipModelConfig(
-            name="test-llm",
-            model="some-model",
-            usecase=ModelUsecase.generate,
-            loader=ModelLoader.vllm,
-            num_gpus=1,
-        )
-        assert config.vllm_engine_kwargs.gpu_memory_utilization is None
-        assert default_gpu_memory_utilization(config) == 0.9
-
-    def test_explicit_gpu_memory_utilization_rejected_on_whole_gpu_deploy(self):
-        with pytest.raises(ValidationError, match="cannot be set explicitly"):
-            ModelshipModelConfig(
-                name="test-llm",
-                model="some-model",
-                usecase=ModelUsecase.generate,
-                loader=ModelLoader.vllm,
-                num_gpus=1,
-                vllm_engine_kwargs={"gpu_memory_utilization": 0.6},
-            )
-
-    def test_cpu_num_gpus_leaves_gpu_memory_utilization_unset(self):
-        # On vLLM's CPU backend gpu_memory_utilization means fraction of host RAM, not VRAM;
-        # the CPU-appropriate fallback is 0.4, resolved lazily rather than written back here.
-        config = ModelshipModelConfig(
-            name="test-llm",
-            model="some-model",
-            usecase=ModelUsecase.generate,
-            loader=ModelLoader.vllm,
-            num_gpus=0,
-        )
-        assert config.vllm_engine_kwargs.gpu_memory_utilization is None
-        assert default_gpu_memory_utilization(config) == 0.4
-
-    def test_explicit_gpu_memory_utilization_rejected_on_cpu_deploy(self):
-        with pytest.raises(ValidationError, match="cannot be set explicitly"):
-            ModelshipModelConfig(
-                name="test-llm",
-                model="some-model",
-                usecase=ModelUsecase.generate,
-                loader=ModelLoader.vllm,
-                num_gpus=0,
-                vllm_engine_kwargs={"gpu_memory_utilization": 0.6},
+                num_gpus=num_gpus,
+                vllm_engine_kwargs={key: value},
             )
 
     def test_num_gpus_integer_required_above_one(self):
@@ -432,7 +385,6 @@ class TestVllmEngineConfig:
         assert config.tensor_parallel_size == 1
         assert config.pipeline_parallel_size == 1
         assert config.dtype == "auto"
-        assert config.gpu_memory_utilization is None
         assert config.trust_remote_code is False
 
     def test_custom_values(self):

@@ -65,7 +65,7 @@ from modelship.infer.infer_config import (
     ModelUsecase,
     RawRequestProxy,
     VllmEngineConfig,
-    default_gpu_memory_utilization,
+    resolve_gpu_memory_utilization,
 )
 from modelship.infer.vllm import engine_ops
 from modelship.infer.vllm.capabilities import VllmCapabilities
@@ -253,6 +253,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                 f"vllm deployment '{model_config.name}' is missing a resolved model path. "
                 f"Check driver logs for resolution errors."
             )
+        self._model_path: str = model_config._resolved_path
 
         user_overrides = model_config.vllm_engine_kwargs.model_dump(exclude_unset=True)
 
@@ -265,14 +266,18 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         else:
             logger.info("preflight recommendation for '%s': none", model_config.name)
         config_engine_kwargs = merge_with_user_overrides(recommendation, user_overrides, model_name=model_config.name)
-        config_engine_kwargs.setdefault("gpu_memory_utilization", default_gpu_memory_utilization(model_config))
-        config_engine_kwargs["model"] = model_config._resolved_path
+        # Derived, not a config key: popped before the kwargs model, which forbids it.
+        self._gpu_memory_utilization = resolve_gpu_memory_utilization(
+            model_config, config_engine_kwargs.pop("gpu_memory_utilization", None)
+        )
 
-        # gpu_memory_utilization for a fractional num_gpus is resolved once at
-        # config normalization (normalize_num_gpus_and_tp), so it's already in
-        # user_overrides here.
         self.vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
-        logger.info("initialising vllm engine with args: %s", self.vllm_engine_kwargs.model_dump())
+        logger.info(
+            "initialising vllm engine with args: %s (model=%s, gpu_memory_utilization=%s)",
+            self.vllm_engine_kwargs.model_dump(),
+            self._model_path,
+            self._gpu_memory_utilization,
+        )
 
         # Force the ray executor for multi-slot deploys: the outer actor sits
         # in a 0-GPU PG bundle, but vLLM's ParallelConfig validates world_size
@@ -291,14 +296,14 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             mm_kwargs["mm_processor_kwargs"] = self.vllm_engine_kwargs.mm_processor_kwargs
 
         engine_args = VllmAsyncEngineArgs(
-            model=self.vllm_engine_kwargs.model,
+            model=self._model_path,
             tensor_parallel_size=self.vllm_engine_kwargs.tensor_parallel_size,
             pipeline_parallel_size=self.vllm_engine_kwargs.pipeline_parallel_size,
             max_model_len=cast("int", self.vllm_engine_kwargs.max_model_len),
             dtype=cast("VllmModelDType", self.vllm_engine_kwargs.dtype),
             tokenizer=self.vllm_engine_kwargs.tokenizer,
             trust_remote_code=self.vllm_engine_kwargs.trust_remote_code,
-            gpu_memory_utilization=cast("float", self.vllm_engine_kwargs.gpu_memory_utilization),
+            gpu_memory_utilization=self._gpu_memory_utilization,
             distributed_executor_backend=distributed_executor_backend,
             enable_log_requests=self.vllm_engine_kwargs.enable_log_requests
             if self.vllm_engine_kwargs.enable_log_requests is not None
@@ -502,9 +507,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                 engine_client=self.engine,
                 models=VllmOpenAIServingModels(
                     engine_client=self.engine,
-                    base_model_paths=[
-                        VllmBaseModelPath(name=self.model_config.name, model_path=self.vllm_engine_kwargs.model)
-                    ],
+                    base_model_paths=[VllmBaseModelPath(name=self.model_config.name, model_path=self._model_path)],
                 ),
                 request_logger=VllmRequestLogger(max_log_len=None),
                 chat_template_config=VllmChatTemplateConfig(chat_template=None, chat_template_content_format="auto"),
@@ -521,9 +524,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                 engine_client=self.engine,
                 models=VllmOpenAIServingModels(
                     engine_client=self.engine,
-                    base_model_paths=[
-                        VllmBaseModelPath(name=self.model_config.name, model_path=self.vllm_engine_kwargs.model)
-                    ],
+                    base_model_paths=[VllmBaseModelPath(name=self.model_config.name, model_path=self._model_path)],
                 ),
                 request_logger=VllmRequestLogger(max_log_len=None),
             )
@@ -539,9 +540,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                 engine_client=self.engine,
                 models=VllmOpenAIServingModels(
                     engine_client=self.engine,
-                    base_model_paths=[
-                        VllmBaseModelPath(name=self.model_config.name, model_path=self.vllm_engine_kwargs.model)
-                    ],
+                    base_model_paths=[VllmBaseModelPath(name=self.model_config.name, model_path=self._model_path)],
                 ),
                 request_logger=VllmRequestLogger(max_log_len=None),
             )

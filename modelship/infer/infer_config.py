@@ -26,6 +26,7 @@ from modelship.utils.config_schema import (
     VllmEngineConfig,
     WhispercppConfig,
     default_gpu_memory_utilization,
+    resolve_gpu_memory_utilization,
 )
 
 __all__ = [
@@ -46,6 +47,7 @@ __all__ = [
     "default_gpu_memory_utilization",
     "get_disconnect_registry",
     "reset_disconnect_registry",
+    "resolve_gpu_memory_utilization",
 ]
 
 _logger = get_logger("config")

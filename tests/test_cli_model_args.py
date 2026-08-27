@@ -270,13 +270,13 @@ class TestNestedFlags:
         assert len(options) == len(set(options))
         assert not set(options) & {f"--{key.replace('_', '-')}" for key in MODEL_ARG_KEYS}
 
-    @pytest.mark.parametrize(
-        ("flag", "value"),
-        [("--vllm-engine-kwargs.gpu-memory-utilization", "0.8"), ("--vllm-engine-kwargs.model", "other/m")],
-    )
-    def test_derived_vllm_fields_are_rejected_by_the_schema(self, flag, value):
-        with pytest.raises(ValidationError, match="cannot be set"):
-            validate_models([_raw(*self._VLLM, flag, value)])
+    @pytest.mark.parametrize("flag", ["--vllm-engine-kwargs.gpu-memory-utilization", "--vllm-engine-kwargs.model"])
+    def test_derived_keys_have_no_flag(self, flag, capsys):
+        """They aren't schema fields, so the generator can't emit them either."""
+        with pytest.raises(SystemExit) as exc:
+            _args(*self._VLLM, flag, "0.8")
+        assert exc.value.code == 2
+        assert "unrecognized arguments" in capsys.readouterr().err
 
     def test_tuning_flag_without_model_is_rejected(self, capsys):
         with pytest.raises(SystemExit) as exc:

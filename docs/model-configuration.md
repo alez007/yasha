@@ -225,7 +225,9 @@ Example: model: lmstudio-community/Qwen2.5-7B-Instruct-GGUF:*Q4_K_M.gguf
 
 ## vLLM Loader
 
-Chat/generation, embeddings, transcription, and translation. Configured via `vllm_engine_kwargs`:
+Chat/generation, embeddings, transcription, and translation. Configured via `vllm_engine_kwargs`.
+
+Two vLLM settings are **not** keys here, because modelship derives them and setting them is a config error: `model` (the engine always loads the resolved top-level `model:`) and `gpu_memory_utilization` (a fractional `num_gpus` for a shared GPU, else a preflight recommendation, else `0.9` — `0.4` on CPU, where vLLM reads it as a *host RAM* fraction instead of VRAM).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -235,8 +237,6 @@ Chat/generation, embeddings, transcription, and translation. Configured via `vll
 | `dtype` | string | `auto` | `auto`, `float16`, `bfloat16` |
 | `tokenizer` | string | model default | Custom tokenizer path |
 | `trust_remote_code` | bool | `false` | Allow remote code execution |
-| `model` | string | — | **Not user-settable** — the engine always loads the resolved top-level `model:`, so setting it here is a config error. |
-| `gpu_memory_utilization` | float | `0.9` (`0.4` on CPU) | **Not user-settable** — setting it explicitly is a config error. Always derived: from `num_gpus` for a fractional share, else a preflight recommendation, else the loader default. VRAM fraction on GPU; on CPU it means *host RAM* fraction reserved for the KV cache instead (see [CPU](#cpu-no-gpu-required)) |
 | `quantization` | string | — | e.g. `awq`, `gptq` |
 | `enable_auto_tool_choice` | bool | — | Enable automatic tool/function calling |
 | `tool_call_parser` | string | — | e.g. `llama3_json`, `hermes` |
@@ -254,7 +254,7 @@ Chat/generation, embeddings, transcription, and translation. Configured via `vll
 
 Installable via the `vllm-cpu` extra (paired with `num_gpus: 0`) for quantized chat with no GPU — safetensors, or AWQ/GPTQ/compressed-tensors quants (CPU backend supports AWQ/GPTQ on x86 plus INT8 W8A8); GGUF is rejected here too.
 
-`gpu_memory_utilization` means *host RAM* fraction on CPU, not VRAM — modelship's default drops to `0.4` (vLLM's own `0.9` would try to reserve 90% of node RAM and fail at worker init). Since the field isn't user-settable, preflight's recommendation (from actual free RAM and the model's weight footprint) always applies when it can compute one; the `0.4` fallback only kicks in when preflight declines (e.g. unreadable `config.json`). Set `max_model_len` explicitly for finer control. vLLM also reads `VLLM_CPU_KVCACHE_SPACE` (fixed GiB budget) and `VLLM_CPU_OMP_THREADS_BIND` (thread pinning) directly from the environment — vLLM-native, not modelship config.
+`gpu_memory_utilization` means *host RAM* fraction on CPU, not VRAM — modelship's default drops to `0.4` (vLLM's own `0.9` would try to reserve 90% of node RAM and fail at worker init). Since it isn't a settable key, preflight's recommendation (from actual free RAM and the model's weight footprint) always applies when it can compute one; the `0.4` fallback only kicks in when preflight declines (e.g. unreadable `config.json`). Set `max_model_len` explicitly for finer control. vLLM also reads `VLLM_CPU_KVCACHE_SPACE` (fixed GiB budget) and `VLLM_CPU_OMP_THREADS_BIND` (thread pinning) directly from the environment — vLLM-native, not modelship config.
 
 Minimum config — preflight fills in the rest:
 
