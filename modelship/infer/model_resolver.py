@@ -1,9 +1,12 @@
 import fnmatch
+import os
 import threading
 import time
 from collections.abc import Iterable
 from pathlib import Path
 from typing import NamedTuple
+
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 from huggingface_hub import hf_hub_download, model_info, snapshot_download
 from huggingface_hub.utils import filter_repo_objects  # pyright: ignore[reportPrivateImportUsage]
