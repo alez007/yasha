@@ -85,7 +85,9 @@ from modelship.openai.protocol.responses import (
     ResponseReasoningText,
     ResponsesRequest,
     ResponseUsage,
+    encode_sse_event,
     error_ws_frame,
+    failure_event_from_frames,
     frame_sse,
 )
 from modelship.openai.protocol.usage import CompletionTokenUsageInfo, PromptTokenUsageInfo, UsageInfo
@@ -157,7 +159,9 @@ __all__ = [
     "TranslationResponseVerbose",
     "UsageInfo",
     "create_error_response",
+    "encode_sse_event",
     "error_ws_frame",
+    "failure_event_from_frames",
     "frame_sse",
     "random_uuid",
 ]

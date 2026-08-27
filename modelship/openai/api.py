@@ -59,12 +59,15 @@ from modelship.openai.protocol import (
     TranslationResponse,
     TranslationResponseVerbose,
     create_error_response,
+    encode_sse_event,
     error_ws_frame,
+    failure_event_from_frames,
     frame_sse,
 )
 from modelship.openai.protocol.responses.adapter import UnsupportedResponsesFeatureError
 from modelship.openai.state import responses as responses_state
 from modelship.openai.utils import responses as responses_utils
+from modelship.openai.utils.chat import encode_error_sse
 from modelship.state import get_state_store
 from modelship.utils import random_uuid
 
@@ -154,6 +157,18 @@ class OpenaiModelList(BaseModel):
 
 def _error_response(result: ErrorResponse) -> JSONResponse:
     return JSONResponse(content=result.model_dump(mode="json"), status_code=result._http_status)
+
+
+def _stream_error_chunk(endpoint: str, model: str, created_frame: Any, last_frame: Any) -> str:
+    """SSE-encode a failure between chunks, after headers are already committed to 200
+    — raising would just abort the connection with no body. Message is generic; details
+    go to the server log instead. /v1/responses needs a typed terminal event rebuilt from
+    the frames already sent; every other endpoint takes the bare `data:` error object."""
+    message = "Internal error during generation"
+    if endpoint == "create_response":
+        return encode_sse_event(failure_event_from_frames(created_frame, last_frame, message, model=model))
+    error = create_error_response(message=message, err_type="api_error", status_code=500)
+    return encode_error_sse(error)
 
 
 def _validation_error_from_cause(cause: BaseException) -> ErrorResponse:
@@ -489,17 +504,23 @@ class ModelshipAPI:
 
             # streaming — first chunk already consumed, chain it back
             async def _stream():
+                # Held for _stream_error_chunk: opening frame carries the Responses
+                # envelope, last one the sequence number. Parsed only on the error path.
+                last = first
                 try:
                     STREAM_CHUNKS_TOTAL.inc(tags={"model": model})
                     yield first
                     async for chunk in response_gen:
                         STREAM_CHUNKS_TOTAL.inc(tags={"model": model})
+                        last = chunk
                         yield chunk
                     REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
                 except Exception:
                     REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "stream_error"})
                     REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
-                    raise
+                    logger.exception("stream failed mid-response endpoint=%s model=%s", endpoint, model)
+                    yield _stream_error_chunk(endpoint, model, first, last)
+                    yield "data: [DONE]\n\n"
                 finally:
                     REQUEST_DURATION_SECONDS.observe(
                         time.monotonic() - start, tags={"model": model, "endpoint": endpoint}

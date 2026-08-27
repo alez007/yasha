@@ -79,7 +79,43 @@ def store_failure_event(terminal_payload: dict[str, Any], message: str) -> dict[
     }
 
 
-def _encode_sse_event(event: dict[str, Any]) -> str:
+def _frame_payload(frame: Any) -> dict[str, Any]:
+    """Best-effort decode of an SSE frame's ``data:`` JSON. ``{}`` for anything that
+    isn't one — a non-str chunk, the ``[DONE]`` terminator, malformed JSON."""
+    if not isinstance(frame, str):
+        return {}
+    for line in frame.splitlines():
+        if not line.startswith("data: "):
+            continue
+        try:
+            payload = json.loads(line[len("data: ") :])
+        except ValueError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+    return {}
+
+
+def failure_event_from_frames(created_frame: Any, last_frame: Any, message: str, *, model: str = "") -> dict[str, Any]:
+    """Terminal ``response.failed`` for a stream that died outside the loader, where no
+    translator survives to call :meth:`ResponsesStreamTranslator.fail`. Rebuilds the
+    envelope from the frames already sent: ``response.created`` carries id/created_at/
+    model, the last frame the sequence number this one must follow. Output is dropped —
+    the frames carry it as deltas, not items."""
+    response = dict(_frame_payload(created_frame).get("response") or {})
+    response.update(status="failed", error={"message": message}, output=[])
+    response.setdefault("object", "response")
+    response.setdefault("id", f"resp_{random_uuid()}")
+    response.setdefault("created_at", int(time.time()))
+    response.setdefault("model", model)
+    seq = _frame_payload(last_frame).get("sequence_number")
+    return {
+        "type": "response.failed",
+        "sequence_number": seq + 1 if isinstance(seq, int) else 0,
+        "response": response,
+    }
+
+
+def encode_sse_event(event: dict[str, Any]) -> str:
     """Wire-format one Responses event dict as an SSE frame (named event line + JSON data line)."""
     return f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
 
@@ -93,7 +129,7 @@ async def frame_sse(gen: AsyncIterator[Any]) -> AsyncGenerator[Any, None]:
     framed_any = False
     async for item in gen:
         if isinstance(item, dict):
-            yield _encode_sse_event(item)
+            yield encode_sse_event(item)
             framed_any = True
         else:
             yield item

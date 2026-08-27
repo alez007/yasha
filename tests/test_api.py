@@ -624,3 +624,91 @@ class TestHandleResponse:
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
+
+    @pytest.mark.asyncio
+    async def test_stream_error_after_first_chunk_yields_sse_error_not_raise(self, api):
+        """Failure between chunks: raising after headers are committed just aborts the
+        connection with no body, so it must yield a parseable SSE error chunk instead."""
+        import json
+
+        from fastapi.responses import StreamingResponse
+
+        async def mock_gen():
+            yield "data: chunk1\n\n"
+            raise RuntimeError("boundary dropped")
+            yield  # pragma: no cover — unreachable, keeps this an async generator
+
+        watcher = MagicMock()
+        result = await api._handle_response(mock_gen(), watcher, "test-model", "create_chat_completion")
+        assert isinstance(result, StreamingResponse)
+
+        chunks = [chunk async for chunk in result.body_iterator]
+        assert chunks[0] == "data: chunk1\n\n"
+        assert chunks[-1] == "data: [DONE]\n\n"
+        error_chunk = chunks[-2]
+        assert error_chunk.startswith("data: ")
+        body = json.loads(error_chunk[len("data: ") :])
+        assert body["error"]["type"] == "api_error"
+        watcher.stop.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_stream_error_for_responses_endpoint_yields_response_failed_event(self, api):
+        """Typed `event:` framing, and the event must continue the stream it terminates:
+        same response id, next sequence number."""
+        import json
+
+        from fastapi.responses import StreamingResponse
+
+        created = {
+            "type": "response.created",
+            "sequence_number": 0,
+            "response": {"id": "resp_abc", "object": "response", "created_at": 1, "model": "m", "output": []},
+        }
+        delta = {"type": "response.output_text.delta", "sequence_number": 7, "delta": "hi"}
+
+        async def mock_gen():
+            yield f"event: {created['type']}\ndata: {json.dumps(created)}\n\n"
+            yield f"event: {delta['type']}\ndata: {json.dumps(delta)}\n\n"
+            raise RuntimeError("boundary dropped")
+            yield  # pragma: no cover — unreachable, keeps this an async generator
+
+        watcher = MagicMock()
+        result = await api._handle_response(mock_gen(), watcher, "test-model", "create_response")
+        assert isinstance(result, StreamingResponse)
+
+        chunks = [chunk async for chunk in result.body_iterator]
+        assert chunks[-1] == "data: [DONE]\n\n"
+        error_chunk = chunks[-2]
+        assert error_chunk.startswith("event: response.failed\n")
+        event = json.loads(error_chunk.split("data: ", 1)[1])
+        assert event["sequence_number"] == 8
+        assert event["response"]["id"] == "resp_abc"
+        assert event["response"]["model"] == "m"
+        assert event["response"]["created_at"] == 1
+        assert event["response"]["status"] == "failed"
+        assert event["response"]["error"]["message"]
+        watcher.stop.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_stream_error_for_responses_endpoint_without_parseable_frames(self, api):
+        """Unparseable frames still have to produce a schema-complete event."""
+        import json
+
+        from fastapi.responses import StreamingResponse
+
+        async def mock_gen():
+            yield "data: [DONE]\n\n"
+            raise RuntimeError("boundary dropped")
+            yield  # pragma: no cover — unreachable, keeps this an async generator
+
+        watcher = MagicMock()
+        result = await api._handle_response(mock_gen(), watcher, "test-model", "create_response")
+        assert isinstance(result, StreamingResponse)
+
+        chunks = [chunk async for chunk in result.body_iterator]
+        event = json.loads(chunks[-2].split("data: ", 1)[1])
+        assert event["sequence_number"] == 0
+        assert event["response"]["model"] == "test-model"
+        assert event["response"]["id"].startswith("resp_")
+        assert event["response"]["output"] == []
+        assert event["response"]["status"] == "failed"

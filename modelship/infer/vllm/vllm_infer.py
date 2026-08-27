@@ -716,9 +716,14 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         except UnsupportedContentError as exc:
             return _to_error_response(exc)
         chat_request.stream = request.stream or False
-        vllm_request = engine_ops.build_vllm_request(
-            chat_request, self.model_config.chat_template_kwargs, cache_salt=raw_request.identity
-        )
+        try:
+            vllm_request = engine_ops.build_vllm_request(
+                chat_request, self.model_config.chat_template_kwargs, cache_salt=raw_request.identity
+            )
+        except ValidationError as exc:
+            # Same 400 as the `responses_request_to_chat` failure above.
+            logger.info("Validation error building vllm request: %s", exc)
+            return responses_validation_error(exc)
         return await self._render_bundle(vllm_request)
 
     async def _create_response_no_stream(
