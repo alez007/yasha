@@ -7,7 +7,7 @@ import math
 import os
 from typing import Any, NamedTuple, cast
 
-from modelship.infer.infer_config import ModelshipModelConfig, default_gpu_memory_utilization
+from modelship.infer.infer_config import ModelshipModelConfig, resolve_gpu_memory_utilization
 from modelship.logging import get_logger
 from modelship.preflight._mla import MLAInfo
 from modelship.preflight._mla import kv_bytes_per_token as mla_kv_bytes_per_token
@@ -156,8 +156,8 @@ class VllmPreflight:
         gpu_basis = (
             min(g.sizing_total_bytes for g in hw.gpus) if fractional else min(g.available_bytes for g in hw.gpus)
         )
-        # gpu_util already carries the fraction (set at config normalization).
-        gpu_util = config.vllm_engine_kwargs.gpu_memory_utilization or default_gpu_memory_utilization(config)
+        # A fractional num_gpus is the fraction; anything else takes the default.
+        gpu_util = resolve_gpu_memory_utilization(config)
 
         # vLLM 0.26.0's CUDA-graph memory profiler is a no-op stub, and KV-block
         # commitment isn't bounded by max_model_len — gpu_util is the only lever.

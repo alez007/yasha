@@ -1,6 +1,6 @@
 # Model Configuration
 
-Reference for `models.yaml` (default: `config/models.yaml`). Each entry under `models:` defines one deployment.
+Reference for `models.yaml` (default: `config/models.yaml`). Each entry under `models:` defines one deployment. Unknown keys are rejected: a typo like `n_ctxx` is a validation error, not a silently ignored setting — in the file and in the [CLI flags](#single-model-deploys-no-config-file) alike.
 
 ## CLI Options
 
@@ -60,11 +60,37 @@ These flags mirror the root-level fields of a `models:` entry one for one, and a
 | `--num-replicas` | `num_replicas` |
 | `--max-ongoing-requests` | `max_ongoing_requests` |
 
+#### Tuning blocks
+
+The nested blocks are generated from the same schema, one flag per key, named for its config path — `--<block>.<key>`, hyphenated:
+
+```bash
+mship deploy --model lmstudio-community/Qwen3-8B-GGUF:'*Q4_K_M.gguf' \
+             --loader llama_server --usecase generate \
+             --llama-server-config.n-ctx 8192 \
+             --llama-server-config.parallel 4
+```
+
+So `--vllm-engine-kwargs.max-model-len 8192` is `vllm_engine_kwargs: {max_model_len: 8192}`, `--autoscaling-config.max-replicas 3` is `autoscaling_config: {max_replicas: 3}`, and so on for `diffusers_config`, `stable_diffusion_cpp_config` and `whispercpp_config`. `chat_template_kwargs` is free-form, so it takes one whole map. `mship deploy --help` lists every flag with its type and default.
+
+Values are read as YAML: the same text you would write after the colon in the file.
+
+| Flag | Value |
+|---|---|
+| `--llama-server-config.n-ctx 8192` | `8192` |
+| `--vllm-engine-kwargs.trust-remote-code true` | `true` |
+| `--vllm-engine-kwargs.limit-mm-per-prompt '{image: 2}'` | a map |
+| `--llama-server-config.extra-args '["--no-mmap"]'` | a list |
+| `--llama-server-config.threads null` | `null` — an explicit value, not "left unset" |
+| `--chat-template-kwargs '{enable_thinking: false}'` | a map |
+
+That includes YAML's own quirks: bare `on`, `off`, `yes` and `no` are booleans, so quote them — `--llama-server-config.chat-template '"on"'` — when the string is what you mean.
+
 Limits:
 
 - **One model per invocation.** Use `--config` for several. A second `mship deploy --model ...` against a running cluster adds to it (the default additive merge), so models can also be added one at a time.
-- **No nested blocks.** `vllm_engine_kwargs`, `llama_server_config`, `autoscaling_config`, `diffusers_config`, `stable_diffusion_cpp_config`, `whispercpp_config` and `chat_template_kwargs` have no flags — those need a config file. Preflight still auto-sizes the model, so most deploys don't need them.
-- **`--model` and `--config` are mutually exclusive.** With `--model`, the default `config/models.yaml` is ignored entirely.
+- **`--model` and `--config` are mutually exclusive.** With `--model`, the default `config/models.yaml` is ignored entirely. The tuning flags configure the model `--model` deploys, so they need it too.
+- **A flag can set a key, not unset one.** Omitting it leaves the schema default; pass `null` for the fields that accept it.
 
 #### Inferred names
 
@@ -199,7 +225,9 @@ Example: model: lmstudio-community/Qwen2.5-7B-Instruct-GGUF:*Q4_K_M.gguf
 
 ## vLLM Loader
 
-Chat/generation, embeddings, transcription, and translation. Configured via `vllm_engine_kwargs`:
+Chat/generation, embeddings, transcription, and translation. Configured via `vllm_engine_kwargs`.
+
+Two vLLM settings are **not** keys here, because modelship derives them and setting them is a config error: `model` (the engine always loads the resolved top-level `model:`) and `gpu_memory_utilization` (a fractional `num_gpus` for a shared GPU, else a preflight recommendation, else `0.9` — `0.4` on CPU, where vLLM reads it as a *host RAM* fraction instead of VRAM).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -209,7 +237,6 @@ Chat/generation, embeddings, transcription, and translation. Configured via `vll
 | `dtype` | string | `auto` | `auto`, `float16`, `bfloat16` |
 | `tokenizer` | string | model default | Custom tokenizer path |
 | `trust_remote_code` | bool | `false` | Allow remote code execution |
-| `gpu_memory_utilization` | float | `0.9` (`0.4` on CPU) | **Not user-settable** — setting it explicitly is a config error. Always derived: from `num_gpus` for a fractional share, else a preflight recommendation, else the loader default. VRAM fraction on GPU; on CPU it means *host RAM* fraction reserved for the KV cache instead (see [CPU](#cpu-no-gpu-required)) |
 | `quantization` | string | — | e.g. `awq`, `gptq` |
 | `enable_auto_tool_choice` | bool | — | Enable automatic tool/function calling |
 | `tool_call_parser` | string | — | e.g. `llama3_json`, `hermes` |
@@ -227,7 +254,7 @@ Chat/generation, embeddings, transcription, and translation. Configured via `vll
 
 Installable via the `vllm-cpu` extra (paired with `num_gpus: 0`) for quantized chat with no GPU — safetensors, or AWQ/GPTQ/compressed-tensors quants (CPU backend supports AWQ/GPTQ on x86 plus INT8 W8A8); GGUF is rejected here too.
 
-`gpu_memory_utilization` means *host RAM* fraction on CPU, not VRAM — modelship's default drops to `0.4` (vLLM's own `0.9` would try to reserve 90% of node RAM and fail at worker init). Since the field isn't user-settable, preflight's recommendation (from actual free RAM and the model's weight footprint) always applies when it can compute one; the `0.4` fallback only kicks in when preflight declines (e.g. unreadable `config.json`). Set `max_model_len` explicitly for finer control. vLLM also reads `VLLM_CPU_KVCACHE_SPACE` (fixed GiB budget) and `VLLM_CPU_OMP_THREADS_BIND` (thread pinning) directly from the environment — vLLM-native, not modelship config.
+`gpu_memory_utilization` means *host RAM* fraction on CPU, not VRAM — modelship's default drops to `0.4` (vLLM's own `0.9` would try to reserve 90% of node RAM and fail at worker init). Since it isn't a settable key, preflight's recommendation (from actual free RAM and the model's weight footprint) always applies when it can compute one; the `0.4` fallback only kicks in when preflight declines (e.g. unreadable `config.json`). Set `max_model_len` explicitly for finer control. vLLM also reads `VLLM_CPU_KVCACHE_SPACE` (fixed GiB budget) and `VLLM_CPU_OMP_THREADS_BIND` (thread pinning) directly from the environment — vLLM-native, not modelship config.
 
 Minimum config — preflight fills in the rest:
 

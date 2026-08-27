@@ -7,7 +7,7 @@ import os
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from modelship.logging import get_logger
 from modelship.utils import is_pathy
@@ -19,22 +19,17 @@ if TYPE_CHECKING:
 _logger = get_logger("config")
 
 
-# Length (hex chars) of the per-deployment fingerprint suffix. 10 hex chars =
-# 40 bits, collision-resistant for the realistic universe of model configs.
+# Hex chars of the per-deployment fingerprint suffix; 10 = 40 bits.
 FINGERPRINT_LEN = 10
 
-# Fields excluded from the fingerprint hash. `name` is the deployment prefix,
-# not part of the fingerprint payload. `num_replicas` and `autoscaling_config`
-# are excluded so changing replica count / scaling bounds doesn't force a full
-# deployment replacement — Ray Serve updates these in place when serve.run() is
-# re-bound with the same app name.
+# Excluded from the fingerprint: `name` is the deployment prefix, and Ray Serve
+# updates the replica-count fields in place when serve.run() re-binds an app.
 _FINGERPRINT_EXCLUDED_FIELDS = {"name", "num_replicas", "autoscaling_config"}
 
-# vLLM's own default for a normal (whole/shared-GPU) deploy.
+# vLLM's own default.
 _VLLM_GPU_DEFAULT_GPU_MEMORY_UTILIZATION = 0.9
-# vLLM's CPU backend repurposes gpu_memory_utilization to mean "fraction of
-# HOST RAM to reserve for the KV cache" (not VRAM). Used only for num_gpus == 0
-# vllm deploys (see default_gpu_memory_utilization).
+# vLLM's CPU backend reads gpu_memory_utilization as a fraction of HOST RAM
+# rather than VRAM, so num_gpus == 0 takes a lower one.
 _VLLM_CPU_DEFAULT_GPU_MEMORY_UTILIZATION = 0.4
 
 ChatTemplateContentFormatOption = Literal["auto", "string", "openai"]
@@ -58,18 +53,31 @@ class ModelLoader(StrEnum):
     sherpa_onnx = "sherpa_onnx"
 
 
-class VllmEngineConfig(BaseModel):
-    model: str = ""
+# Derived by modelship, so not fields at all; named here for a better message
+# than extra="forbid" gives an unknown key.
+_VLLM_DERIVED_KEYS = {
+    "model": "the engine always loads the resolved top-level `model:` source. Set that instead.",
+    "gpu_memory_utilization": (
+        "it's always derived from num_gpus, so Ray's schedule and vLLM's actual VRAM "
+        "allocation can never disagree. Set num_gpus instead."
+    ),
+}
+
+
+class _StrictModel(BaseModel):
+    """Base for every models.yaml schema: an unknown key is an error, not a
+    silently ignored typo."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class VllmEngineConfig(_StrictModel):
     tensor_parallel_size: int = 1
     pipeline_parallel_size: int = 1
     max_model_len: int | None = None
     dtype: str = "auto"
     tokenizer: str | None = None
     trust_remote_code: bool = False
-    # Never user-settable — see normalize_num_gpus_and_tp / default_gpu_memory_utilization().
-    gpu_memory_utilization: float | None = None
-    task: str = "auto"
-    model_impl: str | None = None
     enable_log_requests: bool | None = False
     disable_log_stats: bool | None = False
     kv_cache_dtype: str | None = None
@@ -80,132 +88,95 @@ class VllmEngineConfig(BaseModel):
     reasoning_parser: str | None = None
     chat_template_content_format: ChatTemplateContentFormatOption = "auto"
     enforce_eager: bool | None = None
-    # None -> inherit vLLM's own default (prefix caching on). Escape hatch to
-    # disable it entirely, independent of the per-identity cache_salt below.
     enable_prefix_caching: bool | None = None
     max_num_batched_tokens: int | None = None
     max_num_seqs: int | None = None
-    # Cap on multimodal items per prompt (e.g. {"image": 4}). vLLM allows a
-    # richer per-modality budget shape (dict of caps) so we mirror that.
     limit_mm_per_prompt: dict[str, int | dict[str, int]] | None = None
-    # Per-model multimodal processor knobs (e.g. min_pixels / max_pixels for
-    # Qwen2.5-VL). Forwarded verbatim to the HF processor.
     mm_processor_kwargs: dict[str, Any] | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_derived_keys(cls, data):
+        if isinstance(data, dict):
+            for key, reason in _VLLM_DERIVED_KEYS.items():
+                if key in data:
+                    raise ValueError(f"vllm_engine_kwargs.{key} cannot be set: {reason}")
+        return data
 
-class DiffusersConfig(BaseModel):
+
+class DiffusersConfig(_StrictModel):
     torch_dtype: str = "float16"
     num_inference_steps: int = 30
     guidance_scale: float = 7.5
 
 
-class LlamaServerConfig(BaseModel):
+class LlamaServerConfig(_StrictModel):
     """Tunables for the ``llama_server`` loader, which drives a `llama-server`
     subprocess over its native OpenAI-compatible HTTP API."""
 
     n_ctx: int = 2048
     n_batch: int = 512
-    # Layers to offload when the deployment reserves GPUs (num_gpus > 0). Any
-    # negative value hits llama-server's own "auto-fit to free device memory"
-    # code path (verified against b9859, unconfirmed on b10200: `params.n_gpu_layers
-    # < 0` gates that call regardless of exactly how negative; `--help`'s
-    # documented 'all' token isn't reachable through this int-typed field).
-    # `LlamaServerPreflight` recommends a concrete count whenever the GGUF
-    # metadata is readable, so this default is rarely what actually launches.
+    # Preflight recommends a concrete count, so this default rarely launches; any
+    # negative value means llama-server's own auto-fit to free device memory.
     n_gpu_layers: int = -1
-    # Compute thread count. None keeps llama-server's own default (all cores).
-    # LlamaServerPreflight recommends num_cpus when the deploy reserves whole
-    # CPUs, so a subprocess on a shared node doesn't grab every core.
+    # Preflight recommends num_cpus here when the deploy reserves whole CPUs.
     threads: int | None = None
-    # Concurrent request slots. llama-server splits its total context (`-c`)
-    # across slots, so the process is launched with `n_ctx * parallel`.
+    # The process is launched with `n_ctx * parallel`: llama-server splits its
+    # total context across slots.
     parallel: int = Field(default=1, ge=1)
-    # Built-in template name (e.g. "chatml") or a path to a Jinja file;
-    # None lets llama-server use the GGUF's embedded chat template.
     chat_template: str | None = None
-    # Path to the multimodal projector file (e.g. clip-model-f16.gguf)
     mmproj: str | None = None
     # Checked by `resolve_all_model_sources`, downloaded by
     # `BaseInfer.ensure_downloaded`, which overwrites `mmproj` above.
     _pinned_mmproj: "PinnedSource | None" = PrivateAttr(default=None)
-    # Min chunk size for fuzzy KV-cache reuse via position-shifting
-    # (--cache-reuse). 0 (llama-server's default) means exact-prefix reuse
-    # only; raising it also reuses cached chunks after a mid-prompt
-    # divergence (e.g. a changed system-prompt header, a swapped RAG chunk).
     cache_reuse: int = Field(default=0, ge=0)
-    # Evict the oldest tokens and keep generating when a slot's context
-    # fills, instead of erroring (--context-shift). Off by default, matching
-    # llama-server's own default.
     context_shift: bool = False
-    # In-RAM prompt-cache cap in MiB (-cram). None keeps llama-server's own
-    # default (8192); -1 means no limit, 0 disables the cache.
     cache_ram_mib: int | None = Field(default=None, ge=-1)
-    # Escape hatch for launch flags not otherwise surfaced, appended verbatim.
+    # Appended verbatim: escape hatch for launch flags not surfaced above.
     extra_args: list[str] = Field(default_factory=list)
 
 
-class WhispercppConfig(BaseModel):
+class WhispercppConfig(_StrictModel):
     """Tunables for the ``whispercpp`` loader, which runs whisper.cpp in-process
     via `pywhispercpp` bindings (no subprocess)."""
 
-    # None keeps pywhispercpp's own default (min(4, hardware_concurrency())).
     n_threads: int | None = None
     flash_attn: bool = False
     # Only used for a bare pywhispercpp model name. None -> `<cache_root>/whispercpp`.
     models_dir: str | None = None
 
 
-class StableDiffusionCppConfig(BaseModel):
+class StableDiffusionCppConfig(_StrictModel):
     """Tunables for the CPU-only `stable_diffusion_cpp` image loader
-    (stable-diffusion.cpp via stable-diffusion-cpp-python). `sample_steps` and
-    `cfg_scale` are the sd.cpp analogues of DiffusersConfig's
-    `num_inference_steps` / `guidance_scale`."""
+    (stable-diffusion.cpp via stable-diffusion-cpp-python)."""
 
     sample_steps: int = 20
     cfg_scale: float = 7.0
-    # "default" lets sd.cpp pick the sampler/scheduler per architecture
-    # (euler_a for SD, euler for Flux/SD3).
     sample_method: str = "default"
     scheduler: str = "default"
-    # On-the-fly weight quantization type ("default" auto-detects from the file;
-    # e.g. "q4_0", "q8_0", "f16" when loading an unquantized checkpoint).
     wtype: str = "default"
-    # -1 => half the CPU cores (stable-diffusion.cpp default).
     n_threads: int = -1
-    # Tile the VAE decode to cut peak RAM on large images / low-memory hosts.
     vae_tiling: bool = False
-    # Standalone component paths for split checkpoints (Flux / SD3.5). v1 resolves
-    # only single-file models; these accept pre-placed local paths for advanced use.
+    # Split checkpoints: pre-placed local paths only, since source resolution
+    # handles single-file models.
     diffusion_model_path: str | None = None
     clip_l_path: str | None = None
     clip_g_path: str | None = None
     t5xxl_path: str | None = None
     vae_path: str | None = None
-    # Forwarded verbatim to the StableDiffusion constructor for knobs not surfaced above.
+    # Forwarded verbatim to the StableDiffusion constructor.
     model_kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
-class AutoscalingConfig(BaseModel):
-    """Per-model Ray Serve autoscaling bounds.
-
-    Maps to the subset of Ray Serve's ``autoscaling_config`` that's useful for
-    inference replicas. When set on a model, replica count is governed by load
-    between ``min_replicas`` and ``max_replicas`` instead of the fixed
-    ``num_replicas`` (the two are mutually exclusive). ``min_replicas: 0`` enables
-    scale-to-zero — the deployment idles with no replicas and cold-starts on the
-    first request.
-    """
+class AutoscalingConfig(_StrictModel):
+    """The subset of Ray Serve's ``autoscaling_config`` modelship surfaces. When
+    set, load drives the replica count between ``min_replicas`` and
+    ``max_replicas`` instead of the fixed ``num_replicas``."""
 
     min_replicas: int = Field(default=1, ge=0)
     max_replicas: int = Field(default=1, ge=1)
-    # Seed count on first deploy before the autoscaler has load signal. None ->
-    # Serve starts at min_replicas.
     initial_replicas: int | None = Field(default=None, ge=0)
-    # The autoscaler's setpoint: desired in-flight requests per replica. None ->
-    # Serve's own default. Lower = scales out sooner.
     target_ongoing_requests: float | None = Field(default=None, gt=0)
-    # Debounce windows (seconds) before acting on a sustained over/under-load
-    # signal. None -> Serve defaults.
     upscale_delay_s: float | None = Field(default=None, ge=0)
     downscale_delay_s: float | None = Field(default=None, ge=0)
 
@@ -233,26 +204,27 @@ class AutoscalingConfig(BaseModel):
         return out
 
 
-class ModelshipModelConfig(BaseModel):
+class ModelshipModelConfig(_StrictModel):
     name: str
     model: str | None = None
     usecase: ModelUsecase
     loader: ModelLoader
-    num_gpus: float = 0
-    num_cpus: float = 0.1
-    num_replicas: int = 1
+    # Ray resource reservations: a negative value is meaningless to Ray and, for
+    # num_gpus, reads as "not fractional" everywhere downstream.
+    num_gpus: float = Field(default=0, ge=0)
+    num_cpus: float = Field(default=0.1, ge=0)
+    # Serve rejects < 1 deep in deployment; same for max_ongoing_requests.
+    num_replicas: int = Field(default=1, ge=1)
     # Load-driven replica scaling; mutually exclusive with the fixed num_replicas.
     autoscaling_config: AutoscalingConfig | None = None
-    # Ray Serve's per-replica concurrency cap.
-    max_ongoing_requests: int | None = None
+    max_ongoing_requests: int | None = Field(default=None, ge=1)
     vllm_engine_kwargs: VllmEngineConfig = Field(default_factory=VllmEngineConfig)
     diffusers_config: DiffusersConfig | None = None
     llama_server_config: LlamaServerConfig | None = None
     stable_diffusion_cpp_config: StableDiffusionCppConfig | None = None
     whispercpp_config: WhispercppConfig | None = None
-    # Extra variables forwarded verbatim into the chat-template Jinja render on
-    # every text loader (e.g. `enable_thinking: false` for Qwen3). Only does
-    # something if the model's template branches on the key.
+    # Forwarded into the chat-template Jinja render on every text loader; only
+    # does something if the model's template branches on the key.
     chat_template_kwargs: dict[str, Any] = Field(default_factory=dict)
 
     # Checked by `resolve_all_model_sources`, downloaded into
@@ -263,9 +235,8 @@ class ModelshipModelConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def default_diffusers_usecase(cls, data):
-        # The image-only loaders (diffusers, stable_diffusion_cpp) leave `usecase`
-        # implicit — let configs omit it. (An explicit non-image usecase is still
-        # rejected below.)
+        # The image-only loaders may omit `usecase`; an explicit non-image value
+        # is still rejected below.
         image_loaders = (ModelLoader.diffusers, ModelLoader.stable_diffusion_cpp)
         if isinstance(data, dict) and data.get("loader") in image_loaders and data.get("usecase") is None:
             data = {**data, "usecase": ModelUsecase.image}
@@ -273,11 +244,8 @@ class ModelshipModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def check_autoscaling_excludes_num_replicas(self):
-        # num_replicas (fixed count) and autoscaling_config (load-driven range) are
-        # two ways to set the same thing — Ray Serve rejects both at once. Catch an
-        # explicit num_replicas alongside autoscaling_config here, with a clear
-        # message, rather than letting it surface deep in serve.run(). An untouched
-        # default num_replicas is fine (autoscaling simply takes over).
+        # Ray Serve rejects both at once; catch it here rather than deep in
+        # serve.run(). An untouched default num_replicas is fine.
         if self.autoscaling_config is not None and "num_replicas" in self.model_fields_set:
             raise ValueError(
                 f"model '{self.name}': set either num_replicas or autoscaling_config, not both. "
@@ -309,8 +277,7 @@ class ModelshipModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def check_sherpa_onnx_model_and_usecase(self):
-        # `model:` must be a curated registry name (or a local dir named for one),
-        # not an arbitrary HF repo/URL.
+        # `model:` must be a registry name, or a local dir named for one.
         if self.loader != ModelLoader.sherpa_onnx:
             return self
         from modelship.infer.sherpa_onnx.registry import registry_names
@@ -331,30 +298,14 @@ class ModelshipModelConfig(BaseModel):
     def normalize_num_gpus_and_tp(self):
         """Enforce the num_gpus / tensor_parallel semantics for vLLM.
 
-        - gpu_memory_utilization is never user-settable: always derived, from
-          num_gpus (fractional) or a preflight/default recommendation otherwise.
-        - num_gpus < 1 (fractional): single GPU sharing. tp=pp=1 only — Ray
-          cannot guarantee distinct physical-GPU placement for fractional
-          placement-group bundles, so TP across shared GPUs is rejected.
-        - num_gpus >= 1: must be an integer count of whole GPUs.
-        - When tp x pp > 1, the GPU count is implied by tp x pp; if the user
-          also set num_gpus, log a warning and use tp x pp (each slot owns a
-          whole GPU).
-        - When tp = pp = 1 and num_gpus >= 2 is set, auto-derive tp = num_gpus.
+        - num_gpus < 1: one shared GPU, tp=pp=1 only — Ray packs fractional
+          placement-group bundles onto the same physical GPU.
+        - num_gpus >= 1: whole GPUs only, and tp x pp implies the count when
+          either is set; tp is derived from num_gpus when neither is.
         """
         ng = self.num_gpus
         if self.loader != ModelLoader.vllm:
             return self
-
-        if "gpu_memory_utilization" in self.vllm_engine_kwargs.model_fields_set:
-            already_set = self.vllm_engine_kwargs.gpu_memory_utilization
-            # Revalidation on nesting can re-see our own fractional derivation below.
-            if not (0 < ng < 1 and already_set == ng):
-                raise ValueError(
-                    "vllm_engine_kwargs.gpu_memory_utilization cannot be set explicitly: it's "
-                    "always derived from num_gpus, so Ray's schedule and vLLM's actual VRAM "
-                    "allocation can never disagree. Set num_gpus instead."
-                )
 
         if ng <= 0:
             return self
@@ -374,8 +325,6 @@ class ModelshipModelConfig(BaseModel):
                     f"(e.g. num_gpus={world_size}) or drop the parallelism "
                     f"settings to share a single GPU."
                 )
-            self.vllm_engine_kwargs.gpu_memory_utilization = ng
-            self.vllm_engine_kwargs.model_fields_set.add("gpu_memory_utilization")
             return self
 
         # ng >= 1: integer-only.
@@ -411,30 +360,36 @@ class ModelshipModelConfig(BaseModel):
         return self
 
     def fingerprint(self, gateway_name: str = "") -> str:
-        """Stable hash of the config fields that drive placement/runtime, used as
-        the deployment-name suffix so reconcile detects drift by name comparison.
-        `gateway_name` is mixed in (when given) so identical configs on different
-        gateways get distinct app names in Serve's flat global namespace."""
+        """Stable hash of the fields that drive placement/runtime, used as the
+        deployment-name suffix so reconcile detects drift by name. `gateway_name`
+        is mixed in so identical configs on different gateways stay distinct."""
         payload = self.model_dump_json(exclude=_FINGERPRINT_EXCLUDED_FIELDS)
         if gateway_name:
             payload = f"{gateway_name}\x00{payload}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:FINGERPRINT_LEN]
 
     def deployment_name(self, gateway_name: str) -> str:
-        # Gateway folded into the fingerprint, not a visible prefix; ownership is
-        # tracked in the coordinator registry, not parsed out of the name.
+        # Gateway folded into the fingerprint, not a visible prefix: ownership is
+        # tracked in the coordinator registry.
         return f"{self.name}-{self.fingerprint(gateway_name)}"
 
 
+def resolve_gpu_memory_utilization(config: ModelshipModelConfig, recommended: float | None = None) -> float:
+    """The VRAM fraction vLLM may claim (host RAM on a CPU deploy). Precedence: a
+    fractional num_gpus, the share Ray reserved, then preflight, then the default."""
+    if 0 < config.num_gpus < 1:
+        return config.num_gpus
+    return recommended if recommended is not None else default_gpu_memory_utilization(config)
+
+
 def default_gpu_memory_utilization(config: ModelshipModelConfig) -> float:
-    """Fallback when nothing else resolved gpu_memory_utilization: 0.9 on GPU,
-    0.4 on a num_gpus=0 CPU deploy. Apply last via setdefault on merged kwargs."""
+    """Last fallback for gpu_memory_utilization: 0.9 on GPU, 0.4 on a CPU deploy."""
     if config.num_gpus == 0:
         return _VLLM_CPU_DEFAULT_GPU_MEMORY_UTILIZATION
     return _VLLM_GPU_DEFAULT_GPU_MEMORY_UTILIZATION
 
 
-class ModelshipConfig(BaseModel):
+class ModelshipConfig(_StrictModel):
     models: list[ModelshipModelConfig]
 
     @model_validator(mode="after")

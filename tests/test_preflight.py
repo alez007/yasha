@@ -18,6 +18,7 @@ from modelship.infer.infer_config import (
     ModelUsecase,
     VllmEngineConfig,
     default_gpu_memory_utilization,
+    resolve_gpu_memory_utilization,
 )
 from modelship.preflight import (
     GPUInfo,
@@ -493,7 +494,67 @@ class TestEstimateWeightFootprint:
         assert _estimate_weight_footprint(str(not_a_dir)) == 0
 
 
+_DENSE_CFG = {
+    "num_hidden_layers": 48,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 16,
+    "hidden_size": 5120,
+    "head_dim": 160,
+    "torch_dtype": "bfloat16",
+    "max_position_embeddings": 32768,
+}
+
+
 class TestVllmPreflight:
+    # The recommendation keys that aren't VllmEngineConfig fields. vllm_infer pops
+    # each one out of the merged kwargs before building the model, which forbids
+    # extras; gpu_memory_utilization goes to resolve_gpu_memory_utilization instead.
+    _ACTOR_POPPED = frozenset({"gpu_memory_utilization"})
+
+    def test_recommendation_survives_the_actor_merge(self, tmp_path):
+        """Every shape whose recommendation reaches VllmEngineConfig, including the
+        two that recommend a derived gpu_memory_utilization (MLA on GPU, and CPU) —
+        a dense GPU deploy is the only one that never emits it."""
+        cases = (
+            ("dense/40GiB", _DENSE_CFG, 1, HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])),
+            ("dense/80GiB", _DENSE_CFG, 1, HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])),
+            ("mla/40GiB", _MLA_CFG, 1, HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])),
+            ("dense/cpu", _DENSE_CFG, 0, HardwareProfile(ram_bytes=64 * 1024**3)),
+        )
+        for label, config_json, num_gpus, hw in cases:
+            case_dir = tmp_path / label.replace("/", "-")
+            case_dir.mkdir()
+            snapshot = _write_model_snapshot(case_dir, config_json=config_json, weight_bytes=19 * 1024**3)
+            cfg = _make_config(resolved_path=str(snapshot), num_gpus=num_gpus)
+            rec = VllmPreflight().recommend(cfg, hw)
+            assert rec, label
+            assert set(rec) - self._ACTOR_POPPED <= set(VllmEngineConfig.model_fields), label
+            VllmEngineConfig(**{k: v for k, v in rec.items() if k not in self._ACTOR_POPPED})
+
+    def test_popped_keys_are_the_ones_the_schema_rejects_by_name(self):
+        """Popping a key the schema doesn't declare derived would hide a typo:
+        forbid would have caught it, the pop swallows it."""
+        from modelship.utils.config_schema import _VLLM_DERIVED_KEYS
+
+        assert set(_VLLM_DERIVED_KEYS) >= self._ACTOR_POPPED
+
+    def test_gpu_memory_utilization_is_recommended_where_it_matters(self, tmp_path):
+        """Pins the asymmetry the merge test relies on: derived on CPU, absent on a
+        dense GPU deploy. If this flips, the case list above is no longer covering
+        both sides."""
+        recs = {}
+        for label, num_gpus, hw in (
+            ("gpu", 1, HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])),
+            ("cpu", 0, HardwareProfile(ram_bytes=64 * 1024**3)),
+        ):
+            case_dir = tmp_path / label
+            case_dir.mkdir()
+            snapshot = _write_model_snapshot(case_dir, config_json=_DENSE_CFG, weight_bytes=19 * 1024**3)
+            cfg = _make_config(resolved_path=str(snapshot), num_gpus=num_gpus)
+            recs[label] = VllmPreflight().recommend(cfg, hw)
+        assert "gpu_memory_utilization" not in recs["gpu"]
+        assert "gpu_memory_utilization" in recs["cpu"]
+
     def test_no_gpus_returns_empty(self):
         cfg = _make_config(resolved_path="/nonexistent")
         assert VllmPreflight().recommend(cfg, HardwareProfile()) == {}
@@ -603,7 +664,6 @@ class TestVllmPreflight:
             weight_bytes=5 * 1024**3,
         )
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0.5)
-        assert cfg.vllm_engine_kwargs.gpu_memory_utilization == 0.5  # normalization fed the share through
         hw = HardwareProfile(gpus=[GPUInfo(0, 16 * 1024**3, "test")])
         rec = VllmPreflight().recommend(cfg, hw)
         assert "max_model_len" in rec
@@ -706,7 +766,6 @@ class TestVllmPreflightCpu:
         # gpu_memory_utilization is sized to the clamped KV budget, not the raw headroom.
         snapshot = _write_model_snapshot(tmp_path, config_json=self._SMALL_MODEL_CFG, weight_bytes=1 * 1024**3)
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
-        assert cfg.vllm_engine_kwargs.gpu_memory_utilization is None
         hw = HardwareProfile(ram_bytes=256 * 1024**3, available_ram_bytes=256 * 1024**3)
         with patch("modelship.preflight.vllm._raw_host_ram_bytes", return_value=256 * 1024**3):
             rec = VllmPreflight().recommend(cfg, hw)
@@ -755,7 +814,7 @@ class TestVllmPreflightCpu:
 
     def test_explicit_gpu_memory_utilization_rejected_on_cpu_deploy(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=self._SMALL_MODEL_CFG, weight_bytes=1 * 1024**3)
-        with pytest.raises(ValidationError, match="cannot be set explicitly"):
+        with pytest.raises(ValidationError, match="cannot be set"):
             _make_config(resolved_path=str(snapshot), num_gpus=0, vllm_kwargs={"gpu_memory_utilization": 0.5})
 
     def test_sliding_window_uses_saturated_seq_bytes_for_gmu(self, tmp_path):
@@ -797,41 +856,33 @@ class TestVllmPreflightCpu:
 
 
 class TestDefaultGpuMemoryUtilization:
-    """`default_gpu_memory_utilization()`: the config field stays None until a
-    fractional num_gpus derivation or preflight resolves it; the loader-appropriate
-    fallback (0.9 GPU / 0.4 CPU) applies last via setdefault."""
+    """gpu_memory_utilization is derived, never a config field: a fractional
+    num_gpus, else preflight's recommendation, else 0.9 GPU / 0.4 CPU."""
 
     def test_gpu_deploy_default(self):
-        cfg = _make_config(num_gpus=1)
-        assert cfg.vllm_engine_kwargs.gpu_memory_utilization is None
-        assert default_gpu_memory_utilization(cfg) == 0.9
+        assert default_gpu_memory_utilization(_make_config(num_gpus=1)) == 0.9
 
     def test_cpu_deploy_default(self):
-        cfg = _make_config(num_gpus=0)
-        assert cfg.vllm_engine_kwargs.gpu_memory_utilization is None
-        assert default_gpu_memory_utilization(cfg) == 0.4
+        assert default_gpu_memory_utilization(_make_config(num_gpus=0)) == 0.4
 
     def test_explicit_gmu_on_cpu_deploy_rejected(self):
-        with pytest.raises(ValidationError, match="cannot be set explicitly"):
+        with pytest.raises(ValidationError, match="cannot be set"):
             _make_config(num_gpus=0, vllm_kwargs={"gpu_memory_utilization": 0.6})
 
     def test_precedence_user_over_recommendation_over_default(self):
-        # Mirrors the merge in vllm_infer.py: {**rec, **user_overrides}, then
-        # the loader-appropriate default setdefault'd in last.
+        # Mirrors vllm_infer: {**rec, **user_overrides}, then the derived gmu popped out.
         cfg = _make_config(num_gpus=0, vllm_kwargs={"max_model_len": 4096})
         user_overrides = cfg.vllm_engine_kwargs.model_dump(exclude_unset=True)
         recommendation = {"gpu_memory_utilization": 0.2, "max_model_len": 8192}
         merged = merge_with_user_overrides(recommendation, user_overrides, model_name=cfg.name)
-        merged.setdefault("gpu_memory_utilization", default_gpu_memory_utilization(cfg))
         assert merged["max_model_len"] == 4096  # user wins over recommendation
-        assert merged["gpu_memory_utilization"] == 0.2  # recommendation wins over the default
+        assert resolve_gpu_memory_utilization(cfg, merged.pop("gpu_memory_utilization")) == 0.2
 
     def test_default_survives_preflight_decline(self):
-        cfg = _make_config(num_gpus=0)
-        user_overrides = cfg.vllm_engine_kwargs.model_dump(exclude_unset=True)
-        merged = merge_with_user_overrides({}, user_overrides, model_name=cfg.name)
-        merged.setdefault("gpu_memory_utilization", default_gpu_memory_utilization(cfg))
-        assert merged["gpu_memory_utilization"] == 0.4
+        assert resolve_gpu_memory_utilization(_make_config(num_gpus=0), None) == 0.4
+
+    def test_fractional_share_wins_over_the_recommendation(self):
+        assert resolve_gpu_memory_utilization(_make_config(num_gpus=0.5), 0.2) == 0.5
 
 
 class TestMultimodal:
@@ -1375,7 +1426,7 @@ class TestHybridIntegration:
 
     def test_explicit_gpu_memory_utilization_rejected_on_cpu_hybrid_deploy(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
-        with pytest.raises(ValidationError, match="cannot be set explicitly"):
+        with pytest.raises(ValidationError, match="cannot be set"):
             _make_config(resolved_path=str(snapshot), num_gpus=0, vllm_kwargs={"gpu_memory_utilization": 0.5})
 
 

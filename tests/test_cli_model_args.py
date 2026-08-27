@@ -3,13 +3,16 @@ hand-written one."""
 
 import subprocess
 import sys
+from typing import get_args
 from unittest.mock import patch
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from modelship.deploy.config import resolve_input_models, validate_models
 from modelship.utils.cli import MODEL_ARG_KEYS, infer_model_name, model_from_args, parse_args
+from modelship.utils.config_schema import ModelshipModelConfig
+from modelship.utils.model_flags import GENERATED_MODEL_ARGS
 
 
 def _args(*argv):
@@ -163,26 +166,182 @@ class TestFailsBeforeRay:
         assert result.stdout.strip() == "exit 1 False"
 
 
+class TestNestedFlags:
+    """The generated flags — one per nested-block key, named for its config path,
+    valued as YAML text."""
+
+    _LLAMA = ("--model", "x.gguf", "--usecase", "generate", "--loader", "llama_server")
+    _VLLM = ("--model", "org/qwen", "--name", "qwen", "--usecase", "generate", "--loader", "vllm")
+
+    def test_fingerprint_and_fields_set_match_the_yaml_entry(self):
+        yaml_entry = {
+            "name": "qwen",
+            "model": "org/qwen",
+            "usecase": "generate",
+            "loader": "vllm",
+            "num_gpus": 2,
+            "vllm_engine_kwargs": {
+                "max_model_len": 8192,
+                "enforce_eager": True,
+                "limit_mm_per_prompt": {"image": 2},
+            },
+        }
+        cli_entry = _raw(
+            *self._VLLM,
+            "--num-gpus", "2",
+            "--vllm-engine-kwargs.max-model-len", "8192",
+            "--vllm-engine-kwargs.enforce-eager", "true",
+            "--vllm-engine-kwargs.limit-mm-per-prompt", "{image: 2}",
+        )  # fmt: skip
+        assert cli_entry == yaml_entry
+
+        from_yaml = validate_models([yaml_entry]).models[0]
+        from_cli = validate_models([cli_entry]).models[0]
+        assert from_cli.fingerprint() == from_yaml.fingerprint()
+        assert from_cli.model_fields_set == from_yaml.model_fields_set
+        assert from_cli.vllm_engine_kwargs.model_fields_set == from_yaml.vllm_engine_kwargs.model_fields_set
+
+    def test_untouched_block_stays_absent(self):
+        """Absent, not an empty dict: `llama_server_config: {}` is a different
+        fingerprint and a different `model_fields_set`."""
+        raw = _raw(*self._LLAMA)
+        assert "llama_server_config" not in raw
+        assert validate_models([raw]).models[0].llama_server_config is None
+
+    def test_explicit_null_is_a_value_not_an_omission(self):
+        raw = _raw(*self._LLAMA, "--llama-server-config.threads", "null")
+        assert raw["llama_server_config"] == {"threads": None}
+        config = validate_models([raw]).models[0]
+        assert config.llama_server_config is not None
+        assert "threads" in config.llama_server_config.model_fields_set
+
+    @pytest.mark.parametrize(
+        ("flag", "text", "path", "expected"),
+        [
+            ("--llama-server-config.n-ctx", "8192", ("llama_server_config", "n_ctx"), 8192),
+            ("--llama-server-config.context-shift", "true", ("llama_server_config", "context_shift"), True),
+            (
+                "--llama-server-config.extra-args",
+                '["--no-mmap", "-fa"]',
+                ("llama_server_config", "extra_args"),
+                ["--no-mmap", "-fa"],
+            ),
+            ("--diffusers-config.guidance-scale", "0.0", ("diffusers_config", "guidance_scale"), 0.0),
+            (
+                "--chat-template-kwargs",
+                "{enable_thinking: false}",
+                ("chat_template_kwargs",),
+                {"enable_thinking": False},
+            ),
+        ],
+    )
+    def test_values_are_read_as_yaml(self, flag, text, path, expected):
+        node = _raw(*self._LLAMA, flag, text)
+        for key in path:
+            node = node[key]
+        assert node == expected
+
+    def test_unparseable_yaml_value_is_rejected(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            _args(*self._VLLM, "--vllm-engine-kwargs.limit-mm-per-prompt", "{image: ")
+        assert exc.value.code == 2
+        assert "not valid YAML" in capsys.readouterr().err
+
+    def test_every_schema_field_is_settable(self):
+        """Derived from the schema independently of the generator: a new field is
+        covered the moment it lands, and a dropped one fails here."""
+        expected: set[tuple[str, ...]] = set()
+        for name, field in ModelshipModelConfig.model_fields.items():
+            block = next(
+                (
+                    candidate
+                    for candidate in (field.annotation, *get_args(field.annotation))
+                    if isinstance(candidate, type) and issubclass(candidate, BaseModel)
+                ),
+                None,
+            )
+            expected |= {(name, sub) for sub in block.model_fields} if block else {(name,)}
+
+        settable = {arg.path for arg in GENERATED_MODEL_ARGS} | {(key,) for key in MODEL_ARG_KEYS}
+        assert settable == expected
+
+    def test_generated_options_are_distinct_from_the_root_flags(self):
+        options = [arg.option for arg in GENERATED_MODEL_ARGS]
+        assert len(options) == len(set(options))
+        assert not set(options) & {f"--{key.replace('_', '-')}" for key in MODEL_ARG_KEYS}
+
+    @pytest.mark.parametrize("flag", ["--vllm-engine-kwargs.gpu-memory-utilization", "--vllm-engine-kwargs.model"])
+    def test_derived_keys_have_no_flag(self, flag, capsys):
+        """They aren't schema fields, so the generator can't emit them either."""
+        with pytest.raises(SystemExit) as exc:
+            _args(*self._VLLM, flag, "0.8")
+        assert exc.value.code == 2
+        assert "unrecognized arguments" in capsys.readouterr().err
+
+    def test_tuning_flag_without_model_is_rejected(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            _args("--llama-server-config.n-ctx", "8192")
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "--llama-server-config.n-ctx" in err
+        assert "pass --model" in err
+
+    def test_tuning_flag_with_config_says_to_edit_the_file(self, capsys):
+        """--config is already what they passed, so pointing back at it doesn't help."""
+        with pytest.raises(SystemExit) as exc:
+            _args("--config", "models.yaml", "--llama-server-config.n-ctx", "8192")
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "--llama-server-config.n-ctx" in err
+        assert "entry in the config file" in err
+        assert "pass --model" not in err
+
+    def test_the_error_names_the_flags_that_triggered_it(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            _args(
+                "--llama-server-config.n-ctx",
+                "8192",
+                "--llama-server-config.parallel",
+                "2",
+                "--autoscaling-config.max-replicas",
+                "3",
+                "--chat-template-kwargs",
+                "{}",
+            )
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        # Capped at three, so a wide invocation doesn't dump every flag it set.
+        assert err.count("--") >= 3
+        assert ", ..." in err
+
+    def test_unknown_nested_flag_is_rejected(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            _args(*self._LLAMA, "--llama-server-config.n-ctxx", "8192")
+        assert exc.value.code == 2
+        assert "unrecognized arguments" in capsys.readouterr().err
+
+
 class TestIntegrationCliRouting:
-    """conftest sends a lone CLI-expressible model through --model. Pin the entries
-    that take that route: a nested block added to one fails here, not silently."""
+    """conftest routes half the single-model call sites through the flags and half
+    through a models.yaml, so both surfaces stay covered."""
 
-    def test_single_model_call_sites_stay_cli_expressible(self):
-        from tests.conftest import MODEL_CONFIGS, cli_expressible
-
-        routed = {"chat-llama-server-plain", "chat-llama-server-gpu", "embed-model-llama-server"}
-        assert {name for name in routed if cli_expressible(MODEL_CONFIGS[name])} == routed
-
-    def test_nested_blocks_are_not_cli_expressible(self):
-        from tests.conftest import MODEL_CONFIGS, cli_expressible
-
-        assert not cli_expressible(MODEL_CONFIGS["chat-capable"])
-        assert not cli_expressible(MODEL_CONFIGS["autoscale-llama"])
-
-    def test_flags_round_trip_back_to_the_config(self):
-        """conftest builds argv from a MODEL_CONFIGS entry; parsing it back must
-        reproduce that entry."""
+    def test_every_config_round_trips_through_the_flags(self):
         from tests.conftest import MODEL_CONFIGS, _model_flags
 
-        config = MODEL_CONFIGS["chat-llama-server-gpu"]
-        assert model_from_args(_args(*_model_flags(config))) == config
+        for name, config in MODEL_CONFIGS.items():
+            assert model_from_args(_args(*_model_flags(config))) == config, name
+
+    def test_routing_splits_the_call_sites_in_half(self):
+        from tests.conftest import CLI_ROUTED, MODEL_CONFIGS
+
+        assert set(MODEL_CONFIGS) >= CLI_ROUTED
+        assert len(CLI_ROUTED) == (len(MODEL_CONFIGS) + 1) // 2
+
+    def test_routed_half_covers_nested_blocks_and_both_text_loaders(self):
+        """A split that drifted to root-scalar-only entries would leave the nested
+        flags with no integration coverage."""
+        from tests.conftest import CLI_ROUTED, MODEL_CONFIGS
+
+        routed = [MODEL_CONFIGS[name] for name in CLI_ROUTED]
+        assert any(set(config) - set(MODEL_ARG_KEYS) for config in routed)
+        assert {config["loader"] for config in routed} >= {"vllm", "llama_server"}

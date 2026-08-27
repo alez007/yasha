@@ -182,10 +182,11 @@ Notes:
   `modelship/infer/llama_server/llama_server_infer.py`'s `_launch`).
 - **Launch parity check**: After both phases run, the harness extracts each phase's effective launch command from its container logs, normalizes legitimately-different tokens (such as ports, hostnames, and api keys), and fails (exits non-zero) if there are any remaining differences. This guarantees that both phases run identical engine parameters.
 - **Tokenizer extraction**: GGUF configs (which use GGUF model paths) cannot be used directly as Hugging Face repository IDs by the bench client. To handle this, the harness looks for a `# bench-tokenizer: <repo-id>` comment inside the yaml config file (inert to modelship) and parses it using `yaml_scalar` to use as the tokenizer for the bench client. You can also override it using the `--tokenizer` CLI flag.
-- vLLM: keep `gpu_memory_utilization` equal to what modelship would pick for
-  that `num_gpus` (0.9 GPU / 0.4 CPU) — for fractional `num_gpus` modelship
-  overrides `gpu_memory_utilization` to `num_gpus`, and the raw phase reads the
-  field verbatim, so a mismatch would make the comparison unfair.
+- vLLM: `gpu_memory_utilization` is not a config key — modelship derives it from
+  `num_gpus` (the fraction itself when `num_gpus` is fractional, else 0.9 GPU /
+  0.4 CPU), and the raw phase calls the same `resolve_gpu_memory_utilization()`.
+  Both phases therefore agree by construction; setting it in the yaml is now a
+  hard error rather than something to keep hand-synced.
 - llama_server: set `n_gpu_layers` explicitly in `configs/llama-gpu.yaml`
   (rather than the loader's `-1` auto-fit default) — the raw phase has no
   preflight to pick a matching value on its own, so an explicit, identical

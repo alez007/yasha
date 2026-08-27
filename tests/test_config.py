@@ -2,6 +2,8 @@
 
 import subprocess
 import sys
+from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from pydantic import ValidationError
@@ -14,7 +16,7 @@ from modelship.infer.infer_config import (
     ModelshipModelConfig,
     ModelUsecase,
     VllmEngineConfig,
-    default_gpu_memory_utilization,
+    resolve_gpu_memory_utilization,
 )
 
 
@@ -231,77 +233,30 @@ class TestModelshipModelConfig:
         )
         assert config.num_gpus == 0.70
 
-    def test_fractional_num_gpus_sets_gpu_memory_utilization(self):
-        # A fractional num_gpus is the single source of truth for the VRAM share:
-        # it must land on gpu_memory_utilization so the preflight + engine agree.
+    @pytest.mark.parametrize(("num_gpus", "expected"), [(0.5, 0.5), (1, 0.9), (0, 0.4)])
+    def test_gpu_memory_utilization_resolves_from_num_gpus(self, num_gpus, expected):
+        """A fractional num_gpus is the share Ray reserved, so it caps vLLM too;
+        anything else takes the loader-appropriate default (0.4 on CPU)."""
         config = ModelshipModelConfig(
             name="test-llm",
             model="some-model",
             usecase=ModelUsecase.generate,
             loader=ModelLoader.vllm,
-            num_gpus=0.5,
+            num_gpus=num_gpus,
         )
-        assert config.vllm_engine_kwargs.gpu_memory_utilization == 0.5
-        # and it's marked set, so it survives model_dump(exclude_unset=True)
-        assert "gpu_memory_utilization" in config.vllm_engine_kwargs.model_fields_set
+        assert resolve_gpu_memory_utilization(config) == expected
 
-    def test_explicit_gpu_memory_utilization_rejected_alongside_fractional_num_gpus(self):
-        with pytest.raises(ValidationError, match="cannot be set explicitly"):
+    @pytest.mark.parametrize(("key", "value"), [("gpu_memory_utilization", 0.6), ("model", "other/m")])
+    @pytest.mark.parametrize("num_gpus", [0, 0.5, 1])
+    def test_derived_engine_kwargs_rejected(self, key, value, num_gpus):
+        with pytest.raises(ValidationError, match="cannot be set"):
             ModelshipModelConfig(
                 name="test-llm",
                 model="some-model",
                 usecase=ModelUsecase.generate,
                 loader=ModelLoader.vllm,
-                num_gpus=0.5,
-                vllm_engine_kwargs={"gpu_memory_utilization": 0.6},
-            )
-
-    def test_whole_gpu_leaves_gpu_memory_utilization_unset(self):
-        # Left None rather than eagerly written as 0.9: default_gpu_memory_utilization()
-        # resolves it lazily so an unset field is never confused with a real value.
-        config = ModelshipModelConfig(
-            name="test-llm",
-            model="some-model",
-            usecase=ModelUsecase.generate,
-            loader=ModelLoader.vllm,
-            num_gpus=1,
-        )
-        assert config.vllm_engine_kwargs.gpu_memory_utilization is None
-        assert default_gpu_memory_utilization(config) == 0.9
-
-    def test_explicit_gpu_memory_utilization_rejected_on_whole_gpu_deploy(self):
-        with pytest.raises(ValidationError, match="cannot be set explicitly"):
-            ModelshipModelConfig(
-                name="test-llm",
-                model="some-model",
-                usecase=ModelUsecase.generate,
-                loader=ModelLoader.vllm,
-                num_gpus=1,
-                vllm_engine_kwargs={"gpu_memory_utilization": 0.6},
-            )
-
-    def test_cpu_num_gpus_leaves_gpu_memory_utilization_unset(self):
-        # On vLLM's CPU backend gpu_memory_utilization means fraction of host RAM, not VRAM;
-        # the CPU-appropriate fallback is 0.4, resolved lazily rather than written back here.
-        config = ModelshipModelConfig(
-            name="test-llm",
-            model="some-model",
-            usecase=ModelUsecase.generate,
-            loader=ModelLoader.vllm,
-            num_gpus=0,
-        )
-        assert config.vllm_engine_kwargs.gpu_memory_utilization is None
-        assert default_gpu_memory_utilization(config) == 0.4
-
-    def test_explicit_gpu_memory_utilization_rejected_on_cpu_deploy(self):
-        with pytest.raises(ValidationError, match="cannot be set explicitly"):
-            ModelshipModelConfig(
-                name="test-llm",
-                model="some-model",
-                usecase=ModelUsecase.generate,
-                loader=ModelLoader.vllm,
-                num_gpus=0,
-                vllm_engine_kwargs={"gpu_memory_utilization": 0.6},
+                num_gpus=num_gpus,
+                vllm_engine_kwargs={key: value},
             )
 
     def test_num_gpus_integer_required_above_one(self):
@@ -430,7 +385,6 @@ class TestVllmEngineConfig:
         assert config.tensor_parallel_size == 1
         assert config.pipeline_parallel_size == 1
         assert config.dtype == "auto"
-        assert config.gpu_memory_utilization is None
         assert config.trust_remote_code is False
 
     def test_custom_values(self):
@@ -663,6 +617,66 @@ class TestAutoscalingConfig:
         assert a.fingerprint() == b.fingerprint() == plain.fingerprint()
 
 
+def _repo_yaml_configs() -> list[Path]:
+    """Every models.yaml checked into the repo."""
+    root = Path(__file__).resolve().parent.parent
+    paths = sorted((root / "config" / "examples").glob("*.yaml")) + sorted((root / "bench" / "configs").glob("*.yaml"))
+    assert len(paths) > 10, f"config discovery found only {len(paths)} files — did a directory move?"
+    return paths
+
+
+class TestStrictSchema:
+    """`extra="forbid"`: an unknown key is a typo, and reaches the same error from
+    models.yaml and from the CLI flags generated off these same fields."""
+
+    _BASE: ClassVar[dict] = {"name": "m", "model": "x.gguf", "usecase": "generate", "loader": "llama_server"}
+
+    def test_unknown_root_key_rejected(self):
+        with pytest.raises(ValidationError, match="n_ctx"):
+            ModelshipModelConfig.model_validate({**self._BASE, "n_ctx": 4096})
+
+    def test_unknown_nested_key_rejected(self):
+        with pytest.raises(ValidationError, match="n_ctxx"):
+            ModelshipModelConfig.model_validate({**self._BASE, "llama_server_config": {"n_ctxx": 4096}})
+
+    def test_vllm_engine_kwargs_model_rejected(self):
+        raw = {**self._BASE, "model": "org/m", "loader": "vllm", "vllm_engine_kwargs": {"model": "other/m"}}
+        with pytest.raises(ValidationError, match=r"vllm_engine_kwargs\.model cannot be set"):
+            ModelshipModelConfig.model_validate(raw)
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("num_gpus", -1),
+            ("num_gpus", -0.5),
+            ("num_cpus", -2),
+            ("num_replicas", 0),
+            ("num_replicas", -1),
+            ("max_ongoing_requests", 0),
+        ],
+    )
+    def test_out_of_range_resource_values_rejected(self, key, value):
+        """A negative num_gpus read as "not fractional" all the way down to Ray,
+        which then got a reservation it can't satisfy."""
+        with pytest.raises(ValidationError, match="greater than or equal"):
+            ModelshipModelConfig.model_validate({**self._BASE, key: value})
+
+    def test_num_gpus_zero_and_fractional_still_allowed(self):
+        for value in (0, 0.5, 2):
+            assert ModelshipModelConfig.model_validate({**self._BASE, "num_gpus": value}).num_gpus == value
+
+    @pytest.mark.parametrize(
+        "path",
+        sorted(_repo_yaml_configs()),
+        ids=lambda p: f"{p.parent.name}/{p.name}",
+    )
+    def test_checked_in_configs_validate(self, path):
+        """bench/configs included: nothing else in CI validates them."""
+        from modelship.deploy.config import load_yaml_config
+
+        assert load_yaml_config(str(path)).models
+
+
 class TestPreRayImportChain:
     """These modules run before resolve_ray_auth_env(), and ray latches RAY_AUTH_MODE at
     import; subprocess-based since ray is already in sys.modules by suite time.
@@ -674,6 +688,7 @@ class TestPreRayImportChain:
             "modelship.utils.model_ref",
             "modelship.utils.config_schema",
             "modelship.utils.cli",
+            "modelship.utils.model_flags",
             "modelship.deploy.config",
             "modelship.launcher",
         ],
