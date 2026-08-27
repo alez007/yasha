@@ -9,7 +9,6 @@ from typing import NamedTuple
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 from huggingface_hub import hf_hub_download, model_info, snapshot_download
-from huggingface_hub.utils import filter_repo_objects  # pyright: ignore[reportPrivateImportUsage]
 from tqdm.asyncio import tqdm_asyncio
 
 from modelship.logging import get_logger
@@ -84,11 +83,12 @@ class _ModelDownloadProgress:
         mb = self.downloaded_bytes / _MIB
         return mb, mb / elapsed
 
-    def finish(self) -> None:
+    def finish(self, success: bool) -> None:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=1)
-            logger.info("%s: download complete (%.0f MiB, %.1f MiB/s)", self.repo, *self._stats())
+            if success:
+                logger.info("%s: download complete (%.0f MiB, %.1f MiB/s)", self.repo, *self._stats())
 
 
 class _DownloadProgressLogger(tqdm_asyncio):
@@ -104,6 +104,10 @@ class _DownloadProgressLogger(tqdm_asyncio):
 
     def display(self, msg=None, pos=None):
         pass
+
+
+def _matches_any_pattern(path: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatch(path, p + "*" if p.endswith("/") else p) for p in patterns)
 
 
 def _sum_sizes(files: Iterable[str], sizes_by_file: dict[str, int | None]) -> int | None:
@@ -124,7 +128,7 @@ class ModelDownloadError(Exception):
     it as transient rather than fatal."""
 
 
-def _select_patterns(repo_files: list[str], trust_remote_code: bool = False) -> list[str] | None:
+def _select_patterns(repo_files: list[str], trust_remote_code: bool = False) -> list[str]:
     """Universal filter: prefer safetensors over bin/h5/onnx if present."""
     has_safetensors = any(f.endswith(".safetensors") or ".safetensors.index.json" in f for f in repo_files)
 
@@ -298,7 +302,7 @@ def check_model_source(model_ref: str, trust_remote_code: bool = False) -> Pinne
 
     # Full snapshot with universal filter
     patterns = _select_patterns(repo_files, trust_remote_code=trust_remote_code)
-    matched_files = list(filter_repo_objects(repo_files, allow_patterns=patterns))
+    matched_files = [f for f in repo_files if _matches_any_pattern(f, patterns)]
     return PinnedSource(None, source, revision, None, patterns, None, _sum_sizes(matched_files, sizes_by_file))
 
 
@@ -317,11 +321,14 @@ def download_model_source(pinned: PinnedSource) -> str:
     global _active_download
     progress = _ModelDownloadProgress(pinned.repo, pinned.total_bytes)
     _active_download = progress
+    success = False
     try:
         if pinned.download_filename is not None:
-            return hf_hub_download(
+            path = hf_hub_download(
                 pinned.repo, pinned.download_filename, revision=pinned.revision, tqdm_class=_DownloadProgressLogger
             )
+            success = True
+            return path
 
         assert pinned.download_patterns is not None
         snapshot_dir = snapshot_download(
@@ -330,11 +337,12 @@ def download_model_source(pinned: PinnedSource) -> str:
             allow_patterns=pinned.download_patterns,
             tqdm_class=_DownloadProgressLogger,
         )
+        success = True
         if pinned.first_shard is not None:
             return str(Path(snapshot_dir, pinned.first_shard).absolute())
         return snapshot_dir
     finally:
-        progress.finish()
+        progress.finish(success)
         _active_download = None
 
 
