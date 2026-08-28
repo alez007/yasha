@@ -179,7 +179,6 @@ def _validate_part(
             )
         if ptype == "image_url" and isinstance(img, dict):
             return part
-        # Rewrite to the nested chat shape: backends reject a bare-string url.
         image_url: dict[str, Any] = {"url": url}
         if isinstance(detail, str):
             image_url["detail"] = detail
