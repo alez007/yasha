@@ -1,5 +1,5 @@
 """End-to-end coverage for the llama_server loader: chat, tool calling,
-reasoning, response_format, GPU offload, embeddings, and concurrency, all
+reasoning, response_format, vision, GPU offload, embeddings, and concurrency, all
 through a real `llama-server` subprocess proxied over its native
 OpenAI-compatible HTTP API."""
 
@@ -10,8 +10,9 @@ import time
 import httpx
 import pytest
 
+import openai
 from modelship.utils.cli import infer_model_name
-from tests.conftest import MODEL_CONFIGS
+from tests.conftest import MODEL_CONFIGS, RED_IMAGE_DATA_URI
 
 OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 
@@ -506,3 +507,107 @@ def test_deploy_with_inferred_model_name(client, model_deployer):
         max_tokens=16,
     )
     assert completion.choices[0].message.content
+
+
+@pytest.mark.integration
+@pytest.mark.llama_server
+class TestChatVlmLlamaServer:
+    """Vision through a real llama-server subprocess launched with `--mmproj`, over
+    every accepted image part shape. Asserted on `prompt_tokens`: a dropped image
+    still answers fluently, and only the token count falls back to the text baseline."""
+
+    _QUESTION = "What color is this image? Answer in one word."
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        # chat-llama-server rides along with no mmproj — the rejection case.
+        model_deployer.deploy("chat-vlm-llama-server", "chat-llama-server")
+
+    @pytest.fixture(scope="class")
+    def text_only_prompt_tokens(self, client) -> int:
+        completion = client.chat.completions.create(
+            model="chat-vlm-llama-server",
+            messages=[{"role": "user", "content": self._QUESTION}],
+            max_tokens=8,
+        )
+        return completion.usage.prompt_tokens
+
+    @pytest.mark.parametrize(
+        "part",
+        [
+            pytest.param({"type": "image_url", "image_url": {"url": RED_IMAGE_DATA_URI}}, id="image_url-object"),
+            pytest.param({"type": "image_url", "image_url": RED_IMAGE_DATA_URI}, id="image_url-bare-string"),
+            pytest.param({"type": "input_image", "image_url": RED_IMAGE_DATA_URI}, id="input_image"),
+        ],
+    )
+    def test_every_image_part_shape_reaches_the_backend(self, client, text_only_prompt_tokens, part):
+        completion = client.chat.completions.create(
+            model="chat-vlm-llama-server",
+            messages=[{"role": "user", "content": [{"type": "text", "text": self._QUESTION}, part]}],
+            max_tokens=16,
+            temperature=0.0,
+        )
+        assert completion.choices[0].message.content
+        assert completion.usage.prompt_tokens > text_only_prompt_tokens + 20
+        assert "red" in completion.choices[0].message.content.lower()
+
+    def test_image_url_streaming(self, client):
+        stream = client.chat.completions.create(
+            model="chat-vlm-llama-server",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": self._QUESTION},
+                        {"type": "image_url", "image_url": {"url": RED_IMAGE_DATA_URI}},
+                    ],
+                }
+            ],
+            max_tokens=16,
+            temperature=0.0,
+            stream=True,
+        )
+        chunks = [c.choices[0].delta.content for c in stream if c.choices[0].delta.content]
+        assert "red" in "".join(chunks).lower()
+
+    def test_responses_input_image(self, client, text_only_prompt_tokens):
+        response = client.responses.create(
+            model="chat-vlm-llama-server",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": self._QUESTION},
+                        {"type": "input_image", "image_url": RED_IMAGE_DATA_URI},
+                    ],
+                }
+            ],
+            max_output_tokens=16,
+            temperature=0.0,
+        )
+        assert response.usage.input_tokens > text_only_prompt_tokens + 20
+        assert "red" in response.output_text.lower()
+
+    def test_text_only_request_still_works(self, client):
+        completion = client.chat.completions.create(
+            model="chat-vlm-llama-server",
+            messages=[{"role": "user", "content": "Say hi."}],
+            max_tokens=8,
+        )
+        assert completion.choices[0].message.content
+
+    def test_image_rejected_without_mmproj(self, client):
+        with pytest.raises(openai.BadRequestError, match="does not support image input"):
+            client.chat.completions.create(
+                model="chat-llama-server",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": self._QUESTION},
+                            {"type": "image_url", "image_url": {"url": RED_IMAGE_DATA_URI}},
+                        ],
+                    }
+                ],
+                max_tokens=16,
+            )
