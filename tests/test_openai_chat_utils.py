@@ -92,7 +92,7 @@ def test_image_url_data_uri():
 
 
 def test_image_url_as_bare_string_is_nested():
-    # llama-server rejects a bare-string url ("Invalid base64 value").
+    # Both backends reject it: llama-server "Invalid base64 value", vllm a pydantic dict_type 400.
     messages = [
         {
             "role": "user",
