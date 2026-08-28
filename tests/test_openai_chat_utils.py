@@ -91,7 +91,8 @@ def test_image_url_data_uri():
     assert result[0]["content"][0]["image_url"]["url"] == "data:image/png;base64,AAA"
 
 
-def test_image_url_as_bare_string_accepted():
+def test_image_url_as_bare_string_is_nested():
+    # llama-server rejects a bare-string url ("Invalid base64 value").
     messages = [
         {
             "role": "user",
@@ -102,7 +103,36 @@ def test_image_url_as_bare_string_accepted():
         }
     ]
     result = normalize_chat_messages(messages, supports_image=True)
-    assert result[0]["content"][0]["image_url"] == "https://example.com/x.png"
+    assert result[0]["content"][0] == {"type": "image_url", "image_url": {"url": "https://example.com/x.png"}}
+
+
+def test_input_image_normalized_to_image_url():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_image", "image_url": "data:image/png;base64,AAA", "detail": "low"},
+                {"type": "input_text", "text": "what is this"},
+            ],
+        }
+    ]
+    result = normalize_chat_messages(messages, supports_image=True)
+    assert result[0]["content"][0] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,AAA", "detail": "low"},
+    }
+
+
+def test_input_image_missing_url_rejected():
+    messages = [{"role": "user", "content": [{"type": "input_image", "image_url": {}}]}]
+    with pytest.raises(UnsupportedContentError, match="url"):
+        normalize_chat_messages(messages, supports_image=True)
+
+
+def test_image_url_detail_preserved():
+    part = {"type": "image_url", "image_url": {"url": "https://example.com/x.png", "detail": "high"}}
+    result = normalize_chat_messages([{"role": "user", "content": [part]}], supports_image=True)
+    assert result[0]["content"][0] == part
 
 
 def test_image_url_missing_url_field_rejected():

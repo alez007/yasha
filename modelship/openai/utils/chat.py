@@ -83,7 +83,8 @@ def normalize_chat_messages(
         - Text-like parts (``text`` / ``input_text`` / ``output_text`` /
           ``refusal`` / ``thinking``) are normalized to ``{"type": "text", "text": ...}``.
         - Image parts (``image_url`` / ``input_image``) require ``supports_image``;
-          otherwise :class:`UnsupportedContentError` is raised.
+          otherwise :class:`UnsupportedContentError` is raised. Both are normalized
+          to ``{"type": "image_url", "image_url": {"url": ...}}``.
         - Audio parts (``input_audio`` / ``audio_url``) require ``supports_audio``;
           otherwise :class:`UnsupportedContentError` is raised.
         - Parts with empty / missing content are dropped with a warning
@@ -159,14 +160,15 @@ def _validate_part(
     if ptype in _IMAGE_TYPES:
         if not supports_image:
             raise UnsupportedContentError(f"messages[{msg_idx}].content: this model does not support image input")
-        img = part.get("image_url") if ptype == "image_url" else part.get("input_image")
+        # Both types carry the URL under `image_url`: bare string for input_image, {"url": ...} for image_url.
+        img = part.get("image_url")
         if img is None:
             logger.warning("messages[%d].content: skipping empty %r part", msg_idx, ptype)
             return None
         if isinstance(img, str):
-            url = img
+            url, detail = img, part.get("detail")
         elif isinstance(img, dict):
-            url = img.get("url")
+            url, detail = img.get("url"), img.get("detail")
         else:
             raise UnsupportedContentError(
                 f"messages[{msg_idx}].content: {ptype!r} must be a URL string or an object with a 'url' field"
@@ -175,7 +177,13 @@ def _validate_part(
             raise UnsupportedContentError(
                 f"messages[{msg_idx}].content: {ptype!r}.url must be a non-empty string (http(s) URL or data: URI)"
             )
-        return part
+        if ptype == "image_url" and isinstance(img, dict):
+            return part
+        # Rewrite to the nested chat shape: backends reject a bare-string url.
+        image_url: dict[str, Any] = {"url": url}
+        if isinstance(detail, str):
+            image_url["detail"] = detail
+        return {"type": "image_url", "image_url": image_url}
 
     if ptype in _AUDIO_TYPES:
         if not supports_audio:

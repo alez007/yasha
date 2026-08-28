@@ -41,6 +41,14 @@ HEALTH_URL = "http://localhost:8000/modelship/health"
 
 # Per-model configs; Deployer.deploy(*names) writes a subset into a one-shot
 # models.yaml and runs `mship_deploy.py --reconcile` to swap the deployed set.
+# 64x64 solid red PNG — one unambiguous color, large enough to survive image preprocessing.
+RED_IMAGE_DATA_URI = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAUElEQVR42u3PQREAAAQAMGTQP5kwUni42xos"
+    "pzs+q3hOQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA4N4CQ5MBhMgt2OkA"
+    "AAAASUVORK5CYII="
+)
+
 MODEL_CONFIGS: dict[str, dict] = {
     "chat-capable": {
         "name": "chat-capable",
@@ -110,6 +118,18 @@ MODEL_CONFIGS: dict[str, dict] = {
         "llama_server_config": {
             "n_ctx": 4096,
             "parallel": 4,
+        },
+    },
+    "chat-vlm-llama-server": {
+        "name": "chat-vlm-llama-server",
+        # Smallest GGUF VLM that fits a CPU deploy; mmproj is what gates image input.
+        "model": "ggml-org/SmolVLM-256M-Instruct-GGUF:SmolVLM-256M-Instruct-Q8_0.gguf",
+        "usecase": "generate",
+        "loader": "llama_server",
+        "num_cpus": 2,
+        "llama_server_config": {
+            "mmproj": "ggml-org/SmolVLM-256M-Instruct-GGUF:mmproj-SmolVLM-256M-Instruct-Q8_0.gguf",
+            "n_ctx": 4096,
         },
     },
     "chat-llama-server-plain": {

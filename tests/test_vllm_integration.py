@@ -7,6 +7,8 @@ import json
 import httpx
 import pytest
 
+from tests.conftest import RED_IMAGE_DATA_URI
+
 OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 
 
@@ -394,40 +396,48 @@ class TestChatReasoning:
         assert "<think>" not in "".join(content_parts)
 
 
-# 1x1 red pixel PNG
-_RED_PIXEL_DATA_URI = (
-    "data:image/png;base64,"
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
-)
-
-
 @pytest.mark.integration
 @pytest.mark.vllm
 class TestChatVlm:
     """End-to-end vision: a real Qwen3-VL-2B deployment receiving an
     ``image_url`` content part through the modelship gateway."""
 
+    _QUESTION = "What color is this image? Answer in one word."
+
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
         model_deployer.deploy("chat-vlm")
 
-    def test_chat_with_image_url_returns_response(self, client):
+    @pytest.fixture(scope="class")
+    def text_only_prompt_tokens(self, client) -> int:
         completion = client.chat.completions.create(
             model="chat-vlm",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "What color is this image? Answer in one word."},
-                        {"type": "image_url", "image_url": {"url": _RED_PIXEL_DATA_URI}},
-                    ],
-                }
-            ],
+            messages=[{"role": "user", "content": self._QUESTION}],
+            max_tokens=8,
+        )
+        return completion.usage.prompt_tokens
+
+    @pytest.mark.parametrize(
+        "part",
+        [
+            pytest.param({"type": "image_url", "image_url": {"url": RED_IMAGE_DATA_URI}}, id="image_url-object"),
+            pytest.param({"type": "image_url", "image_url": RED_IMAGE_DATA_URI}, id="image_url-bare-string"),
+            pytest.param({"type": "input_image", "image_url": RED_IMAGE_DATA_URI}, id="input_image"),
+        ],
+    )
+    def test_every_image_part_shape_reaches_the_backend(self, client, text_only_prompt_tokens, part):
+        # prompt_tokens, not the text: a dropped image still answers fluently.
+        completion = client.chat.completions.create(
+            model="chat-vlm",
+            messages=[{"role": "user", "content": [{"type": "text", "text": self._QUESTION}, part]}],
             max_tokens=16,
+            temperature=0.0,
         )
         assert completion.choices[0].message.content
         assert completion.choices[0].finish_reason in {"stop", "length"}
         assert completion.model == "chat-vlm"
+        assert completion.usage.prompt_tokens > text_only_prompt_tokens + 20
+        assert "red" in completion.choices[0].message.content.lower()
 
     def test_text_only_request_still_works_on_vlm(self, client):
         completion = client.chat.completions.create(
@@ -445,7 +455,7 @@ class TestChatVlm:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": "Describe the image briefly."},
-                        {"type": "image_url", "image_url": {"url": _RED_PIXEL_DATA_URI}},
+                        {"type": "image_url", "image_url": {"url": RED_IMAGE_DATA_URI}},
                     ],
                 }
             ],
