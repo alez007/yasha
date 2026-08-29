@@ -61,7 +61,7 @@ The following environment variables are set in the dev image with sensible defau
 | `MSHIP_USE_EXISTING_RAY_CLUSTER` | `false` | Set to `true` to connect to a Ray cluster you manage (must run on a cluster node) instead of starting one; implies deploy-and-exit |
 | `MSHIP_GATEWAY_REPLICAS` | `1` | Number of API gateway replicas. Raise for routing/ingress HA and to spread request-proxying load under high concurrency; replicas keep routing tables in sync via the deploy coordinator's watch loop. |
 | `MSHIP_GATEWAY_MAX_ONGOING` | `1024` | Per-replica Ray Serve concurrency cap for the gateway. The gateway holds a slot for the whole lifetime of each streamed response, so a low cap throttles before the engine does. |
-| `MSHIP_LLAMA_SERVER_BIN` | `/opt/mship/bin/llama-server.sh` in the Dev Container (unset otherwise) | `llama-server` executable used by the `llama_server` loader; see [llama-server binary](#llama-server-binary-llama_server-loader). |
+| `MSHIP_LLAMA_SERVER_BIN` | `/opt/mship/bin/llama-server.sh` in the Dev Container (unset otherwise) | Unified `llama` executable used by the `llama_server` loader and its preflight; see [llama-server binary](#llama-server-binary-llama_server-loader). |
 
 ## Manual setup (without Dev Containers)
 
@@ -114,17 +114,17 @@ uv run mship_deploy.py
 
 ## llama-server binary (`llama_server` loader)
 
-The `llama_server` loader launches a `llama-server` subprocess and finds it via `MSHIP_LLAMA_SERVER_BIN`. `mship bootstrap` provisions it (downloaded, sha256-verified, cached under `$MSHIP_HOME/builds/<variant>/llama.cpp/`) and `mship deploy` points the env var at its wrapper script — see `bootstrap/mship_bootstrap/llama_cpp.py` and its `_ASSETS` table. These are modelship's own builds of one llama.cpp tag for every platform it ships ([`modelship-ai/llama-cpp-builds`](https://github.com/modelship-ai/llama-cpp-builds)), so every node in a cluster runs the identical binary. The `cuda` variant adds `libggml-cuda.so` beside it. The `thin` variant ships no binary at all — it never loads a model.
+The `llama_server` loader and its preflight both invoke the unified `llama` binary (`llama serve` / `llama fit-params`) found via `MSHIP_LLAMA_SERVER_BIN` — the env var name predates the binary's unification and stuck. `mship bootstrap` provisions it (downloaded, sha256-verified, cached under `$MSHIP_HOME/builds/<variant>/llama.cpp/`) and `mship deploy` points the env var at its wrapper script — see `bootstrap/mship_bootstrap/llama_cpp.py` and its `_ASSETS` table. These are modelship's own builds of one llama.cpp tag for every platform it ships ([`modelship-ai/llama-cpp-builds`](https://github.com/modelship-ai/llama-cpp-builds)), so every node in a cluster runs the identical binary. The `cuda` variant adds `libggml-cuda.so` beside it. The `thin` variant ships no binary at all — it never loads a model.
 
 The published images run that same bootstrap at build time, so they arrive preconfigured. The `dev` target does **not** run it, but the Dev Container fetches it for you: `.devcontainer/provision-llama-server.sh` runs from `postCreateCommand`, importing `bootstrap/mship_bootstrap/llama_cpp.py` straight from source (it's stdlib-only) to reuse its fetch/verify logic against the `cuda` variant, and `MSHIP_LLAMA_SERVER_BIN` is preset (via `remoteEnv`) to the stable symlink it leaves at `$MSHIP_HOME/bin/llama-server.sh`. Building and running the dev image manually still skips this — set `MSHIP_LLAMA_SERVER_BIN` yourself, run that script, or run `mship bootstrap` inside it, to exercise the `llama_server` loader there.
 
-For a platform outside that table, or to use a different llama.cpp build than the pinned one, download a build from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) and extract it. The raw `llama-server` binary does **not** run standalone — it dynamically links the `libggml*`/`libllama*` libraries that ship as sibling files in the same archive, so point `MSHIP_LLAMA_SERVER_BIN` at a small wrapper that puts the extracted directory on the loader path:
+For a platform outside that table, or to use a different llama.cpp build than the pinned one, download a build from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) and extract it. The raw `llama` binary does **not** run standalone — it dynamically links the `libggml*`/`libllama*` libraries that ship as sibling files in the same archive, so point `MSHIP_LLAMA_SERVER_BIN` at a small wrapper that puts the extracted directory on the loader path:
 
 ```bash
 #!/bin/sh
 # llama-server.sh — use DYLD_LIBRARY_PATH instead on macOS
 export LD_LIBRARY_PATH="/path/to/extracted${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-exec /path/to/extracted/llama-server "$@"
+exec /path/to/extracted/llama "$@"
 ```
 
 ```bash

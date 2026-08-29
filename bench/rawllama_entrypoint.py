@@ -45,6 +45,7 @@ def main() -> int:
 
     args = [
         binary,
+        "serve",
         "--host",
         "0.0.0.0",
         "--port",
@@ -55,6 +56,14 @@ def main() -> int:
         str(k.n_ctx * k.parallel),
         "-b",
         str(k.n_batch),
+        "-ub",
+        str(k.ubatch_size),
+        "-fa",
+        k.flash_attn,
+        "-ctk",
+        k.cache_type_k,
+        "-ctv",
+        k.cache_type_v,
         "--parallel",
         str(k.parallel),
         "--jinja",
@@ -75,6 +84,8 @@ def main() -> int:
     # when the modelship phase wouldn't.
     if m.num_gpus > 0:
         args += ["-ngl", str(k.n_gpu_layers)]
+        if k.tensor_split:
+            args += ["-ts", ",".join(str(v) for v in k.tensor_split)]
         # Ray's GPU reservation restricts the modelship actor's
         # CUDA_VISIBLE_DEVICES to exactly num_gpus device(s); this bare
         # subprocess bypasses Ray entirely and would otherwise inherit every
@@ -100,7 +111,6 @@ def main() -> int:
         args += ["--mmproj", mmproj_path]
     if m.usecase == ModelUsecase.embed:
         args += ["--embedding"]
-    args += list(k.extra_args)
 
     print("rawllama exec:", " ".join(args), flush=True)
     os.execvp(args[0], args)

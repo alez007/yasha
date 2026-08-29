@@ -132,8 +132,12 @@ class LlamaServerConfig(_StrictModel):
     cache_reuse: int = Field(default=0, ge=0)
     context_shift: bool = False
     cache_ram_mib: int | None = Field(default=None, ge=-1)
-    # Appended verbatim: escape hatch for launch flags not surfaced above.
-    extra_args: list[str] = Field(default_factory=list)
+    ubatch_size: int = 512
+    flash_attn: Literal["on", "off", "auto"] = "auto"
+    cache_type_k: Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] = "f16"
+    cache_type_v: Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] = "f16"
+    # Proportional split across GPUs for offloading (`-ts`); None splits evenly.
+    tensor_split: list[float] | None = None
 
 
 class WhispercppConfig(_StrictModel):

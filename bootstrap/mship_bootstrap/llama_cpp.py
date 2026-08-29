@@ -98,7 +98,7 @@ def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
     extract_dir = os.path.join(tag_dir, "extracted")
     wrapper_path = os.path.join(tag_dir, "llama-server.sh")
 
-    binary = os.path.join(extract_dir, "llama-server")
+    binary = os.path.join(extract_dir, "llama")
     cuda = variant.name == "cuda" and (platform.system(), platform.machine()) == ("Linux", "x86_64")
 
     if not os.path.isfile(binary) or (cuda and not os.path.isfile(os.path.join(extract_dir, _CUDA_BACKEND_SO))):
@@ -152,9 +152,7 @@ def _write_wrapper(wrapper_path: str, extract_dir: str, lib_env: str, variant: V
             )
     search_path = ":".join(lib_dirs)
     content = (
-        "#!/bin/sh\n"
-        f'export {lib_env}="{search_path}${{{lib_env}:+:${lib_env}}}"\n'
-        f'exec "{extract_dir}/llama-server" "$@"\n'
+        f'#!/bin/sh\nexport {lib_env}="{search_path}${{{lib_env}:+:${lib_env}}}"\nexec "{extract_dir}/llama" "$@"\n'
     )
     with open(wrapper_path, "w") as f:
         f.write(content)
@@ -164,7 +162,7 @@ def _write_wrapper(wrapper_path: str, extract_dir: str, lib_env: str, variant: V
 def warn_if_no_cuda_device(wrapper_path: str) -> None:
     try:
         result = subprocess.run(
-            [wrapper_path, "--list-devices"], capture_output=True, text=True, timeout=60, check=False
+            [wrapper_path, "serve", "--list-devices"], capture_output=True, text=True, timeout=60, check=False
         )
     except (OSError, subprocess.SubprocessError):
         return

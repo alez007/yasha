@@ -80,7 +80,7 @@ Values are read as YAML: the same text you would write after the colon in the fi
 | `--llama-server-config.n-ctx 8192` | `8192` |
 | `--vllm-engine-kwargs.trust-remote-code true` | `true` |
 | `--vllm-engine-kwargs.limit-mm-per-prompt '{image: 2}'` | a map |
-| `--llama-server-config.extra-args '["--no-mmap"]'` | a list |
+| `--llama-server-config.tensor-split '[3, 1]'` | a list |
 | `--llama-server-config.threads null` | `null` — an explicit value, not "left unset" |
 | `--chat-template-kwargs '{enable_thinking: false}'` | a map |
 
@@ -349,15 +349,15 @@ models:
 
 ## llama_server Loader
 
-Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/llama.cpp) subprocess and proxying its native OpenAI-compatible HTTP API. Chat templating, tool-call parsing, and reasoning parsing are all llama-server's own (`--jinja --reasoning-format auto`), not modelship's. `--parallel` request slots let concurrent requests actually overlap instead of serializing behind a single lock. Requires the `llama-server` binary discoverable via `MSHIP_LLAMA_SERVER_BIN` (see [development.md](development.md#llama-server-binary-llama_server-loader)); Docker images ship a pinned build at `/opt/llama.cpp`.
+Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/llama.cpp) subprocess and proxying its native OpenAI-compatible HTTP API. Chat templating, tool-call parsing, and reasoning parsing are all llama-server's own (`--jinja --reasoning-format auto`), not modelship's. `--parallel` request slots let concurrent requests actually overlap instead of serializing behind a single lock. Requires the unified `llama` binary discoverable via `MSHIP_LLAMA_SERVER_BIN` (see [development.md](development.md#llama-server-binary-llama_server-loader)); Docker images ship a pinned build at `/opt/llama.cpp`.
 
 `num_gpus` accepts `0` (CPU-only), a fraction `< 1` (shares one physical GPU), or a whole integer — see [Sharing one GPU](#sharing-one-gpu). Configured via `llama_server_config`:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `n_ctx` | int | auto (preflight); `2048` when preflight declines | Per-slot context length. The launch command multiplies this by `parallel` for llama-server's total `-c`. Preflight sizes it from GGUF metadata and hardware: RAM on `num_gpus: 0`, VRAM on `num_gpus > 0` (plus a RAM check for any CPU-resident layers) |
+| `n_ctx` | int | auto (preflight); `2048` when preflight declines | Per-slot context length. The launch command multiplies this by `parallel` for llama-server's total `-c`. Preflight shells out to `llama fit-params`, which builds the real KV cache and compute buffers to solve `n_ctx`/`n_gpu_layers`/`tensor_split` together |
 | `n_batch` | int | `512` | Batch size for prompt processing |
-| `n_gpu_layers` | int | auto (preflight); `-1` when preflight declines | Layers offloaded to GPU when `num_gpus > 0`; forced to `0` when `num_gpus` is `0`. Preflight recommends a concrete count whenever GGUF metadata is readable. `-1` hits llama-server's own auto-fit-to-free-memory path — verified for any negative value against b9859, unconfirmed on the current b10375 pin (`--help`'s documented `'auto'`/`'all'` string tokens aren't reachable through this int field) |
+| `n_gpu_layers` | int | auto (preflight); `-1` when preflight declines | Layers offloaded to GPU when `num_gpus > 0`; forced to `0` when `num_gpus` is `0`. `-1` hits llama-server's own auto-fit-to-free-memory path — verified for any negative value against b9859, unconfirmed on the current b10375 pin (`--help`'s documented `'auto'`/`'all'` string tokens aren't reachable through this int field) |
 | `threads` | int | `None` (llama-server default: all cores) | Compute thread count (`--threads`). Preflight recommends `num_cpus` when the deploy reserves ≥1 whole CPU and it wouldn't undercut `parallel` |
 | `parallel` | int | `1` | Concurrent request slots (`--parallel`). Also becomes `max_ongoing_requests`'s default when that's unset, so overflow queues in Ray Serve rather than inside llama-server |
 | `chat_template` | string | — | Built-in template name (e.g. `chatml`) or a Jinja file path. Omit to use the GGUF's embedded template |
@@ -365,13 +365,16 @@ Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/lla
 | `cache_reuse` | int | `0` | Min chunk size (tokens) for fuzzy KV-cache reuse via position-shifting (`--cache-reuse`). `0` means exact-prefix reuse only; raise it to also reuse chunks after a mid-prompt divergence (changed system prompt, swapped RAG doc) |
 | `context_shift` | bool | `false` | Evict oldest tokens and keep generating when a slot's context fills, instead of erroring (`--context-shift`) |
 | `cache_ram_mib` | int | `None` (llama-server default: `8192`) | In-RAM prompt-cache cap in MiB (`-cram`). `-1` = no limit, `0` disables the cache |
-| `extra_args` | list[string] | `[]` | Escape hatch: extra flags appended verbatim to the launch command |
+| `ubatch_size` | int | `512` | Physical max batch size (`-ub`) — the largest single memory lever after context itself |
+| `flash_attn` | `on`/`off`/`auto` | `auto` | Flash Attention use (`-fa`) |
+| `cache_type_k` / `cache_type_v` | string | `f16` | KV cache quantization (`-ctk`/`-ctv`); also `f32`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `iq4_nl`, `q5_0`, `q5_1` |
+| `tensor_split` | list[float] | `None` | Proportional offload split across GPUs (`-ts`). Preflight recommends an uneven split on heterogeneous cards |
 
 llama-server caches prompts in RAM by default (`--cache-prompt`, always on, 8 GiB idle-slot cache) — exact-prefix reuse works out of the box for ordinary append-only chat. There is no persistent **on-disk** prompt cache; caching is in-memory only and doesn't survive a process restart, unlike modelship's disk cache for other loaders.
 
 #### MLA models (DeepSeek, MiniCPM3)
 
-llama.cpp caches the compressed latent for MLA architectures only when the GGUF ships split `attn_k_b`/`attn_v_b` projections. Conversions predating that support carry a fused `attn_kv_b` and fall back to full per-head K/V — for DeepSeek-V2-Lite that is 276,480 B/token instead of 31,104, so the same VRAM buys ~8.9x less context. Preflight detects which layout a file has and sizes `n_ctx` accordingly, but the only way to recover the context is to use a newer conversion. Nothing in the model's metadata reveals this, so check the tensor names if a GGUF sizes far smaller than expected.
+llama.cpp caches the compressed latent for MLA architectures only when the GGUF ships split `attn_k_b`/`attn_v_b` projections. Conversions predating that support carry a fused `attn_kv_b` and fall back to full per-head K/V — for DeepSeek-V2-Lite that is 276,480 B/token instead of 31,104, so the same VRAM buys ~8.9x less context. `llama fit-params` builds the real KV cache either way, so `n_ctx` is sized correctly for whichever layout the file has — but the only way to recover the missing context is to use a newer conversion. Nothing in the model's metadata reveals this, so check the tensor names if a GGUF sizes far smaller than expected.
 
 Minimum config — preflight fills in `n_ctx`, `n_gpu_layers`, `threads`:
 

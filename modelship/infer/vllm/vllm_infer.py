@@ -352,7 +352,11 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
     async def start(self):
         logger.info("Start vllm infer for model: %s", self.model_config)
         self.vllm_config = self.engine.vllm_config
-        self._set_max_context_length(self.vllm_config.model_config.max_model_len)
+        logger.info(
+            "deployed context for '%s': max_model_len=%d",
+            self.model_config.name,
+            self.vllm_config.model_config.max_model_len,
+        )
         self.supported_tasks = await self.engine.get_supported_tasks()
         logger.info("Supported_tasks: %s", self.supported_tasks)
 

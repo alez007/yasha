@@ -221,10 +221,10 @@ class TestNestedFlags:
             ("--llama-server-config.n-ctx", "8192", ("llama_server_config", "n_ctx"), 8192),
             ("--llama-server-config.context-shift", "true", ("llama_server_config", "context_shift"), True),
             (
-                "--llama-server-config.extra-args",
-                '["--no-mmap", "-fa"]',
-                ("llama_server_config", "extra_args"),
-                ["--no-mmap", "-fa"],
+                "--llama-server-config.tensor-split",
+                "[3, 1]",
+                ("llama_server_config", "tensor_split"),
+                [3.0, 1.0],
             ),
             ("--diffusers-config.guidance-scale", "0.0", ("diffusers_config", "guidance_scale"), 0.0),
             (
