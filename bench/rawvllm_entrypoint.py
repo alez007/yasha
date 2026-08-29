@@ -1,9 +1,5 @@
-"""Run `vllm serve` directly using the same models.yaml modelship reads.
-
-Mounted-only entrypoint — bypasses ray + modelship pipeline so a benchmark can
-A/B the modelship loader against raw vLLM with identical engine kwargs and the
-identical vLLM wheel that ships in the image.
-"""
+"""Runs `vllm serve` directly against the same models.yaml modelship reads,
+bypassing Ray, to A/B against the vllm loader with identical engine kwargs."""
 
 from __future__ import annotations
 
@@ -50,10 +46,8 @@ def main() -> int:
         args += ["--tool-call-parser", k.tool_call_parser]
     if k.enforce_eager:
         args += ["--enforce-eager"]
-    # Note: modelship derives distributed_executor_backend internally ("ray" when
-    # tensor_parallel_size * pipeline_parallel_size > 1, else vLLM's default).
-    # It is not a config field, so the raw phase here uses vLLM's standalone
-    # default executor (mp) — a fair single-node match for the bench's tp=pp=1.
+    # distributed_executor_backend is derived internally by modelship (not a
+    # config field), so the raw phase relies on vLLM's own default executor here.
 
     print("rawvllm exec:", " ".join(args), flush=True)
     os.execvp(args[0], args)

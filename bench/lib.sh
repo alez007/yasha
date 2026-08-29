@@ -2,11 +2,8 @@
 # assumes the caller has already set REPO_ROOT, BENCH_DIR, RESULTS_DIR,
 # CACHE_DIR, and the sampler/cleanup PID vars it declares below.
 
-# Extract the first scalar matching a key regex from a bench config yaml.
-# Tolerates double-quoted, single-quoted, and unquoted values: strips
-# everything up to the first colon, trims surrounding whitespace, then
-# removes a matched pair of surrounding quotes (only when both ends use the
-# same quote char).
+# Extracts the first scalar matching a key regex from a bench config yaml.
+# Handles quoted/unquoted values and trims whitespace.
 yaml_scalar() {
     local pattern="$1" file="$2"
     grep -m1 -E "$pattern" "$file" \
@@ -61,16 +58,11 @@ start_mem_sampler() {
         while :; do
             local ts vram cmem cgstat amib fmib smib
             ts=$(date +%s)
-            # || true: under pipefail+set -e a failing nvidia-smi/docker stats
-            # would otherwise abort this backgrounded subshell and silently stop
-            # sampling. Empty values fall back to 0 in the printf below. On a
-            # CPU-only host nvidia-smi is simply absent, so vram stays 0 — the
-            # sampler itself needs no device-aware branching.
+            # || true: avoid aborting this subshell under pipefail+set -e.
+            # No nvidia-smi (CPU host) just leaves vram at 0.
             vram=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ') || true
-            # Mem usage like "1.234GiB / 64GiB" — take first field, normalize to
-            # MiB. Handle binary (GiB/MiB/KiB) and decimal (GB/MB/KB) units,
-            # any case, with or without a space before the unit; unknown units
-            # fall back to assuming the value is already in MiB.
+            # docker stats MemUsage is "1.234GiB / 64GiB" — take the first field
+            # and normalize any unit (binary or decimal, any case) to MiB.
             cmem=$(docker stats --no-stream --format '{{.MemUsage}}' "$container" 2>/dev/null \
                 | awk -F'/' '{print $1}' \
                 | awk '{
@@ -89,12 +81,9 @@ start_mem_sampler() {
                     else             mib=num;         # unknown/unitless: assume MiB
                     printf "%.1f", mib
                   }') || true
-            # cgroup memory.stat breakdown (bytes→MiB), sampled for *both* stacks
-            # so the peak-RSS gap can be attributed: anon = real process RSS,
-            # shmem = tmpfs/plasma (Ray's object store — charged to the cgroup but
-            # to no single process, so the per-component table never sees it),
-            # file = reclaimable page cache. cgroup v2 path; if absent (v1/missing)
-            # the awk END still emits zeros.
+            # cgroup memory.stat (bytes→MiB), for both stacks: anon = process RSS,
+            # shmem = tmpfs/plasma (charged to the cgroup, not any process), file =
+            # reclaimable page cache. cgroup v2 path; v1/missing reads as zeros.
             cgstat=$(docker exec "$container" cat /sys/fs/cgroup/memory.stat 2>/dev/null) || true
             read -r amib fmib smib < <(printf '%s\n' "$cgstat" | awk '
                 $1=="anon"{a=$2} $1=="file"{f=$2} $1=="shmem"{s=$2}
@@ -115,14 +104,9 @@ stop_mem_sampler() {
     MEM_SAMPLER_PID=""
 }
 
-# Sample the Ray reporter's per-component memory (port 8079) *during* the sweep
-# and keep the scrape with the highest total private memory, so the breakdown
-# reflects peak load instead of the idle post-sweep state. The reporter refreshes
-# its gauges on its own interval; polling at 2s catches every refresh over a
-# multi-minute phase. modelship-only — the baseline stack has no Ray reporter.
-# Loader-agnostic: the Ray Serve control plane emits these regardless of which
-# loader (vllm / llama_server) the deployment wraps. Router / request histograms
-# are cumulative and still scraped once at the end.
+# Samples the Ray reporter's per-component memory (port 8079) during the sweep,
+# keeping the highest-total-USS scrape so the breakdown reflects peak load, not
+# idle. modelship-only; loader-agnostic (Ray Serve's own metrics).
 start_component_sampler() {
     local out="$1"
     : > "$out"
@@ -133,9 +117,8 @@ start_component_sampler() {
             comp=$(curl -fsS http://localhost:8079/metrics 2>/dev/null \
                 | awk '/^ray_component_(uss_mb|rss_mb|mem_shared_bytes)[{ ]/') || true
             if [[ -n "$comp" ]]; then
-                # Score = total private (USS) across components. $NF is the metric
-                # value — robust to spaces inside Component label values (e.g.
-                # "ray::ServeReplica:modelship api:modelship api").
+                # Score = total private (USS); $NF is robust to spaces in
+                # Component label values.
                 score=$(printf '%s\n' "$comp" \
                     | awk '/^ray_component_uss_mb[{ ]/ {s+=$NF} END {printf "%.0f", s+0}')
                 if [[ -n "$score" ]] && (( score > best )); then
@@ -166,9 +149,7 @@ vram_gate() {
     local deadline=$(( $(date +%s) + 60 ))
     while (( $(date +%s) < deadline )); do
         local used
-        # tr -dc digits → "" when nvidia-smi errors or prints non-numeric
-        # output; || true keeps pipefail+set -e from aborting the run. Guard
-        # the arithmetic so an empty operand isn't a syntax error.
+        # tr -dc digits: "" on error/non-numeric output; || true for pipefail+set -e.
         used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9') || true
         if [[ -n "$used" ]] && (( used < 500 )); then return 0; fi
         sleep 1
@@ -176,23 +157,11 @@ vram_gate() {
     echo "warn: VRAM not freed within 60s" >&2
 }
 
-# Read the model weights into the host page cache so both phases enter their
-# timed sweeps equally warm. drop_host_caches can't drop without privileges (it
-# warns and no-ops in most environments), and run.sh always runs modelship first
-# / baseline second against the same GGUF — so the baseline would otherwise
-# inherit a page cache the modelship phase had to cold-fault in. Called before
-# each phase's sweeps: cheap (a no-op re-read once cached) and symmetric.
-# Globs CACHE_DIR for *.gguf; on a cold host before the model is downloaded it
-# simply finds nothing and returns, which is fine (that phase faults it in during
-# its own model load, and the next phase is pre-warmed here).
-#
-# -L (dereference symlinks) is load-bearing: huggingface_hub stores the weights
-# as a hash-named blob under blobs/ and exposes it via a snapshots/*.gguf
-# *symlink*. Without -L, `-type f` skips the symlink and `-name '*.gguf'` misses
-# the extensionless blob, so the glob matches nothing and the warm silently
-# no-ops even with the model fully cached. With -L the .gguf symlink resolves to
-# its blob and passes -type f. (2>/dev/null swallows the "No such file" find
-# prints on any broken symlink.)
+# Reads model weights into the host page cache before each phase's sweeps, so
+# neither phase is unfairly cold — drop_host_caches can't drop without root, so
+# without this the second phase would inherit the first's warm cache.
+# Globs *.gguf; -L is required since huggingface_hub exposes the weights only
+# via a snapshots/ symlink to a hash-named blob, which plain find would skip.
 warm_model_cache() {
     echo "  pre-warming model cache..."
     local found=0
@@ -237,7 +206,7 @@ run_sweep() {
     local out_dir="$RESULTS_DIR/$stack"
 
     local extra_client_args=()
-    # E3. Disjoint cores for client vs server on `--device cpu`
+    # Pin the client to separate cores from the server on --device cpu.
     if [[ "$DEVICE" == "cpu" ]]; then
         local num_cores
         num_cores=$(nproc)
@@ -252,14 +221,11 @@ run_sweep() {
         fi
     fi
 
-    # --temperature 0 pins greedy decoding: vllm bench serve no longer forces it
-    # (it warns and defers to the server default), so without this the two arms
-    # sample independently and the comparison is nondeterministic run-to-run. With
-    # --ignore-eos forcing generation past EOS, sampling also occasionally makes a
-    # request emit a stray `<tool_call>` + malformed tool-call syntax that
-    # llama-server's own grammar parser rejects mid-stream (an in-band 200-with-
-    # error, propagated identically by both arms) — greedy makes that deterministic
-    # and symmetric instead of landing randomly on one arm and reding the run.
+    # --temperature 0: vllm bench serve no longer forces greedy decoding, so
+    # without this the two arms sample independently and results are
+    # nondeterministic. Also makes a rare llama-server grammar-rejection
+    # (triggered by --ignore-eos forcing past EOS) deterministic and symmetric
+    # across both arms, instead of landing randomly on one.
     docker run --rm --network host --user "$(id -u):$(id -g)" \
         "${extra_client_args[@]}" \
         -v "$out_dir:/out:rw" "$IMAGE" \
@@ -287,10 +253,10 @@ run_sweep() {
 
 scrape_prom() {
     local out="$1"
-    # Router / request histograms only — these are cumulative counters, so a
-    # single end-of-sweep scrape is correct. Per-component *memory* is a gauge
-    # that varies with load and is captured under load by start_component_sampler,
-    # not here. || true: an empty scrape must not abort the run under pipefail.
+    # Router/request histograms are cumulative counters, so one end-of-sweep
+    # scrape suffices; per-component memory (a gauge) is sampled separately
+    # under load, in start_component_sampler. || true: an empty scrape must
+    # not abort the run under pipefail.
     curl -fsS http://localhost:8079/metrics 2>/dev/null \
         | awk '/^ray_modelship_(request|generation)_duration_seconds_(sum|count)/ \
               || /^ray_serve_request_router_fulfillment_time_ms_(sum|count)/' \
@@ -458,58 +424,30 @@ elif loader == "vllm":
 PY
 }
 
-# Gate the run on result-population parity. The latency/throughput medians in
-# summary.md are computed only over each arm's *successful* requests, with no
-# check that both arms completed the same population — so if one arm silently
-# drops its slowest requests as failures (e.g. the baseline's direct-to-
-# cpp-httplib connections resetting under load), its tail metrics look better
-# purely by survivorship. Fail loudly rather than publish a biased comparison.
+# Fails the run if one arm silently drops more requests than the other — the
+# summary's medians are computed only over successful requests, so an arm
+# that drops its slowest ones would look better purely by survivorship.
 assert_result_parity() {
     echo "=== verifying result-population parity (header + in-band SSE errors) ==="
     python3 - "$RESULTS_DIR" "$OUTPUT_LEN" <<'PY'
 import json, sys
 from pathlib import Path
 
-# Two ways a request can fail, and the load client (vllm bench serve) only
-# reliably catches one of them:
+# Two failure modes, only one caught by the client's own accounting:
+#   1. Header failure — connection errors before the response; counted in `failed`.
+#   2. In-band failure — HTTP 200 already sent, then an OpenAI-style SSE error
+#      chunk truncates the stream. The client's SSE parser only reads
+#      choices/usage, so it silently counts this as `completed`.
+# Since the sweep runs --ignore-eos, every healthy request emits exactly
+# --random-output-len tokens, so a shorter completed request is a hidden
+# in-band failure — the only signal that catches it.
 #
-#   1. Header-level failure — the connection errors before/at the response
-#      (e.g. baseline's cpp-httplib keep-alive resets → ServerDisconnectedError).
-#      The client sets success=False and counts it in `failed`. Visible.
-#
-#   2. In-band failure — a streaming response whose HTTP 200 headers are already
-#      flushed, then the body carries an OpenAI-style `data: {"error": ...}`
-#      chunk followed by `[DONE]`. This is standard OpenAI streaming semantics
-#      (you cannot downgrade a status once bytes are sent), which modelship
-#      faithfully reproduces — and note the *error itself* often originates in
-#      llama-server (e.g. its grammar parser rejecting malformed tool-call output
-#      the model emits when --ignore-eos forces it past EOS), not in modelship's
-#      wrapping. vllm bench serve's hand-rolled SSE parser only reads
-#      `choices`/`usage` and silently skips the error chunk, so it counts the
-#      request as `completed` with a *truncated* token stream. Invisible to
-#      `failed`.
-#
-# Because the sweep runs with --ignore-eos, every healthy request emits exactly
-# --random-output-len tokens. So a per-request output length below that (from
-# --save-detailed's `output_lens`) is a hidden in-band failure — the only signal
-# that survives an in-band error. We count it too, otherwise an arm that silently
-# truncated N requests would still show completed==num_prompts and pass a
-# survivorship-biased comparison the header check can't catch.
-#
-# Severity is RELATIVE between the two arms, because the bench's question is "does
-# modelship cost anything *versus the raw server it wraps*?" — not "is either arm
-# perfectly reliable". Both arms drive the *same* llama-server binary with the
-# same greedy (--temperature 0) workload, so an in-band error that is really the
-# engine's own (grammar rejection, etc.) shows up in both and is not a wrapping
-# cost. Therefore:
-#   * modelship drops/truncates MORE than baseline  → HARD FAIL (exit 1): a real
-#     cost of the wrapper, and its medians compare unequal populations.
-#   * baseline drops/truncates MORE than modelship  → FINDING (exit 0): a point in
-#     modelship's favour (its uvicorn front door absorbs the cpp-httplib keep-alive
-#     resets the raw server exposes). The baseline medians are then over its
-#     surviving population — the completed/failed rows in summary.md flag that.
-#   * equal (incl. both zero)  → PASS: any drops are shared workload/engine
-#     behaviour, not attributable to the wrapper.
+# Severity is relative: both arms drive the same llama-server binary under the
+# same workload, so a shared engine-level error (e.g. a grammar rejection) hits
+# both and isn't a wrapping cost. modelship dropping/truncating MORE than
+# baseline is a real cost (hard fail); baseline dropping more is a finding in
+# modelship's favor (its front door absorbs errors baseline exposes), not a
+# failure; equal counts (including zero) pass.
 root = Path(sys.argv[1])
 expected = int(sys.argv[2])
 
@@ -600,11 +538,8 @@ print("RESULT PARITY PASSED: both arms completed every request in full (no heade
 PY
 }
 
-# Renders the shared summary.md body: latency/throughput table (median across
-# repeats), memory table (peak across the sweep), modelship per-component
-# memory breakdown + cgroup cross-check, and the router-fulfillment Prometheus
-# figure. $1/$2 are the stack directory names under $RESULTS_DIR (modelship
-# phase first), used only as labels in the printed tables.
+# Renders summary.md: latency/throughput (median), memory (peak), modelship's
+# per-component breakdown + cgroup cross-check, and router-fulfillment timing.
 write_summary() {
     local modelship_stack="$1" baseline_stack="$2" baseline_label="$3"
     echo "| metric | modelship | $baseline_label | overhead |"
@@ -624,10 +559,8 @@ def med(runs, key):
     return statistics.median(vals) if vals else None
 m = load(sys.argv[2]); r = load(sys.argv[3])
 keys = [
-    # Population first: latency/throughput below are over *successful* requests
-    # only, so these two rows are the caveat for reading the rest of the table.
-    # assert_result_parity fails the run when `failed` is non-zero on either arm,
-    # so in a passing run both these are N and 0 respectively.
+    # Population first — latency/throughput below are over successful requests
+    # only; assert_result_parity already guarantees failed==0 on a passing run.
     ("completed",          "completed", 0),
     ("failed",             "failed", 0),
     ("request_throughput", "req/s", 3),
@@ -652,12 +585,9 @@ for key, label, prec in keys:
         ratio = f"{(mv - rv) / rv * 100:+.1f}%"
     print(f"| {label} | {mv:.{prec}f} | {rv:.{prec}f} | {ratio} |")
 
-# Token-count parity: prove both arms ran equivalent prompts. total_input_tokens
-# is the client-side (shared --tokenizer) accounting; dividing by completed makes
-# it robust to any success-count gap. modelship drains its llama-server subprocess
-# logs at TRACE (suppressed in the bench container), so this reconciliation is the
-# only independent check that the two arms tokenized the same work — the launch
-# args being identical doesn't guarantee the prompt bodies were.
+# Token-count parity: proves both arms tokenized equivalent prompts. Launch
+# args matching doesn't guarantee the prompt bodies did, and this is the only
+# independent check — modelship's subprocess logs are TRACE-suppressed here.
 def per_prompt_in(runs):
     vals = [rr["total_input_tokens"] / rr["completed"] for rr in runs if rr.get("completed")]
     return statistics.median(vals) if vals else None
@@ -719,15 +649,11 @@ PY
     echo
     echo "## modelship per-component memory (Ray reporter, peak under load)"
     echo
-    # Breaks the modelship container's RSS down by Ray process so we can see
-    # whether the overhead lives in the model-serving actor (ray::*Deployment* —
-    # we'd serve differently than the baseline) or the control plane (gcs_server /
-    # raylet / agent / ProxyActor / ServeController — fixed Ray cost). USS is
-    # private memory; shared is shared *libraries* (torch/CUDA, mapped into every
-    # worker — NOT plasma) reported separately so it isn't charged to any one
-    # actor. Snapshot is the peak-private scrape sampled *during* the sweep
-    # (start_component_sampler), not the idle post-sweep state. The reconciliation
-    # below shows this table undercounts the true total (misses non-Ray children).
+    # Splits modelship's RSS by Ray process: the model-serving actor
+    # (ray::*Deployment*) vs the control plane (gcs_server/raylet/agent/
+    # ProxyActor/ServeController — fixed Ray cost). USS is private memory;
+    # shared is shared libraries (torch/CUDA), not plasma. Peak-under-load
+    # scrape from start_component_sampler, not idle post-sweep.
     if [[ -s "$RESULTS_DIR/$modelship_stack/components.txt" ]]; then
         python3 - "$RESULTS_DIR" "$modelship_stack" <<'PY'
 import sys, re
@@ -763,11 +689,9 @@ if not any("uss" in d for _, d in rows):
     print("_USS unavailable (reporter couldn't read smaps); private column is "
           "rss − shared, an upper bound._")
 
-# Cross-check the Ray reporter (Prometheus) against the kernel's own accounting
-# (cgroup memory.stat, peak under load). The reporter samples /proc smaps on its
-# own interval and can be stale or miss workers; cgroup is ground truth. anon ≈
-# Σ private, shmem ≈ Σ shared. Peaks are sampled independently so expect rough,
-# not exact, agreement — a large gap means the per-component table is suspect.
+# Cross-checks the Ray reporter against cgroup memory.stat (kernel ground
+# truth, peak). anon ≈ Σ private, shmem ≈ Σ shared. Sampled independently,
+# so expect rough, not exact, agreement.
 def cgroup_peak(col):  # mem.tsv: ts,vram,rss,anon,file,shmem (MiB)
     f = root / sys.argv[2] / "mem.tsv"
     if not f.exists():
@@ -794,10 +718,8 @@ if anon:
               "non-Ray child processes (notably the loader's own inference subprocess/engine) "
               "is missing. Trust the cgroup figure; treat the per-component split as "
               "relative attribution, not an absolute total.")
-    # NOTE: Ray's mem_shared_bytes is shared *libraries* (torch/CUDA, PSS-shared),
-    # not plasma — so it has no clean cgroup counterpart and is deliberately not
-    # reconciled. Actual tmpfs/plasma is cgroup `shmem` (see the memory table); it
-    # is tiny here, confirming the streaming path barely touches the object store.
+    # mem_shared_bytes is shared *libraries* (torch/CUDA), not plasma, so it
+    # has no cgroup counterpart. Actual tmpfs/plasma is cgroup shmem (memory table).
 PY
     else
         echo "_no component metrics scraped (reporter agent down or 8079 unreachable)_"
@@ -805,12 +727,9 @@ PY
     echo
     echo "## modelship internal (Prometheus)"
     echo
-    # NOTE: modelship_request_duration_seconds and modelship_generation_duration_seconds
-    # are observed when the streaming generator is *created*, not after it drains
-    # (model_deployment.py:230, api.py:347), so for streaming responses they capture
-    # setup/TTFT only — not end-to-end or full-generation time. We therefore do NOT
-    # derive "gateway overhead" from them (it's meaningless and was wildly wrong).
-    # Only the router fulfillment time below reflects real request handling.
+    # modelship_request/generation_duration are recorded when the streaming
+    # generator is *created*, not after it drains — so for streaming they only
+    # capture setup/TTFT, not full request time. Not used for "gateway overhead".
     if [[ -s "$RESULTS_DIR/$modelship_stack/prom.txt" ]]; then
         python3 - "$RESULTS_DIR/$modelship_stack/prom.txt" <<'PY'
 import sys, re

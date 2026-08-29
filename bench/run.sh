@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# A/B benchmark: a modelship loader vs the vanilla inference server it wraps,
-# same image, same engine config. Answers "how much does modelship's wrapping
-# cost?" — not a vllm-vs-llama.cpp comparison, so --loader picks which wrapped
-# stack to measure, and --device picks CPU vs GPU for that stack.
+# A/B benchmark: a modelship loader vs the vanilla server it wraps, same
+# image/config. --loader picks vllm or llama_server; --device picks cpu/gpu.
 #
 # Usage: bench/run.sh [--loader vllm|llama_server] [--device gpu|cpu] [--image TAG]
 #                      [--config PATH] [--num-prompts N] [--concurrency N]
@@ -18,12 +16,10 @@ NUM_PROMPTS=100
 CONCURRENCY=8
 INPUT_LEN=128
 OUTPUT_LEN=512
-# Warmup requests sent (and discarded) before timing begins. Warms CUDA graph
-# capture / lazy compilation (GPU) or first-request JIT paths so the first few
-# real requests don't eat a cold-start tail that skews mean/p99 TTFT and throughput.
+# Requests sent and discarded before timing, to avoid a cold-start tail
+# (CUDA graph capture, JIT) skewing the timed sweep.
 NUM_WARMUPS=20
-# Timed sweeps per stack. We report the median across repeats so a single cold
-# or noisy run can't dominate; tail metrics on one ~100-prompt run are unstable.
+# Timed sweeps per stack; we report the median so one noisy run can't dominate.
 REPEATS=3
 READY_TIMEOUT=900
 
@@ -58,9 +54,7 @@ BENCH_DIR="$REPO_ROOT/bench"
 # shellcheck source=bench/lib.sh
 source "$BENCH_DIR/lib.sh"
 
-# modelship's own CLAUDE.md/Dockerfile convention: cuda/cpu are separate image
-# variants (mutually exclusive extras, different vllm wheel index), and the
-# published image tags a cpu build with a "-cpu" suffix.
+# cuda/cpu are separate image variants; published cpu images use a "-cpu" tag suffix.
 if [[ -z "$IMAGE" ]]; then
     IMAGE="modelship:dev"
     [[ "$DEVICE" == "cpu" ]] && IMAGE="modelship:dev-cpu"
@@ -112,12 +106,8 @@ DOCKER_GPU_ARGS=()
 [[ "$DEVICE" == "gpu" ]] && DOCKER_GPU_ARGS=(--gpus all)
 
 start_modelship() {
-    # Mount local source over the prebuilt image so the bench exercises the
-    # working tree. mship_deploy.py is the entry point invoked by the image's
-    # default CMD (scripts/start.sh).
-    #
-    # MSHIP_PREFLIGHT=false ensures modelship loader falls back to standard defaults
-    # matching the baseline phase exactly.
+    # Mounts local source over the image so the bench runs the working tree.
+    # MSHIP_PREFLIGHT=false matches the baseline phase's plain defaults.
     docker run -d "${DOCKER_GPU_ARGS[@]}" --ipc=host --network host \
         -e MSHIP_METRICS=true \
         -e MSHIP_PREFLIGHT=false \
@@ -131,8 +121,7 @@ start_modelship() {
 }
 
 start_baseline() {
-    # Mount the local modelship code into the baseline container so that
-    # any pydantic schema or other changes in the working tree are shared.
+    # Mounts local modelship code so working-tree schema changes apply here too.
     docker run -d "${DOCKER_GPU_ARGS[@]}" --ipc=host --network host \
         -e PYTHONPATH=/modelship \
         "${BASELINE_ENV_ARGS[@]}" \
@@ -178,8 +167,8 @@ stop_mem_sampler
 docker logs "$BASELINE_CONTAINER" > "$RESULTS_DIR/${BASELINE_CONTAINER}.log" 2>&1 || true
 docker rm -f "$BASELINE_CONTAINER" >/dev/null
 
-# Launch parity (config correctness): fail before summarizing if the two arms
-# weren't launched with identical engine args — nothing downstream is meaningful.
+# Fail before summarizing if the two arms weren't launched with identical
+# engine args — nothing downstream is meaningful otherwise.
 assert_launch_parity
 
 # Summary
@@ -197,8 +186,6 @@ SUMMARY="$RESULTS_DIR/summary.md"
 echo
 echo "results: $RESULTS_DIR"
 
-# Result-population gate LAST: the summary above is written first (so the
-# completed/failed rows and token-parity line are always available for
-# inspection), then we fail the run with a non-zero exit if either arm dropped
-# requests — so a survivorship-biased comparison is never treated as a pass.
+# Runs last so the summary above is always written first, then fails if
+# either arm dropped requests.
 assert_result_parity
