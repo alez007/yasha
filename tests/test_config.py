@@ -70,6 +70,14 @@ class TestLlamaServerConfig:
         assert config.cache_type_v == "q8_0"
         assert config.tensor_split == [3.0, 1.0]
 
+    def test_empty_tensor_split_rejected(self):
+        with pytest.raises(ValidationError):
+            LlamaServerConfig(tensor_split=[])
+
+    def test_non_positive_ubatch_size_rejected(self):
+        with pytest.raises(ValidationError):
+            LlamaServerConfig(ubatch_size=0)
+
     def _num_gpus_model(self, num_gpus: float) -> ModelshipModelConfig:
         return ModelshipModelConfig(
             name="test-model",

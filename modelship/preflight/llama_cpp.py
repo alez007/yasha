@@ -39,13 +39,16 @@ class LlamaServerPreflight:
         threads_rec = _recommend_threads(config)
 
         model_path = config._resolved_path
-        if not model_path or not os.path.isfile(model_path):
+        if not model_path or not model_path.endswith(".gguf") or not os.path.isfile(model_path):
             logger.info("preflight '%s': skipping — resolved path is not a GGUF file: %s", config.name, model_path)
             return threads_rec
 
         binary = os.environ.get("MSHIP_LLAMA_SERVER_BIN")
-        if not binary or not os.path.isfile(binary):
+        if not binary:
             logger.info("preflight '%s': skipping — MSHIP_LLAMA_SERVER_BIN not set", config.name)
+            return threads_rec
+        if not os.path.isfile(binary):
+            logger.info("preflight '%s': skipping — MSHIP_LLAMA_SERVER_BIN=%s does not exist", config.name, binary)
             return threads_rec
 
         server_config = config.llama_server_config or LlamaServerConfig()

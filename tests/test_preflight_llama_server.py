@@ -64,6 +64,16 @@ class TestLlamaServerPreflightDeclines:
         run.assert_not_called()
         assert rec == {}
 
+    def test_non_gguf_resolved_path_skips(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        non_gguf = tmp_path / "model.safetensors"
+        non_gguf.write_bytes(b"\0" * 1024)
+        cfg = _make_config(resolved_path=str(non_gguf))
+        with patch("subprocess.run") as run:
+            rec = LlamaServerPreflight().recommend(cfg, HardwareProfile())
+        run.assert_not_called()
+        assert rec == {}
+
     def test_missing_binary_skips(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", str(tmp_path / "nonexistent"))
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)))
