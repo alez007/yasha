@@ -32,7 +32,11 @@ class TestLlamaServerConfig:
         assert config.cache_reuse == 0
         assert config.context_shift is False
         assert config.cache_ram_mib is None
-        assert config.extra_args == []
+        assert config.ubatch_size == 512
+        assert config.flash_attn == "auto"
+        assert config.cache_type_k == "f16"
+        assert config.cache_type_v == "f16"
+        assert config.tensor_split is None
 
     def test_custom_values(self):
         config = LlamaServerConfig(
@@ -45,7 +49,11 @@ class TestLlamaServerConfig:
             cache_reuse=256,
             context_shift=True,
             cache_ram_mib=4096,
-            extra_args=["--flash-attn"],
+            ubatch_size=256,
+            flash_attn="off",
+            cache_type_k="q8_0",
+            cache_type_v="q8_0",
+            tensor_split=[3.0, 1.0],
         )
         assert config.n_ctx == 4096
         assert config.n_batch == 1024
@@ -56,7 +64,19 @@ class TestLlamaServerConfig:
         assert config.cache_reuse == 256
         assert config.context_shift is True
         assert config.cache_ram_mib == 4096
-        assert config.extra_args == ["--flash-attn"]
+        assert config.ubatch_size == 256
+        assert config.flash_attn == "off"
+        assert config.cache_type_k == "q8_0"
+        assert config.cache_type_v == "q8_0"
+        assert config.tensor_split == [3.0, 1.0]
+
+    def test_empty_tensor_split_rejected(self):
+        with pytest.raises(ValidationError):
+            LlamaServerConfig(tensor_split=[])
+
+    def test_non_positive_ubatch_size_rejected(self):
+        with pytest.raises(ValidationError):
+            LlamaServerConfig(ubatch_size=0)
 
     def _num_gpus_model(self, num_gpus: float) -> ModelshipModelConfig:
         return ModelshipModelConfig(

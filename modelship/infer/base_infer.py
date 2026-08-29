@@ -74,7 +74,6 @@ class ClientDisconnectedError(Exception):
 class BaseInfer[Prepared](ABC):
     def __init__(self, model_config: ModelshipModelConfig):
         self.model_config = model_config
-        self.max_context_length: int | None = None
         # request_id -> local event, set by the shared disconnect pump below.
         # One pump per replica (this instance) amortizes disconnect polling
         # across every request the replica is currently serving, instead of
@@ -87,10 +86,6 @@ class BaseInfer[Prepared](ABC):
         if self.model_config.num_gpus > 0 and self.model_config.num_gpus < 1.0:
             return self.model_config.num_gpus
         return None
-
-    def _set_max_context_length(self, length: int | None) -> None:
-        self.max_context_length = length
-        logger.info("max_context_length for %s: %s", self.model_config.name, self.max_context_length)
 
     @staticmethod
     async def ensure_downloaded(model_config: ModelshipModelConfig) -> None:

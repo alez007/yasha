@@ -89,10 +89,6 @@ class DiffusersInfer(BaseInfer):
             torch_dtype=dtype,
         ).to(device=self.device, dtype=dtype)
 
-        tokenizer = getattr(self._pipeline, "tokenizer", None)
-        if tokenizer is not None:
-            self._set_max_context_length(getattr(tokenizer, "model_max_length", None))
-
         # img2img / inpaint back /v1/images/edits and /v1/images/variations.
         # from_pipe can fail for models AutoPipeline can't map; degrade
         # gracefully (those endpoints return a clear error) rather than crash

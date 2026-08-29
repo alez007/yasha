@@ -113,6 +113,7 @@ jobs:
           mkdir "$NAME"
           cp -a build/bin/. "$NAME"/
           test -x "$NAME/llama-server"
+          test -x "$NAME/llama"
           tar czf "${NAME}.tar.gz" "$NAME"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           ls -lh "${NAME}.tar.gz"

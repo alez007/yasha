@@ -1,12 +1,6 @@
-"""Run `llama-server` directly using the same models.yaml modelship reads.
-
-Mounted-only entrypoint — bypasses ray + modelship pipeline so a benchmark can
-A/B the modelship llama_server loader against vanilla llama-server with an
-identical launch command and the identical llama-server binary that ships in
-the image (MSHIP_LLAMA_SERVER_BIN). Mirrors the flag-building logic in
-modelship/infer/llama_server/llama_server_infer.py's `_launch` — see that
-module for the source of truth this must stay in sync with.
-"""
+"""Runs `llama-server` directly against the same models.yaml modelship reads,
+bypassing Ray, to A/B against the llama_server loader with an identical
+launch command. Mirrors `LlamaServerInfer._launch` — keep both in sync."""
 
 from __future__ import annotations
 
@@ -45,6 +39,7 @@ def main() -> int:
 
     args = [
         binary,
+        "serve",
         "--host",
         "0.0.0.0",
         "--port",
@@ -55,38 +50,33 @@ def main() -> int:
         str(k.n_ctx * k.parallel),
         "-b",
         str(k.n_batch),
+        "-ub",
+        str(k.ubatch_size),
+        "-fa",
+        k.flash_attn,
+        "-ctk",
+        k.cache_type_k,
+        "-ctv",
+        k.cache_type_v,
         "--parallel",
         str(k.parallel),
         "--jinja",
         "--reasoning-format",
         "auto",
         "--no-webui",
-        # Reported as the "id" in /v1/models — lets the harness's wait_ready
-        # (which greps for the served name) work identically to the modelship
-        # phase. Vanilla llama-server has no auth by default; skipping
-        # --api-key here matches an out-of-the-box `llama-server` invocation.
+        # /v1/models reports this as "id"; no --api-key, matching vanilla llama-server.
         "--alias",
         m.name,
     ]
-    # Same branch as LlamaServerInfer._launch: Ray only sets CUDA_VISIBLE_DEVICES
-    # for actors that reserve GPUs, so a num_gpus=0 deploy may still see every
-    # GPU — force no offload rather than trusting the container's device
-    # visibility. Mirrored here so the raw phase can't accidentally offload
-    # when the modelship phase wouldn't.
+    # Ray only sets CUDA_VISIBLE_DEVICES for GPU-reserving actors, so a
+    # num_gpus=0 deploy may still see every GPU — force no offload.
     if m.num_gpus > 0:
         args += ["-ngl", str(k.n_gpu_layers)]
-        # Ray's GPU reservation restricts the modelship actor's
-        # CUDA_VISIBLE_DEVICES to exactly num_gpus device(s); this bare
-        # subprocess bypasses Ray entirely and would otherwise inherit every
-        # GPU the container's --gpus flag exposed. Without this,
-        # llama-server auto-splits the model across every visible device
-        # (no --tensor-split/--main-gpu is passed), giving the baseline more
-        # aggregate VRAM/bandwidth than the modelship phase on a multi-GPU
-        # host and invalidating the A/B.
-        # num_gpus is typed float on ModelConfig (shared with the vllm loader's
-        # fractional sharing), but the llama_server loader's own validator
-        # (validate_llama_server_num_gpus) rejects non-whole values — so the
-        # int() cast here is safe and just satisfies range()'s signature.
+        if k.tensor_split:
+            args += ["-ts", ",".join(str(v) for v in k.tensor_split)]
+        # Bypasses Ray's own CUDA_VISIBLE_DEVICES restriction — set it explicitly.
+        # This script only benchmarks whole-GPU configs, not the loader's own
+        # fractional num_gpus (shared-GPU) support.
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(int(m.num_gpus)))
     else:
         args += ["-ngl", "0"]
@@ -100,7 +90,6 @@ def main() -> int:
         args += ["--mmproj", mmproj_path]
     if m.usecase == ModelUsecase.embed:
         args += ["--embedding"]
-    args += list(k.extra_args)
 
     print("rawllama exec:", " ".join(args), flush=True)
     os.execvp(args[0], args)

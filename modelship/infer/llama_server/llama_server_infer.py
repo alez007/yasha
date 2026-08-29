@@ -219,7 +219,6 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             headers={"Authorization": f"Bearer {self._api_key}"},
             timeout=httpx.Timeout(timeout=None, connect=10.0),
         )
-        self._set_max_context_length(self.config.n_ctx)
 
     def _watch_process(self, proc: subprocess.Popen) -> None:
         """Crash the actor if the subprocess exits outside of our own shutdown()."""
@@ -236,6 +235,7 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
 
         args = [
             binary,
+            "serve",
             "--host",
             "127.0.0.1",
             "--port",
@@ -246,6 +246,14 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             str(self.config.n_ctx * self.config.parallel),
             "-b",
             str(self.config.n_batch),
+            "-ub",
+            str(self.config.ubatch_size),
+            "-fa",
+            self.config.flash_attn,
+            "-ctk",
+            self.config.cache_type_k,
+            "-ctv",
+            self.config.cache_type_v,
             "--parallel",
             str(self.config.parallel),
             "--jinja",
@@ -257,6 +265,8 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         ]
         if self.model_config.num_gpus > 0:
             args += ["-ngl", str(self.config.n_gpu_layers)]
+            if self.config.tensor_split:
+                args += ["-ts", ",".join(str(v) for v in self.config.tensor_split)]
         else:
             # Ray only sets CUDA_VISIBLE_DEVICES for actors that reserve GPUs, so
             # a num_gpus=0 deployment may still see every GPU — force no offload.
@@ -279,7 +289,6 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             args += ["--context-shift"]
         if self.config.cache_ram_mib is not None:
             args += ["--cache-ram", str(self.config.cache_ram_mib)]
-        args += list(self.config.extra_args)
 
         logger.info("llama-server launch args for '%s': %s", self.model_config.name, _redact(args))
         self._proc = await loop.run_in_executor(
@@ -360,10 +369,28 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
                     resp = await probe.get("/health", timeout=2.0)
                     if resp.status_code == 200:
                         logger.info("llama-server healthy for '%s' on port %d", self.model_config.name, self._port)
+                        await self._log_deployed_context(probe)
                         return
                 except httpx.HTTPError:
                     pass
                 await asyncio.sleep(_HEALTH_POLL_INTERVAL_S)
+
+    async def _log_deployed_context(self, probe: httpx.AsyncClient) -> None:
+        """Ground truth, not the preflight guess: reads what llama-server actually
+        resolved `-c 0`/tensor-split/etc. against, from its own `/props`."""
+        try:
+            resp = await probe.get("/props", timeout=5.0)
+            resp.raise_for_status()
+            props = resp.json()
+            n_ctx = props.get("default_generation_settings", {}).get("n_ctx")
+            logger.info(
+                "deployed context for '%s': n_ctx=%s total_slots=%s",
+                self.model_config.name,
+                n_ctx,
+                props.get("total_slots"),
+            )
+        except (httpx.HTTPError, ValueError):
+            logger.warning("could not read deployed context from /props for '%s'", self.model_config.name)
 
     async def warmup(self) -> None:
         if self.model_config.usecase == ModelUsecase.embed:

@@ -1,8 +1,7 @@
 models:
   - name: "llm"
-    # Unquantized (not -AWQ): this vllm+cpu wheel doesn't ship the CPU AWQ/GPTQ
-    # kernels (cpu_gemm_wna16 / int4_scaled_mm_cpu aren't in torch.ops._C), so
-    # any AWQ model crashes at engine warmup on the vllm CPU backend.
+    # Unquantized: the vllm+cpu wheel has no CPU AWQ/GPTQ kernels, so an AWQ
+    # model crashes at engine warmup on this backend.
     model: "Qwen/Qwen2.5-7B-Instruct"
     usecase: "generate"
     loader: "vllm"
@@ -11,9 +10,7 @@ models:
     # Lift Ray Serve's per-replica concurrency cap (default 100) so the model
     # deployment isn't the bottleneck during the sweep.
     max_ongoing_requests: 256
-    # Note: the bench runs modelship with MSHIP_PREFLIGHT=false, so both phases
-    # use loader defaults for unset fields; explicit values here are read
-    # identically by both.
+    # MSHIP_PREFLIGHT=false: both phases use loader defaults for unset fields.
     vllm_engine_kwargs:
       tensor_parallel_size: 1
       max_model_len: 8192

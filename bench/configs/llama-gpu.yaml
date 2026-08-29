@@ -9,29 +9,16 @@ models:
     # Lift Ray Serve's per-replica concurrency cap (default 100) so the model
     # deployment isn't the bottleneck during the sweep.
     max_ongoing_requests: 256
-    # Note: the bench runs modelship with MSHIP_PREFLIGHT=false, so both phases
-    # use loader defaults for unset fields; explicit values here are read
-    # identically by both.
+    # MSHIP_PREFLIGHT=false: both phases use loader defaults for unset fields.
     llama_server_config:
-      # Concurrent llama-server request slots — must cover --concurrency (8 by
-      # default) so requests overlap instead of queuing behind a full set of
-      # slots, which would understate throughput for both phases equally but
-      # muddy the TTFT/ITL comparison with queue-wait time.
+      # Must cover --concurrency (8) so requests overlap instead of queuing,
+      # which would muddy the TTFT/ITL comparison with queue-wait time.
       parallel: 8
-      # Explicit rather than the loader's -1 (auto-fit) default: the raw phase
-      # reads this field verbatim (no preflight), so leaving it unset would let
-      # the two phases pick different offload counts. 99 exceeds Qwen2.5-7B's
-      # 28 layers, i.e. full GPU offload for both phases.
+      # Explicit (not -1/auto): the raw phase reads this verbatim, so leaving
+      # it unset would let the two phases pick different offload counts.
+      # 99 exceeds Qwen2.5-7B's 28 layers — full offload for both.
       n_gpu_layers: 99
-      # NOTE: the baseline arm drops ~4-7% of requests with ServerDisconnectedError
-      # because the bench client hits llama-server's cpp-httplib keep-alive close
-      # behaviour directly, while the modelship arm faces Ray Serve's uvicorn front
-      # door and never does. This is NOT tunable away via llama-server flags
-      # (--threads-http sizes the worker pool, not the keep-alive lifecycle, and
-      # was verified ineffective), so there is no extra_args mitigation here. The
-      # asymmetry is real and in modelship's favour: assert_result_parity compares
-      # drop/truncation counts BETWEEN the two arms — the baseline dropping more is
-      # reported as a FINDING (run passes), and only modelship dropping MORE than
-      # the baseline hard-fails. (The load client runs greedy, --temperature 0, so
-      # both arms process an identical token stream and any shared engine-level
-      # in-band error shows up in both rather than landing randomly on one.)
+      # The baseline arm drops ~4-7% of requests to llama-server's own
+      # cpp-httplib keep-alive resets (modelship's uvicorn front door absorbs
+      # this); not tunable via llama-server flags. assert_result_parity treats
+      # this asymmetry as a non-failing finding, since it favors modelship.

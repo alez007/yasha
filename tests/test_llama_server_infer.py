@@ -54,6 +54,14 @@ _FAKE_HEALTHY_SERVER = textwrap.dedent(
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"ok")
+            elif self.path == "/props":
+                import json
+
+                body = json.dumps({"total_slots": 1, "default_generation_settings": {"n_ctx": 2048}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -101,7 +109,6 @@ class TestSubprocessLifecycle:
         try:
             assert infer._proc is not None
             assert infer._proc.poll() is None
-            assert infer.max_context_length == infer.config.n_ctx
             assert infer._client is not None
         finally:
             infer.shutdown()
