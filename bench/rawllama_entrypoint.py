@@ -75,7 +75,8 @@ def main() -> int:
         if k.tensor_split:
             args += ["-ts", ",".join(str(v) for v in k.tensor_split)]
         # Bypasses Ray's own CUDA_VISIBLE_DEVICES restriction — set it explicitly.
-        # num_gpus is always whole here (llama_server rejects fractional values).
+        # This script only benchmarks whole-GPU configs, not the loader's own
+        # fractional num_gpus (shared-GPU) support.
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(int(m.num_gpus)))
     else:
         args += ["-ngl", "0"]
