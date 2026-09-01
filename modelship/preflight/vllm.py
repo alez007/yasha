@@ -43,6 +43,27 @@ _DTYPE_BYTES = {
     "float8_e5m2": 1,
 }
 
+# transformers' ALLOWED_LAYER_TYPES, mapped to what each label costs at
+# runtime: (token-growing KV, recurrent/conv state). `hybrid` layers are both,
+# so the two counts don't sum to the layer total. The MLP-side labels are here
+# because `mlp_layer_types` validates against the same tuple.
+_LAYER_KINDS: dict[str, tuple[bool, bool]] = {
+    "full_attention": (True, False),
+    "sliding_attention": (True, False),
+    "chunked_attention": (True, False),
+    "compressed_sparse_attention": (True, False),
+    "heavily_compressed_attention": (True, False),
+    "minimax_m3_sparse": (True, False),
+    "deepseek_sparse_attention": (True, False),
+    "linear_attention": (False, True),
+    "conv": (False, True),
+    "hybrid": (True, True),
+    "hybrid_sliding": (True, True),
+    "sparse": (False, False),
+    "dense": (False, False),
+    "moe": (False, False),
+}
+
 # Floor for `max_num_batched_tokens` on multimodal models — vLLM refuses to
 # start if one MM item tokenizes to more than this.
 _MULTIMODAL_BATCHED_TOKENS_FLOOR = 8192
@@ -124,13 +145,13 @@ class VllmPreflight:
         kv_per_token_per_gpu = _divide_kv_by_tp(kv_per_token, text_cfg, tp_size) / pp_size
 
         # Hybrid/SSM models park a fixed recurrent-state buffer per sequence
-        # slot; only full-attention layers hold token-growing KV. None for
+        # slot; only some of their layers hold token-growing KV. None for
         # ordinary transformers.
         mamba = _resolve_mamba_state(config, model_path)
         if mamba is not None:
             kv_per_token_per_gpu = _correct_kv_for_hybrid(kv_per_token_per_gpu, mamba)
         # Mutually exclusive with mamba: _correct_kv_for_hybrid already drops
-        # kv/token to the full-attention layers.
+        # kv/token to the KV-bearing layers.
         sliding = _resolve_sliding_window(text_cfg) if mamba is None else None
 
         weight_bytes = _estimate_weight_footprint(model_path)
@@ -707,7 +728,7 @@ class MambaStateInfo(NamedTuple):
 
     per_seq_state_bytes: int
     n_state_layers: int
-    n_full_attention_layers: int
+    n_kv_layers: int
     n_total_layers: int
     default_max_num_seqs: int
 
@@ -725,6 +746,25 @@ def _quiet_vllm_logging():
     finally:
         for n, lvl in prev.items():
             logging.getLogger(n).setLevel(lvl)
+
+
+def _classify_layers(labels: list[str] | None, start: int, end: int, config_name: str) -> tuple[int, int, int] | None:
+    """`(kv_bearing, state_bearing, total)` layer counts over the `[start, end)`
+    PP stage, from transformers' per-layer `layer_types`. None when the config
+    carries none. An unmapped label counts as neither, so it drops out of both
+    sums instead of skewing either."""
+    if not labels:
+        return None
+    stage = list(labels[start:end])
+    if unknown := sorted({t for t in stage if t not in _LAYER_KINDS}):
+        logger.warning(
+            "preflight '%s': layer_types carries unmapped labels %s; counted as neither KV nor state",
+            config_name,
+            unknown,
+        )
+    n_kv = sum(_LAYER_KINDS.get(t, (False, False))[0] for t in stage)
+    n_state = sum(_LAYER_KINDS.get(t, (False, False))[1] for t in stage)
+    return n_kv, n_state, len(stage)
 
 
 def _resolve_mamba_state(config: ModelshipModelConfig, model_path: str) -> MambaStateInfo | None:
@@ -777,18 +817,23 @@ def _resolve_mamba_state(config: ModelshipModelConfig, model_path: str) -> Mamba
         dtypes = state_cls.get_mamba_state_dtype_from_config(vllm_config)
         per_slot = sum(math.prod(shape) * dt.itemsize for shape, dt in zip(shapes, dtypes, strict=True))
 
-        # Authoritative layer split (per PP stage). "Not attention" == "has
-        # recurrent state"; over-counting exotic MLP-only layers errs safe.
-        n_full_attention = model_config.get_num_layers_by_block_type(parallel_config, "attention")
-        n_total = model_config.get_num_layers(parallel_config)
-        n_state = n_total - n_full_attention
+        # Per-layer split for this PP stage. vLLM's own
+        # `get_num_layers_by_block_type` can't supply it: transformers aliases
+        # `layers_block_type` onto `layer_types`, so its first branch matches
+        # normalized labels against raw block-type names and returns 0.
+        start, end = model_config.get_layers_start_end_indices(parallel_config)
+        labels = getattr(model_config.hf_text_config, "layer_types", None)
+        split = _classify_layers(labels, start, end, config.name)
+        if split is None:
+            return None
+        n_kv, n_state, n_total = split
         if n_state <= 0:
             return None
 
         return MambaStateInfo(
             per_seq_state_bytes=int(per_slot * n_state),
             n_state_layers=n_state,
-            n_full_attention_layers=n_full_attention,
+            n_kv_layers=n_kv,
             n_total_layers=n_total,
             default_max_num_seqs=int(vllm_config.scheduler_config.max_num_seqs),
         )
@@ -807,11 +852,11 @@ def _resolve_mamba_state(config: ModelshipModelConfig, model_path: str) -> Mamba
 
 
 def _correct_kv_for_hybrid(kv_per_token: float, mamba: MambaStateInfo) -> float:
-    """`_kv_bytes_per_token` counts all layers; on a hybrid only the
-    full-attention layers hold a token-growing KV cache, so scale it down."""
+    """`_kv_bytes_per_token` counts all layers; on a hybrid only some hold a
+    token-growing KV cache, so scale it down."""
     if mamba.n_total_layers <= 0:
         return kv_per_token
-    return kv_per_token * mamba.n_full_attention_layers / mamba.n_total_layers
+    return kv_per_token * mamba.n_kv_layers / mamba.n_total_layers
 
 
 def _apply_hybrid_fit(

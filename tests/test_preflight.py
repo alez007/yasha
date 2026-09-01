@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -1282,7 +1283,7 @@ def _mamba_info(**overrides):
     base = dict(
         per_seq_state_bytes=49 * 1024**2,
         n_state_layers=24,
-        n_full_attention_layers=8,
+        n_kv_layers=8,
         n_total_layers=32,
         default_max_num_seqs=128,
     )
@@ -1321,7 +1322,7 @@ class TestApplyHybridFit:
     building. `kv_pool` is the bytes available for KV cache + mamba state."""
 
     PER_SEQ = 50 * 1024**2  # 50 MiB per concurrent slot
-    KV_PER_TOKEN = 32768  # 32 KiB/token (full-attention layers only)
+    KV_PER_TOKEN = 32768  # 32 KiB/token (KV-bearing layers only)
     TARGET = 100_000
 
     def _fit(self, kv_pool, user_seqs=None):
@@ -1350,8 +1351,59 @@ class TestApplyHybridFit:
         assert self._fit(int(0.3 * 1024**3)) == {}
 
 
+class TestClassifyLayers:
+    """Per-layer classification off transformers' `layer_types`, which replaced
+    vLLM's `get_num_layers_by_block_type` — that returns 0 on every hybrid whose
+    config aliases `layers_block_type` onto `layer_types`."""
+
+    @staticmethod
+    def _classify(labels, start=0, end=None):
+        from modelship.preflight.vllm import _classify_layers
+
+        return _classify_layers(labels, start, end if end is not None else len(labels or []), "test")
+
+    def test_dense_counts_every_layer_as_kv(self):
+        assert self._classify(["full_attention"] * 28) == (28, 0, 28)
+
+    def test_granite_style_hybrid(self):
+        assert self._classify(["full_attention"] * 4 + ["linear_attention"] * 36) == (4, 36, 40)
+
+    def test_hybrid_label_counts_as_both(self):
+        # Falcon-H1 runs attention and mamba in parallel in one layer, so the
+        # two counts don't sum to the total.
+        assert self._classify(["hybrid"] * 36) == (36, 36, 36)
+
+    def test_unmapped_label_counts_as_neither(self, caplog):
+        # Nemotron-H carries `mlp`, which isn't in ALLOWED_LAYER_TYPES.
+        labels = ["full_attention"] * 4 + ["linear_attention"] * 24 + ["mlp"] * 24
+        with caplog.at_level(logging.WARNING):
+            assert self._classify(labels) == (4, 24, 52)
+        assert "mlp" in caplog.text
+
+    def test_sliding_attention_holds_kv(self):
+        assert self._classify(["sliding_attention"] * 29 + ["full_attention"] * 5) == (34, 0, 34)
+
+    def test_slices_to_the_pp_stage(self):
+        labels = ["full_attention"] + ["linear_attention"] * 3 + ["full_attention"]
+        assert self._classify(labels, start=1, end=5) == (1, 3, 4)
+
+    def test_missing_layer_types_returns_none(self):
+        assert self._classify([]) is None
+        assert self._classify(None) is None
+
+
+class TestLayerKindsVocabulary:
+    def test_covers_transformers_allowed_layer_types(self):
+        """Canary: a transformers bump that adds or drops a layer label must
+        fail here, not silently resize a deploy."""
+        configuration_utils = pytest.importorskip("transformers.configuration_utils")
+        from modelship.preflight.vllm import _LAYER_KINDS
+
+        assert set(configuration_utils.ALLOWED_LAYER_TYPES) == set(_LAYER_KINDS)
+
+
 class TestCorrectKvForHybrid:
-    def test_scales_by_full_attention_fraction(self):
+    def test_scales_by_kv_bearing_fraction(self):
         from modelship.preflight.vllm import _correct_kv_for_hybrid
 
         # Only 8 of 32 layers hold a token-growing KV cache.
