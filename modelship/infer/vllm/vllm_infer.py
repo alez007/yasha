@@ -153,6 +153,47 @@ def _vllm_stream_error(exc: Exception) -> str | None:
     return None
 
 
+def _deployment_summary(name: str, vllm_config: Any) -> list[str]:
+    """What actually got deployed, read back from the engine-resolved config.
+    Every number is vLLM's own post-profiling value, not a preflight estimate.
+    Fields populated during KV-cache init are absent until then, so each is
+    guarded."""
+    mc, cc, sc, pc = (
+        vllm_config.model_config,
+        vllm_config.cache_config,
+        vllm_config.scheduler_config,
+        vllm_config.parallel_config,
+    )
+    ctx = mc.max_model_len
+    # `original_max_model_len` keeps the pre-resolution request, so -1 marks a
+    # context vLLM binary-searched against real free memory.
+    origin = "auto-fit to free memory" if getattr(mc, "original_max_model_len", None) == -1 else "as requested"
+    lines = [f"deployed '{name}':", f"  context      {ctx:,} tokens ({origin})"]
+
+    concurrency = getattr(cc, "kv_cache_max_concurrency", None)
+    at_full = f" — the KV pool holds {concurrency:.1f} of them at that length" if concurrency else ""
+    lines.append(f"  concurrency  up to {sc.max_num_seqs} concurrent requests{at_full}")
+
+    kv_tokens = getattr(cc, "kv_cache_size_tokens", None)
+    if kv_tokens:
+        blocks = f" ({cc.num_gpu_blocks:,} blocks x {cc.block_size})" if cc.num_gpu_blocks else ""
+        lines.append(f"  kv cache     {kv_tokens:,} tokens{blocks}")
+
+    # Mamba blocks are 1:1 with concurrent requests, so max_num_seqs is capped
+    # by them; every increase also shrinks the pool it is capped by.
+    if getattr(mc, "is_hybrid", False) and cc.num_gpu_blocks:
+        lines.append(
+            f"  hybrid       {cc.num_gpu_blocks:,} mamba blocks, one pinned per concurrent request; "
+            "raising max_num_seqs consumes the rest"
+        )
+
+    dtype = str(mc.dtype).removeprefix("torch.")
+    quant = f", {mc.quantization}" if mc.quantization else ""
+    parallel = f", tp={pc.tensor_parallel_size} pp={pc.pipeline_parallel_size}" if pc.world_size > 1 else ""
+    lines.append(f"  execution    {dtype}{quant}, gpu_memory_utilization={cc.gpu_memory_utilization}{parallel}")
+    return lines
+
+
 def _trace_request(
     request_id: str, vllm_request: VllmChatCompletionRequest, sampling_params: VllmSamplingParams
 ) -> None:
@@ -352,11 +393,11 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
     async def start(self):
         logger.info("Start vllm infer for model: %s", self.model_config)
         self.vllm_config = self.engine.vllm_config
-        logger.info(
-            "deployed context for '%s': max_model_len=%d",
-            self.model_config.name,
-            self.vllm_config.model_config.max_model_len,
-        )
+        try:
+            for line in _deployment_summary(self.model_config.name, self.vllm_config):
+                logger.info("%s", line)
+        except Exception:
+            logger.debug("could not build deployment summary", exc_info=True)
         self.supported_tasks = await self.engine.get_supported_tasks()
         logger.info("Supported_tasks: %s", self.supported_tasks)
 
