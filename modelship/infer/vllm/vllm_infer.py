@@ -166,25 +166,39 @@ def _deployment_summary(name: str, vllm_config: Any) -> list[str]:
     )
     ctx = mc.max_model_len
     # `original_max_model_len` keeps the pre-resolution request, so -1 marks a
-    # context vLLM binary-searched against real free memory.
-    origin = "auto-fit to free memory" if getattr(mc, "original_max_model_len", None) == -1 else "as requested"
-    lines = [f"deployed '{name}':", f"  context      {ctx:,} tokens ({origin})"]
+    # context vLLM binary-searched against real free memory. Absent means we
+    # don't know how it was chosen, so claim neither.
+    requested_ctx = getattr(mc, "original_max_model_len", None)
+    if requested_ctx == -1:
+        origin = " (auto-fit to free memory)"
+    elif requested_ctx is not None:
+        origin = " (as requested)"
+    else:
+        origin = ""
+    lines = [f"deployed '{name}':", f"  context      {ctx:,} tokens{origin}"]
 
+    # 0.0 is a real answer — the pool cannot hold one full-length request — so
+    # test for None rather than truthiness here and below.
     concurrency = getattr(cc, "kv_cache_max_concurrency", None)
-    at_full = f" — the KV pool holds {concurrency:.1f} of them at that length" if concurrency else ""
+    at_full = f" — the KV pool holds {concurrency:.1f} of them at that length" if concurrency is not None else ""
     lines.append(f"  concurrency  up to {sc.max_num_seqs} concurrent requests{at_full}")
 
+    # `kv_cache_size_tokens` is the group-aware capacity. Don't pair it with
+    # `num_gpu_blocks x block_size`: those are per-group, so on a model whose
+    # requests span several groups (cross-attention, hybrid) the product is
+    # unrelated to the capacity — Whisper reports 20,679 tokens against
+    # 7,201 x 16.
     kv_tokens = getattr(cc, "kv_cache_size_tokens", None)
-    if kv_tokens:
-        blocks = f" ({cc.num_gpu_blocks:,} blocks x {cc.block_size})" if cc.num_gpu_blocks else ""
-        lines.append(f"  kv cache     {kv_tokens:,} tokens{blocks}")
+    if kv_tokens is not None:
+        lines.append(f"  kv cache     {kv_tokens:,} tokens")
 
-    # Mamba blocks are 1:1 with concurrent requests, so max_num_seqs is capped
-    # by them; every increase also shrinks the pool it is capped by.
-    if getattr(mc, "is_hybrid", False) and cc.num_gpu_blocks:
+    # Two separate facts, both measured: a decode sequence pins one mamba block,
+    # so max_num_seqs cannot exceed the count; and raising max_num_seqs grows the
+    # cudagraph capture set, which shrinks the count itself.
+    if getattr(mc, "is_hybrid", False) and cc.num_gpu_blocks is not None:
         lines.append(
-            f"  hybrid       {cc.num_gpu_blocks:,} mamba blocks, one pinned per concurrent request; "
-            "raising max_num_seqs consumes the rest"
+            f"  hybrid       {cc.num_gpu_blocks:,} mamba blocks — max_num_seqs cannot exceed this, "
+            "and raising it shrinks the count"
         )
 
     dtype = str(mc.dtype).removeprefix("torch.")

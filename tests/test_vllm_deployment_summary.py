@@ -60,7 +60,39 @@ class TestDeploymentSummary:
 
     def test_hybrid_line_only_for_hybrids(self):
         assert "mamba blocks" not in _text()
-        assert "181 mamba blocks" in _text(model={"is_hybrid": True})
+        assert "mamba blocks" in _text(model={"is_hybrid": True})
+
+    def test_hybrid_line_reports_the_max_num_seqs_ceiling(self):
+        # num_gpu_blocks is the ceiling vLLM's own check compares max_num_seqs
+        # against; a distinct value keeps this independent of the kv-cache line.
+        out = _text(model={"is_hybrid": True}, cache={"num_gpu_blocks": 134, "kv_cache_size_tokens": 20679})
+        assert "134 mamba blocks — max_num_seqs cannot exceed this" in out
+        assert "134" not in out.split("hybrid")[0]
+
+    def test_unknown_origin_claims_neither(self):
+        # A vLLM without the field must not be reported as an explicit request.
+        out = _text(model={"original_max_model_len": None})
+        assert "16,384 tokens" in out
+        assert "as requested" not in out
+        assert "auto-fit" not in out
+
+    def test_zero_concurrency_is_reported_not_hidden(self):
+        # 0.0 means the pool cannot hold one full-length request — the most
+        # important case to show, and the one truthiness would swallow.
+        out = _text(cache={"kv_cache_max_concurrency": 0.0})
+        assert "holds 0.0 of them at that length" in out
+
+    def test_zero_mamba_blocks_is_reported(self):
+        out = _text(model={"is_hybrid": True}, cache={"num_gpu_blocks": 0})
+        assert "0 mamba blocks" in out
+
+    def test_kv_cache_reports_group_aware_capacity_only(self):
+        # Whisper's real numbers: requests span the self- and cross-attention
+        # groups, so blocks x block_size (115,216) is unrelated to capacity.
+        out = _text(cache={"kv_cache_size_tokens": 20679, "num_gpu_blocks": 7201, "block_size": 16})
+        assert "kv cache     20,679 tokens" in out
+        assert "7,201" not in out
+        assert "115,216" not in out
 
     def test_kv_cache_line_omitted_before_kv_init(self):
         # These are populated during KV-cache init; absent on an early read.
