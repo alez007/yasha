@@ -1034,74 +1034,11 @@ def test_kv_shrinks_per_gpu_only_when_tp_divides_heads(tp_size, num_kv_heads, ex
         assert result == kv_full
 
 
-class TestCudagraphEstimation:
-    """Unit-level tests for `_estimate_cudagraph_bytes_per_gpu`."""
+class TestCudagraphNotModelled:
+    """Cudagraph memory is deliberately not subtracted: preflight only sizes
+    `max_model_len`, which doesn't bound what vLLM allocates."""
 
-    def test_matches_formula_on_gemma4_measurement(self):
-        # Anchored against a measured 2.23 GiB CUDA graph run; the formula predicts
-        # 2.46 GiB (within ~10%, slight over-estimate is the safe direction).
-        from modelship.preflight.vllm import _estimate_cudagraph_bytes_per_gpu
-
-        text_cfg = {"hidden_size": 5376, "num_hidden_layers": 60, "torch_dtype": "bfloat16"}
-        cfg = _make_config()
-        estimate = _estimate_cudagraph_bytes_per_gpu(text_cfg, text_cfg, cfg, 8192, 2, 1)
-        measured = 2.23 * 1024**3
-        assert 0.9 * measured <= estimate <= 1.2 * measured
-
-    def test_zero_when_enforce_eager(self):
-        from modelship.preflight.vllm import _estimate_cudagraph_bytes_per_gpu
-
-        text_cfg = {"hidden_size": 4096, "num_hidden_layers": 32, "torch_dtype": "bfloat16"}
-        cfg = _make_config(vllm_kwargs={"enforce_eager": True})
-        assert _estimate_cudagraph_bytes_per_gpu(text_cfg, text_cfg, cfg, 8192, 1, 1) == 0
-
-    def test_nonzero_when_enforce_eager_unset(self):
-        # None and False both mean "CUDA graphs enabled"; estimator should run.
-        from modelship.preflight.vllm import _estimate_cudagraph_bytes_per_gpu
-
-        text_cfg = {"hidden_size": 4096, "num_hidden_layers": 32, "torch_dtype": "bfloat16"}
-        for eager in (None, False):
-            cfg = _make_config(vllm_kwargs={} if eager is None else {"enforce_eager": eager})
-            assert _estimate_cudagraph_bytes_per_gpu(text_cfg, text_cfg, cfg, 8192, 1, 1) > 0
-
-    def test_zero_when_geometry_missing(self):
-        # Without hidden_size / num_layers the formula can't run; return 0 rather than
-        # guessing — the caller already over-subtracts other overheads.
-        from modelship.preflight.vllm import _estimate_cudagraph_bytes_per_gpu
-
-        cfg = _make_config()
-        assert _estimate_cudagraph_bytes_per_gpu({}, {}, cfg, 8192, 1, 1) == 0
-
-    def test_scales_linearly_with_max_num_batched_tokens(self):
-        from modelship.preflight.vllm import _estimate_cudagraph_bytes_per_gpu
-
-        text_cfg = {"hidden_size": 4096, "num_hidden_layers": 32, "torch_dtype": "bfloat16"}
-        cfg = _make_config()
-        a = _estimate_cudagraph_bytes_per_gpu(text_cfg, text_cfg, cfg, 2048, 1, 1)
-        b = _estimate_cudagraph_bytes_per_gpu(text_cfg, text_cfg, cfg, 8192, 1, 1)
-        assert b == 4 * a
-
-    def test_divides_by_tp_size(self):
-        from modelship.preflight.vllm import _estimate_cudagraph_bytes_per_gpu
-
-        text_cfg = {"hidden_size": 4096, "num_hidden_layers": 32, "torch_dtype": "bfloat16"}
-        cfg = _make_config()
-        single = _estimate_cudagraph_bytes_per_gpu(text_cfg, text_cfg, cfg, 8192, 1, 1)
-        tp2 = _estimate_cudagraph_bytes_per_gpu(text_cfg, text_cfg, cfg, 8192, 2, 1)
-        assert tp2 == single // 2
-
-    def test_divides_by_pp_size(self):
-        from modelship.preflight.vllm import _estimate_cudagraph_bytes_per_gpu
-
-        text_cfg = {"hidden_size": 4096, "num_hidden_layers": 32, "torch_dtype": "bfloat16"}
-        cfg = _make_config()
-        single = _estimate_cudagraph_bytes_per_gpu(text_cfg, text_cfg, cfg, 8192, 1, 1)
-        pp2 = _estimate_cudagraph_bytes_per_gpu(text_cfg, text_cfg, cfg, 8192, 1, 2)
-        assert pp2 == single // 2
-
-    def test_enforce_eager_widens_max_model_len_recommendation(self, tmp_path):
-        """End-to-end: turning on enforce_eager should give a larger budget
-        (no CUDA-graph overhead subtracted) and therefore a higher max_model_len."""
+    def test_enforce_eager_does_not_change_max_model_len(self, tmp_path):
         snapshot = _write_model_snapshot(
             tmp_path,
             config_json={
@@ -1116,26 +1053,19 @@ class TestCudagraphEstimation:
             weight_bytes=15 * 1024**3,
         )
         hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test")])
-        cfg_graphs = _make_config(
-            resolved_path=str(snapshot),
+        rec_graphs = VllmPreflight().recommend(_make_config(resolved_path=str(snapshot)), hw)
+        rec_eager = VllmPreflight().recommend(
+            _make_config(resolved_path=str(snapshot), vllm_kwargs={"enforce_eager": True}), hw
         )
-        cfg_eager = _make_config(
-            resolved_path=str(snapshot),
-            vllm_kwargs={"enforce_eager": True},
-        )
-        rec_graphs = VllmPreflight().recommend(cfg_graphs, hw)
-        rec_eager = VllmPreflight().recommend(cfg_eager, hw)
-        assert rec_eager["max_model_len"] > rec_graphs["max_model_len"]
+        assert rec_eager["max_model_len"] == rec_graphs["max_model_len"]
 
-    def test_mla_chunked_prefill_workspace_matches_deepseek_v2_lite_oom(self):
-        # Anchored against a real DeepSeek-V2-Lite-AWQ OOM: PyTorch reported
-        # "Tried to allocate 512.00 MiB" for exactly this buffer.
-        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
-
-        mla = _resolve_mla(_MLA_CFG)
-        assert mla is not None
-        workspace = _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 1)
-        assert workspace == 512 * 1024**2
+    @pytest.mark.parametrize("gpu_gib", [10.8, 40])
+    def test_never_recommends_enforce_eager(self, tmp_path, gpu_gib):
+        # 10.8 GiB is where the old cudagraph reclaim used to fire.
+        snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
+        hw = HardwareProfile(gpus=[GPUInfo(0, int(gpu_gib * 1024**3), "test")])
+        with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
+            assert "enforce_eager" not in VllmPreflight().recommend(_make_config(resolved_path=str(snapshot)), hw)
 
 
 # DeepSeek-V2-Lite's real config.json fields (deepseek-ai/DeepSeek-V2-Lite).
@@ -1231,6 +1161,16 @@ class TestMlaKvCache:
         config = _make_config(vllm_kwargs={"max_model_len": 1024, "max_num_seqs": 8192})
         row_bytes = mla.num_heads * (mla.qk_nope_head_dim + mla.v_head_dim) * 2
         assert _mla_chunked_prefill_workspace_bytes(_MLA_CFG, config, 2, mla, 1) == 8192 * 16 * row_bytes
+
+    def test_mla_chunked_prefill_workspace_matches_deepseek_v2_lite_oom(self):
+        # Anchored against a real DeepSeek-V2-Lite-AWQ OOM: PyTorch reported
+        # "Tried to allocate 512.00 MiB" for exactly this buffer.
+        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
+
+        mla = _resolve_mla(_MLA_CFG)
+        assert mla is not None
+        workspace = _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 1)
+        assert workspace == 512 * 1024**2
 
     def test_recommend_lowers_gpu_memory_utilization_with_cudagraphs(self, tmp_path):
         # vLLM's own CUDA-graph memory profiler doesn't reserve room for this
@@ -1385,31 +1325,6 @@ class TestHybridIntegration:
             rec = VllmPreflight().recommend(cfg, hw)
         assert rec["max_model_len"] == _HYBRID_CFG["max_position_embeddings"]
         assert rec["max_num_seqs"] > 8
-
-    def test_cudagraph_starving_the_state_floor_recommends_eager(self, tmp_path):
-        snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
-        cfg = _make_config(resolved_path=str(snapshot))
-        # State floor fits only once the cudagraph bytes come back.
-        hw = HardwareProfile(gpus=[GPUInfo(0, int(10.8 * 1024**3), "test")])
-        with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
-            rec = VllmPreflight().recommend(cfg, hw)
-        assert rec["enforce_eager"] is True
-        assert rec["max_num_seqs"] == 8
-        assert rec["max_model_len"] >= 16
-
-    def test_explicit_eager_false_blocks_the_cudagraph_reclaim(self, tmp_path):
-        snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
-        cfg = _make_config(resolved_path=str(snapshot), vllm_kwargs={"enforce_eager": False})
-        hw = HardwareProfile(gpus=[GPUInfo(0, int(10.8 * 1024**3), "test")])
-        with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
-            assert VllmPreflight().recommend(cfg, hw) == {}
-
-    def test_roomy_gpu_leaves_enforce_eager_alone(self, tmp_path):
-        snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
-        cfg = _make_config(resolved_path=str(snapshot))
-        hw = HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])
-        with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
-            assert "enforce_eager" not in VllmPreflight().recommend(cfg, hw)
 
     def test_cpu_auto_gmu_hybrid_folds_state_into_gmu(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
