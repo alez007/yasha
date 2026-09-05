@@ -156,8 +156,8 @@ def _vllm_stream_error(exc: Exception) -> str | None:
 def _deployment_summary(name: str, vllm_config: Any) -> list[str]:
     """What actually got deployed, read back from the engine-resolved config.
     Every number is vLLM's own post-profiling value, not a preflight estimate.
-    Fields populated during KV-cache init are absent until then, so each is
-    guarded."""
+    The fields filled in during KV-cache init are `None` until then, never
+    missing, so each is tested against `None` rather than truthiness."""
     mc, cc, sc, pc = (
         vllm_config.model_config,
         vllm_config.cache_config,
@@ -177,8 +177,7 @@ def _deployment_summary(name: str, vllm_config: Any) -> list[str]:
         origin = ""
     lines = [f"deployed '{name}':", f"  context      {ctx:,} tokens{origin}"]
 
-    # 0.0 is a real answer — the pool cannot hold one full-length request — so
-    # test for None rather than truthiness here and below.
+    # 0.0 is a real answer: the pool cannot hold one full-length request.
     concurrency = getattr(cc, "kv_cache_max_concurrency", None)
     at_full = f" — the KV pool holds {concurrency:.1f} of them at that length" if concurrency is not None else ""
     lines.append(f"  concurrency  up to {sc.max_num_seqs} concurrent requests{at_full}")
