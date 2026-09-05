@@ -27,10 +27,6 @@ _MIN_MAX_NUM_SEQS = 8
 # embedding tables, torch.compile artifacts not in safetensors `total_size`.
 _OVERHEAD_WEIGHT_FRACTION = 0.14
 
-# vLLM v1's default `max_num_batched_tokens` for text-only models; the
-# baseline batch size for the CUDA-graph memory estimate below.
-_DEFAULT_TEXT_BATCHED_TOKENS = 2048
-
 # torch_dtype string -> bytes per element. KV cache uses the compute dtype,
 # not storage dtype, so AWQ/GPTQ models are still 2 bytes per element.
 _DTYPE_BYTES = {
@@ -136,18 +132,8 @@ class VllmPreflight:
         weight_bytes = _estimate_weight_footprint(model_path)
         weight_bytes_per_gpu = weight_bytes / (tp_size * pp_size) if weight_bytes else 0.0
 
-        # Resolve multimodal status + the `max_num_batched_tokens` we expect
-        # vLLM to use — both are inputs to the CUDA-graph estimate.
         is_mm = _is_multimodal(model_cfg)
         mm_tokens_per_item = _estimate_mm_tokens_per_item(model_cfg) if is_mm else None
-        mm_recommended_mnbt = _recommended_mm_batched_tokens(mm_tokens_per_item) if is_mm else None
-        effective_mnbt = (
-            config.vllm_engine_kwargs.max_num_batched_tokens or mm_recommended_mnbt or _DEFAULT_TEXT_BATCHED_TOKENS
-        )
-
-        cudagraph_bytes_per_gpu = _estimate_cudagraph_bytes_per_gpu(
-            text_cfg, model_cfg, config, effective_mnbt, tp_size, pp_size
-        )
 
         # vLLM requires homogeneous GPUs for TP; take the smallest. Fractional
         # deploys size from total capacity (total_memory * gmu); whole-GPU
@@ -159,7 +145,7 @@ class VllmPreflight:
         # A fractional num_gpus is the fraction; anything else takes the default.
         gpu_util = resolve_gpu_memory_utilization(config)
 
-        # vLLM 0.26.0's CUDA-graph memory profiler is a no-op stub, and KV-block
+        # vLLM's cudagraph profiler returns 0 on the V2 runner, and KV-block
         # commitment isn't bounded by max_model_len — gpu_util is the only lever.
         mla = _resolve_mla(text_cfg)
         mla_workspace_bytes = 0
@@ -168,45 +154,18 @@ class VllmPreflight:
             mla_workspace_bytes = _mla_chunked_prefill_workspace_bytes(text_cfg, config, dtype_bytes, mla, tp_size)
             gpu_util = max(gpu_util - _MLA_WORKSPACE_SAFETY_MARGIN * mla_workspace_bytes / gpu_basis, 0.01)
 
-        budget = (
-            gpu_basis * gpu_util
-            - weight_bytes_per_gpu
-            - _OVERHEAD_WEIGHT_FRACTION * weight_bytes_per_gpu
-            - cudagraph_bytes_per_gpu
-        )
-        # Cudagraph capture is discretionary, the state/KV floor isn't. Skipped
-        # when eager is set: an explicit `false` wins the merge downstream.
-        force_eager = False
-        if cudagraph_bytes_per_gpu and config.vllm_engine_kwargs.enforce_eager is None:
-            floor_bytes = (
-                mamba.per_seq_state_bytes * (config.vllm_engine_kwargs.max_num_seqs or _MIN_MAX_NUM_SEQS)
-                if mamba is not None
-                else kv_per_token_per_gpu * _DEFAULT_BLOCK_SIZE
-            )
-            if budget < floor_bytes:
-                logger.info(
-                    "preflight '%s': cudagraph reservation (%.2f GiB/GPU) leaves %.2f GiB, under the %.2f GiB "
-                    "floor → recommending enforce_eager to reclaim it",
-                    config.name,
-                    cudagraph_bytes_per_gpu / 1024**3,
-                    budget / 1024**3,
-                    floor_bytes / 1024**3,
-                )
-                budget += cudagraph_bytes_per_gpu
-                cudagraph_bytes_per_gpu = 0
-                force_eager = True
+        budget = gpu_basis * gpu_util - weight_bytes_per_gpu - _OVERHEAD_WEIGHT_FRACTION * weight_bytes_per_gpu
 
         if budget <= 0:
             logger.warning(
                 "preflight: '%s' has no KV-cache budget on the assigned GPU "
-                "(%s=%.2f GiB, util=%.2f, est. weights/GPU=%.2f GiB, "
-                "cudagraph/GPU=%.2f GiB). Model likely won't fit; deploy will be attempted anyway.",
+                "(%s=%.2f GiB, util=%.2f, est. weights/GPU=%.2f GiB). "
+                "Model likely won't fit; deploy will be attempted anyway.",
                 config.name,
                 "share basis (total)" if fractional else "free",
                 gpu_basis / 1024**3,
                 gpu_util,
                 weight_bytes_per_gpu / 1024**3,
-                cudagraph_bytes_per_gpu / 1024**3,
             )
             return {}
 
@@ -244,15 +203,11 @@ class VllmPreflight:
                 return {}
             rec = {"max_model_len": suggested}
 
-        if force_eager:
-            rec["enforce_eager"] = True
-
         if mla_workspace_bytes:
             rec["gpu_memory_utilization"] = round(gpu_util, 4)
 
         logger.info(
-            "preflight vllm '%s': gpu_%s=%.2f GiB util=%.2f tp=%d pp=%d "
-            "weights/GPU≈%.2f GiB cudagraph/GPU≈%.2f GiB kv/token=%d B%s → %s",
+            "preflight vllm '%s': gpu_%s=%.2f GiB util=%.2f tp=%d pp=%d weights/GPU≈%.2f GiB kv/token=%d B%s → %s",
             config.name,
             "share" if fractional else "free",
             gpu_basis / 1024**3,
@@ -260,7 +215,6 @@ class VllmPreflight:
             tp_size,
             pp_size,
             weight_bytes_per_gpu / 1024**3,
-            cudagraph_bytes_per_gpu / 1024**3,
             int(kv_per_token_per_gpu),
             f" hybrid(state {mamba.per_seq_state_bytes / 1024**2:.1f} MiB/seq)"
             if mamba
@@ -273,15 +227,15 @@ class VllmPreflight:
         )
 
         # Multimodal: bump `max_num_batched_tokens` to fit one image/audio item
-        # per batch. Must equal `effective_mnbt`, or the cudagraph estimate
-        # above goes stale.
+        # per batch.
         if is_mm:
-            rec["max_num_batched_tokens"] = effective_mnbt
+            mnbt = _recommended_mm_batched_tokens(mm_tokens_per_item)
+            rec["max_num_batched_tokens"] = mnbt
             logger.info(
                 "preflight vllm '%s': multimodal detected → suggested max_num_batched_tokens=%d "
                 "(mm_tokens_per_item≈%s)",
                 config.name,
-                effective_mnbt,
+                mnbt,
                 mm_tokens_per_item if mm_tokens_per_item is not None else "unknown",
             )
 
@@ -550,28 +504,6 @@ def _recommended_mm_batched_tokens(mm_tokens_per_item: int | None) -> int:
     if mm_tokens_per_item is not None:
         floor = max(floor, mm_tokens_per_item * 2)
     return floor
-
-
-def _estimate_cudagraph_bytes_per_gpu(
-    text_cfg: dict,
-    model_cfg: dict,
-    config: ModelshipModelConfig,
-    max_num_batched_tokens: int,
-    tp_size: int,
-    pp_size: int,
-) -> int:
-    """Estimate the VRAM vLLM's memory profiler reserves for CUDA graphs:
-    `hidden * num_layers * dtype_bytes * max_num_batched_tokens`, divided by
-    `tp_size * pp_size`. Returns 0 when `enforce_eager=True`."""
-    if config.vllm_engine_kwargs.enforce_eager:
-        return 0
-    hidden = text_cfg.get("hidden_size")
-    layers = text_cfg.get("num_hidden_layers") or text_cfg.get("num_layers")
-    if not (hidden and layers):
-        return 0
-    dtype_bytes = _resolve_compute_dtype_bytes(text_cfg, model_cfg)
-    divisor = max(tp_size, 1) * max(pp_size, 1)
-    return int(hidden * layers * dtype_bytes * max_num_batched_tokens // divisor)
 
 
 def _mla_chunked_prefill_workspace_bytes(
