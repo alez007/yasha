@@ -556,8 +556,7 @@ class TestVllmPreflight:
         assert "gpu_memory_utilization" in recs["cpu"]
 
     def test_no_gpus_still_recommends_auto_fit(self):
-        # num_gpus > 0 means Ray reserved one; discovery failing changes nothing
-        # about what vLLM should do with it.
+        # num_gpus > 0 means Ray reserved one, whatever discovery reports.
         cfg = _make_config(resolved_path="/nonexistent")
         assert VllmPreflight().recommend(cfg, HardwareProfile()) == {"max_model_len": -1}
 
@@ -572,16 +571,14 @@ class TestVllmPreflight:
         assert VllmPreflight().recommend(cfg, hw) == {"max_model_len": -1}
 
     def test_missing_geometry_still_recommends_auto_fit(self, tmp_path):
-        # Auto-fit reads no geometry, so an unparseable config.json no longer
-        # costs the context recommendation.
+        # Auto-fit reads no geometry.
         snapshot = _write_model_snapshot(tmp_path, config_json={"torch_dtype": "bfloat16"}, weight_bytes=1024)
         cfg = _make_config(resolved_path=str(snapshot))
         hw = HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])
         assert VllmPreflight().recommend(cfg, hw) == {"max_model_len": -1}
 
     def test_context_recommendation_ignores_hardware(self, tmp_path):
-        # vLLM fits the context to post-profiling memory, which preflight can't
-        # see: a tight card, a roomy one and a half-share all get one answer.
+        # A tight card, a roomy one and a half-share all get the same answer.
         snapshot = _write_model_snapshot(tmp_path, config_json=_DENSE_CFG, weight_bytes=19 * 1024**3)
         recs = [
             VllmPreflight().recommend(
@@ -593,8 +590,7 @@ class TestVllmPreflight:
         assert recs == [{"max_model_len": -1}] * 3
 
     def test_user_set_max_model_len_is_left_alone(self, tmp_path):
-        # The merge always discards ours here, so emitting it would only log a
-        # divergence warning nobody can act on.
+        # The merge discards ours here, so emitting it would only log a warning.
         snapshot = _write_model_snapshot(tmp_path, config_json=_DENSE_CFG, weight_bytes=19 * 1024**3)
         cfg = _make_config(resolved_path=str(snapshot), vllm_kwargs={"max_model_len": 8192})
         hw = HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])
@@ -866,8 +862,8 @@ class TestMultimodal:
         assert rec["max_num_batched_tokens"] == 8192
 
     def test_nested_text_config_is_unwrapped(self, tmp_path):
-        # Geometry is read from a nested `text_config` (Gemma 3/4, LLaVA, Qwen2-VL,
-        # etc.) — here only to reach the multimodal probe.
+        # Nested `text_config` (Gemma 3/4, LLaVA, Qwen2-VL), reached via the
+        # multimodal probe.
         snapshot = _write_model_snapshot(
             tmp_path,
             config_json={
@@ -1190,8 +1186,7 @@ class TestHybridIntegration:
         assert "max_num_seqs" not in dense  # non-hybrid never emits it
 
     def test_gpu_hybrid_seqs_stay_flat_on_a_roomy_card(self, tmp_path):
-        # vLLM's mamba-block ceiling is self-referential and jittery, so spare
-        # VRAM doesn't buy concurrency here — that's the user's own dial.
+        # Flat, not budgeted: the mamba-block ceiling is self-referential.
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
         cfg = _make_config(resolved_path=str(snapshot))
         hw = HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])
@@ -1328,7 +1323,7 @@ class TestFitLenWithSliding:
 
 class TestSlidingWindowIntegration:
     """The same model with and without `layer_types` present. CPU-only: the GPU
-    path hands context sizing to vLLM, so sliding windows no longer reach it."""
+    path hands context sizing to vLLM."""
 
     def test_layer_types_unlocks_far_more_context(self, tmp_path):
         hw = HardwareProfile(ram_bytes=24 * 1024**3, available_ram_bytes=24 * 1024**3)

@@ -23,7 +23,7 @@ _DEFAULT_BLOCK_SIZE = 16
 # buffer per sequence slot (sized by max_num_seqs, not max_model_len).
 _MIN_MAX_NUM_SEQS = 8
 
-# vLLM's sentinel for "fit the context to whatever memory profiling leaves".
+# vLLM's sentinel for "fit the context to what memory profiling leaves".
 _AUTO_FIT_MAX_MODEL_LEN = -1
 
 # Overhead on top of weight bytes: AWQ/Marlin transposed packs, quant scales,
@@ -80,14 +80,11 @@ class VllmPreflight:
 
     def _recommend_gpu(self, config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
         rec: dict[str, Any] = {}
-        # vLLM binary-searches the largest context that fits its own
-        # post-profiling KV pool, per worker. Only emitted when the key is unset,
-        # so the merge doesn't warn over a divergence it can't act on.
+        # vLLM binary-searches the largest context its post-profiling KV pool
+        # holds, per worker. Skipped when set, so the merge has nothing to warn on.
         if config.vllm_engine_kwargs.max_model_len is None:
             rec["max_model_len"] = _AUTO_FIT_MAX_MODEL_LEN
 
-        # Everything below is best-effort on top of auto-fit; a model whose
-        # config.json can't be read still gets a sized context.
         model_path = config._resolved_path
         if not model_path:
             logger.info("preflight '%s': no resolved model path; auto-fit only", config.name)
@@ -104,9 +101,8 @@ class VllmPreflight:
 
         text_cfg = _resolve_text_config(model_cfg)
 
-        # Hybrid/SSM models park one recurrent-state block per sequence slot, and
-        # vLLM has no auto-fit for max_num_seqs — its default overruns the block
-        # pool. Floor it; climbing is the user's call.
+        # vLLM has no auto-fit for max_num_seqs, and its default overruns the
+        # per-slot mamba block pool.
         if _resolve_mamba_state(config, model_path) is not None:
             rec["max_num_seqs"] = _MIN_MAX_NUM_SEQS
             logger.info("preflight vllm '%s': hybrid/SSM → max_num_seqs=%d", config.name, _MIN_MAX_NUM_SEQS)
@@ -134,16 +130,14 @@ class VllmPreflight:
     def _mla_gpu_memory_utilization(
         self, config: ModelshipModelConfig, hw: HardwareProfile, text_cfg: dict, model_cfg: dict
     ) -> float | None:
-        """MLA's chunked-prefill workspace lives outside the KV pool, and vLLM's
-        cudagraph profiler returns 0 on the V2 runner — gpu_util is the only lever
-        that leaves room for it. None for every other model."""
+        """MLA's chunked-prefill workspace sits outside the KV pool, and gpu_util
+        is the only lever that leaves room for it. None for every other model."""
         mla = _resolve_mla(text_cfg)
         if mla is None or config.vllm_engine_kwargs.enforce_eager or not hw.gpus:
             return None
 
-        # vLLM requires homogeneous GPUs for TP; take the smallest. Fractional
-        # deploys size from total capacity (total_memory * gmu); whole-GPU
-        # deploys size from free.
+        # TP requires homogeneous GPUs, so take the smallest. Fractional deploys
+        # size from total capacity, whole-GPU deploys from free.
         fractional = 0 < config.num_gpus < 1
         gpu_basis = (
             min(g.sizing_total_bytes for g in hw.gpus) if fractional else min(g.available_bytes for g in hw.gpus)
