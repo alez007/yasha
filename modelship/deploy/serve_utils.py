@@ -22,7 +22,7 @@ from modelship.deploy.capabilities import node_capability_resources
 from modelship.infer.infer_config import ModelshipConfig
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
-from modelship.preflight import detect_available_ram_bytes, detect_gpus
+from modelship.preflight import detect_available_ram_bytes, detect_node_gpus
 from modelship.utils import parse_memory_bytes, rand_suffix
 from modelship.utils.accelerator import detect_accelerator
 
@@ -361,7 +361,7 @@ def _validate_node_gpu_reservation() -> None:
     reserved = os.environ.get("MSHIP_NODE_NUM_GPUS")
     if not reserved:
         return
-    visible = len(detect_gpus())
+    visible = len(detect_node_gpus())
     if int(reserved) > visible:
         raise RuntimeError(
             f"--node-num-gpus={reserved} (MSHIP_NODE_NUM_GPUS) exceeds the {visible} GPU(s) this "

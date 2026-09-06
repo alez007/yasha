@@ -132,6 +132,25 @@ class TestGpuDiscoveryUuid:
 
         assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid=None, total_bytes=2048)]
 
+    def test_node_probe_never_reads_free_memory(self):
+        """mem_get_info creates a CUDA primary context (~135 MiB per device) that
+        lives until the process exits; the driver has no use for the number."""
+        from modelship.preflight import base as preflight_base
+
+        mock_props = SimpleNamespace(name="Test GPU", total_memory=2048, uuid="abc123")
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.device_count.return_value = 2
+        mock_torch.cuda.get_device_properties.return_value = mock_props
+        mock_torch.version.hip = None
+
+        with patch.dict(sys.modules, {"torch": mock_torch}):
+            gpus = preflight_base.detect_node_gpus()
+
+        mock_torch.cuda.mem_get_info.assert_not_called()
+        # available_bytes carries capacity instead, so sizing_total_bytes still holds.
+        assert [g.available_bytes for g in gpus] == [2048, 2048]
+
     def test_torch_probe_derives_rocm_kind_from_hip_version(self):
         """ROCm PyTorch maps torch.cuda onto HIP; torch.version.hip is the only
         signal distinguishing an AMD device from a real CUDA one on this path."""
