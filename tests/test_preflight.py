@@ -132,6 +132,25 @@ class TestGpuDiscoveryUuid:
 
         assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid=None, total_bytes=2048)]
 
+    def test_node_probe_never_reads_free_memory(self):
+        """mem_get_info creates a CUDA primary context (~135 MiB per device) that
+        lives until the process exits; the driver has no use for the number."""
+        from modelship.preflight import base as preflight_base
+
+        mock_props = SimpleNamespace(name="Test GPU", total_memory=2048, uuid="abc123")
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.device_count.return_value = 2
+        mock_torch.cuda.get_device_properties.return_value = mock_props
+        mock_torch.version.hip = None
+
+        with patch.dict(sys.modules, {"torch": mock_torch}):
+            gpus = preflight_base.detect_node_gpus()
+
+        mock_torch.cuda.mem_get_info.assert_not_called()
+        # available_bytes carries capacity instead, so sizing_total_bytes still holds.
+        assert [g.available_bytes for g in gpus] == [2048, 2048]
+
     def test_torch_probe_derives_rocm_kind_from_hip_version(self):
         """ROCm PyTorch maps torch.cuda onto HIP; torch.version.hip is the only
         signal distinguishing an AMD device from a real CUDA one on this path."""
@@ -555,187 +574,55 @@ class TestVllmPreflight:
         assert "gpu_memory_utilization" not in recs["gpu"]
         assert "gpu_memory_utilization" in recs["cpu"]
 
-    def test_no_gpus_returns_empty(self):
+    def test_no_gpus_still_recommends_auto_fit(self):
+        # num_gpus > 0 means Ray reserved one, whatever discovery reports.
         cfg = _make_config(resolved_path="/nonexistent")
-        assert VllmPreflight().recommend(cfg, HardwareProfile()) == {}
+        assert VllmPreflight().recommend(cfg, HardwareProfile()) == {"max_model_len": -1}
 
-    def test_no_resolved_path_returns_empty(self):
+    def test_no_resolved_path_still_recommends_auto_fit(self):
         cfg = _make_config()
         hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test")])
-        assert VllmPreflight().recommend(cfg, hw) == {}
+        assert VllmPreflight().recommend(cfg, hw) == {"max_model_len": -1}
 
-    def test_missing_config_json_returns_empty(self, tmp_path):
+    def test_missing_config_json_still_recommends_auto_fit(self, tmp_path):
         cfg = _make_config(resolved_path=str(tmp_path))
         hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test")])
-        assert VllmPreflight().recommend(cfg, hw) == {}
+        assert VllmPreflight().recommend(cfg, hw) == {"max_model_len": -1}
 
-    def test_constrained_budget_recommends_lower_max_model_len(self, tmp_path):
-        snapshot = _write_model_snapshot(
-            tmp_path,
-            config_json={
-                "num_hidden_layers": 48,
-                "num_attention_heads": 32,
-                "num_key_value_heads": 16,
-                "hidden_size": 5120,
-                "head_dim": 160,
-                "torch_dtype": "bfloat16",
-                "max_position_embeddings": 32768,
-            },
-            weight_bytes=19 * 1024**3,
-        )
-        cfg = _make_config(
-            resolved_path=str(snapshot),
-            vllm_kwargs={"tensor_parallel_size": 2},
-            num_gpus=2,
-        )
-        hw = HardwareProfile(gpus=[GPUInfo(0, 16 * 1024**3, "test"), GPUInfo(1, 16 * 1024**3, "test")])
-        rec = VllmPreflight().recommend(cfg, hw)
-        assert "max_model_len" in rec
-        assert rec["max_model_len"] < 32768
-        assert rec["max_model_len"] % 16 == 0
-
-    def test_roomy_budget_caps_at_max_position_embeddings(self, tmp_path):
-        snapshot = _write_model_snapshot(
-            tmp_path,
-            config_json={
-                "num_hidden_layers": 32,
-                "num_attention_heads": 32,
-                "num_key_value_heads": 8,
-                "hidden_size": 4096,
-                "head_dim": 128,
-                "torch_dtype": "bfloat16",
-                "max_position_embeddings": 8192,
-            },
-            weight_bytes=(15 * 1024**3),
-        )
-        cfg = _make_config(
-            resolved_path=str(snapshot),
-            vllm_kwargs={"tensor_parallel_size": 1},
-        )
-        hw = HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])
-        rec = VllmPreflight().recommend(cfg, hw)
-        assert rec["max_model_len"] == 8192
-
-    def test_missing_geometry_returns_empty(self, tmp_path):
-        snapshot = _write_model_snapshot(
-            tmp_path,
-            config_json={"torch_dtype": "bfloat16"},
-            weight_bytes=1024,
-        )
+    def test_missing_geometry_still_recommends_auto_fit(self, tmp_path):
+        # Auto-fit reads no geometry.
+        snapshot = _write_model_snapshot(tmp_path, config_json={"torch_dtype": "bfloat16"}, weight_bytes=1024)
         cfg = _make_config(resolved_path=str(snapshot))
         hw = HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])
-        assert VllmPreflight().recommend(cfg, hw) == {}
+        assert VllmPreflight().recommend(cfg, hw) == {"max_model_len": -1}
 
-    def test_budget_below_zero_returns_empty(self, tmp_path):
-        # Tiny GPU, huge model: budget goes negative.
-        snapshot = _write_model_snapshot(
-            tmp_path,
-            config_json={
-                "num_hidden_layers": 80,
-                "num_attention_heads": 64,
-                "num_key_value_heads": 8,
-                "hidden_size": 8192,
-                "torch_dtype": "bfloat16",
-                "max_position_embeddings": 32768,
-            },
-            weight_bytes=(140 * 1024**3),
-        )
-        cfg = _make_config(
-            resolved_path=str(snapshot),
-            vllm_kwargs={"tensor_parallel_size": 1},
-        )
-        hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test")])
-        assert VllmPreflight().recommend(cfg, hw) == {}
+    def test_context_recommendation_ignores_hardware(self, tmp_path):
+        # A tight card, a roomy one and a half-share all get the same answer.
+        snapshot = _write_model_snapshot(tmp_path, config_json=_DENSE_CFG, weight_bytes=19 * 1024**3)
+        recs = [
+            VllmPreflight().recommend(
+                _make_config(resolved_path=str(snapshot), num_gpus=num_gpus),
+                HardwareProfile(gpus=[GPUInfo(0, free_gib * 1024**3, "test", total_bytes=80 * 1024**3)]),
+            )
+            for num_gpus, free_gib in ((1, 16), (1, 80), (0.5, 80))
+        ]
+        assert recs == [{"max_model_len": -1}] * 3
 
-    def test_fractional_num_gpus_sizes_max_model_len_to_share(self, tmp_path):
-        # num_gpus=0.5 halves gpu_memory_utilization; when that budget is too small
-        # for the full context, preflight sizes max_model_len down instead of bailing.
-        snapshot = _write_model_snapshot(
-            tmp_path,
-            config_json={
-                "num_hidden_layers": 28,
-                "num_attention_heads": 28,
-                "num_key_value_heads": 8,
-                "hidden_size": 3584,
-                "head_dim": 128,
-                "torch_dtype": "bfloat16",
-                "max_position_embeddings": 32768,
-            },
-            weight_bytes=5 * 1024**3,
-        )
-        cfg = _make_config(resolved_path=str(snapshot), num_gpus=0.5)
-        hw = HardwareProfile(gpus=[GPUInfo(0, 16 * 1024**3, "test")])
-        rec = VllmPreflight().recommend(cfg, hw)
-        assert "max_model_len" in rec
-        assert 0 < rec["max_model_len"] < 32768
-        assert rec["max_model_len"] % 16 == 0
-
-    def test_fractional_share_recommends_less_than_whole_gpu(self, tmp_path):
-        # Same model, same card: a 0.5 share yields a smaller max_model_len than the whole GPU.
-        snapshot = _write_model_snapshot(
-            tmp_path,
-            config_json={
-                "num_hidden_layers": 28,
-                "num_attention_heads": 28,
-                "num_key_value_heads": 4,
-                "hidden_size": 3584,
-                "head_dim": 128,
-                "torch_dtype": "bfloat16",
-                "max_position_embeddings": 131072,
-            },
-            weight_bytes=5 * 1024**3,
-        )
-        hw = HardwareProfile(gpus=[GPUInfo(0, 16 * 1024**3, "test")])
-        shared = VllmPreflight().recommend(_make_config(resolved_path=str(snapshot), num_gpus=0.5), hw)
-        whole = VllmPreflight().recommend(_make_config(resolved_path=str(snapshot), num_gpus=1), hw)
-        assert shared["max_model_len"] < whole["max_model_len"]
-
-    def test_fp8_kv_halves_per_token_bytes(self, tmp_path):
-        snapshot = _write_model_snapshot(
-            tmp_path,
-            config_json={
-                "num_hidden_layers": 32,
-                "num_attention_heads": 32,
-                "num_key_value_heads": 8,
-                "hidden_size": 4096,
-                "head_dim": 128,
-                "torch_dtype": "bfloat16",
-                "max_position_embeddings": 1_000_000,
-            },
-            weight_bytes=15 * 1024**3,
-        )
-        cfg_fp16 = _make_config(
-            resolved_path=str(snapshot),
-        )
-        cfg_fp8 = _make_config(
-            resolved_path=str(snapshot),
-            vllm_kwargs={"kv_cache_dtype": "fp8_e4m3"},
-        )
-        hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test")])
-        rec_fp16 = VllmPreflight().recommend(cfg_fp16, hw)
-        rec_fp8 = VllmPreflight().recommend(cfg_fp8, hw)
-        # fp8 stores KV in half the bytes, so the suggested context roughly doubles.
-        assert rec_fp8["max_model_len"] >= rec_fp16["max_model_len"]
+    def test_user_set_max_model_len_is_left_alone(self, tmp_path):
+        # The merge discards ours here, so emitting it would only log a warning.
+        snapshot = _write_model_snapshot(tmp_path, config_json=_DENSE_CFG, weight_bytes=19 * 1024**3)
+        cfg = _make_config(resolved_path=str(snapshot), vllm_kwargs={"max_model_len": 8192})
+        hw = HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])
+        assert "max_model_len" not in VllmPreflight().recommend(cfg, hw)
 
 
 class TestVllmPreflightFractionalGpu:
-    """0 < num_gpus < 1 shares one physical GPU; budget derives from total capacity
-    * gpu_memory_utilization (which equals the fraction), not from free VRAM."""
+    """0 < num_gpus < 1 shares one physical GPU; the MLA workspace haircut sizes
+    from total capacity * gpu_memory_utilization (which equals the fraction), not
+    from free VRAM."""
 
-    def test_budget_derives_from_total_not_available(self, tmp_path):
-        snapshot = _write_model_snapshot(
-            tmp_path,
-            config_json={
-                "num_hidden_layers": 32,
-                "num_attention_heads": 32,
-                "num_key_value_heads": 8,
-                "hidden_size": 4096,
-                "head_dim": 128,
-                "torch_dtype": "bfloat16",
-                "max_position_embeddings": 8192,
-            },
-            weight_bytes=4 * 1024**3,
-        )
+    def test_haircut_derives_from_total_not_available(self, tmp_path):
+        snapshot = _write_model_snapshot(tmp_path, config_json=_MLA_CFG, weight_bytes=4 * 1024**3)
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0.5)
         hw_roomy_free = HardwareProfile(gpus=[GPUInfo(0, 79 * 1024**3, "test", total_bytes=80 * 1024**3)])
         hw_tight_free = HardwareProfile(gpus=[GPUInfo(0, 1 * 1024**3, "test", total_bytes=80 * 1024**3)])
@@ -744,7 +631,7 @@ class TestVllmPreflightFractionalGpu:
         rec_tight = VllmPreflight().recommend(cfg, hw_tight_free)
 
         assert rec_roomy == rec_tight
-        assert rec_roomy["max_model_len"] == 8192
+        assert 0 < rec_roomy["gpu_memory_utilization"] < 0.5
 
 
 class TestVllmPreflightCpu:
@@ -994,8 +881,8 @@ class TestMultimodal:
         assert rec["max_num_batched_tokens"] == 8192
 
     def test_nested_text_config_is_unwrapped(self, tmp_path):
-        # Geometry is read from a nested `text_config` (Gemma 3/4, LLaVA, Qwen2-VL,
-        # etc.); GPUs are roomy so the budget produces a recommendation, not `{}`.
+        # Nested `text_config` (Gemma 3/4, LLaVA, Qwen2-VL), reached via the
+        # multimodal probe.
         snapshot = _write_model_snapshot(
             tmp_path,
             config_json={
@@ -1020,9 +907,7 @@ class TestMultimodal:
         )
         hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test"), GPUInfo(1, 24 * 1024**3, "test")])
         rec = VllmPreflight().recommend(cfg, hw)
-        # Produces a real recommendation, not `{}`.
-        assert "max_model_len" in rec
-        assert rec["max_model_len"] > 0
+        assert rec["max_model_len"] == -1
         # Also recognised as multimodal → max_num_batched_tokens is set.
         assert "max_num_batched_tokens" in rec
 
@@ -1067,51 +952,9 @@ class TestMultimodal:
         assert "max_num_batched_tokens" not in rec
 
 
-@pytest.mark.parametrize(
-    "tp_size,num_kv_heads,expect_kv_shrinkage",
-    [
-        (1, 8, False),
-        (2, 8, True),
-        (4, 8, True),
-        (3, 8, False),  # GQA edge case: 8 not divisible by 3, KV replicated
-    ],
-)
-def test_kv_shrinks_per_gpu_only_when_tp_divides_heads(tp_size, num_kv_heads, expect_kv_shrinkage):
-    """Unit-level: per-GPU KV bytes shrink by tp_size only when num_kv_heads is divisible."""
-    from modelship.preflight.vllm import _divide_kv_by_tp
-
-    kv_full = 100_000
-    result = _divide_kv_by_tp(kv_full, {"num_key_value_heads": num_kv_heads}, tp_size)
-    if expect_kv_shrinkage:
-        assert result == kv_full / tp_size
-    else:
-        assert result == kv_full
-
-
 class TestCudagraphNotModelled:
-    """Cudagraph memory is deliberately not subtracted: preflight only sizes
-    `max_model_len`, which doesn't bound what vLLM allocates."""
-
-    def test_enforce_eager_does_not_change_max_model_len(self, tmp_path):
-        snapshot = _write_model_snapshot(
-            tmp_path,
-            config_json={
-                "num_hidden_layers": 32,
-                "num_attention_heads": 32,
-                "num_key_value_heads": 8,
-                "hidden_size": 4096,
-                "head_dim": 128,
-                "torch_dtype": "bfloat16",
-                "max_position_embeddings": 1_000_000,
-            },
-            weight_bytes=15 * 1024**3,
-        )
-        hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test")])
-        rec_graphs = VllmPreflight().recommend(_make_config(resolved_path=str(snapshot)), hw)
-        rec_eager = VllmPreflight().recommend(
-            _make_config(resolved_path=str(snapshot), vllm_kwargs={"enforce_eager": True}), hw
-        )
-        assert rec_eager["max_model_len"] == rec_graphs["max_model_len"]
+    """Cudagraph memory is deliberately not subtracted: vLLM's own profiler
+    already accounts for it, and preflight never trades graphs away to buy room."""
 
     @pytest.mark.parametrize("gpu_gib", [10.8, 40])
     def test_never_recommends_enforce_eager(self, tmp_path, gpu_gib):
@@ -1170,13 +1013,6 @@ class TestMlaKvCache:
         generic_per_token, _ = _kv_bytes_per_token(generic_cfg, generic_cfg, _make_config())
         assert mla_per_token is not None and generic_per_token is not None
         assert mla_per_token * 7 < generic_per_token
-
-    def test_divide_kv_by_tp_does_not_shard_mla(self):
-        # num_key_value_heads=16 divides tp_size=2 cleanly, but MLA's latent
-        # is replicated per rank, not head-sharded — must not shrink.
-        from modelship.preflight.vllm import _divide_kv_by_tp
-
-        assert _divide_kv_by_tp(31104, _MLA_CFG, 2) == 31104
 
     def test_workspace_shrinks_with_tp(self):
         # The opposite rule to the latent cache above: the up-projection is
@@ -1356,29 +1192,26 @@ class TestHybridIntegration:
     """End-to-end through recommend(), with `_resolve_mamba_state` patched to a
     synthetic MambaStateInfo so no real vLLM config gets built."""
 
-    def test_gpu_hybrid_floors_seqs_and_trims_vs_dense_baseline(self, tmp_path):
+    def test_gpu_hybrid_floors_seqs_and_leaves_context_to_auto_fit(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
-        cfg = _make_config(
-            resolved_path=str(snapshot),
-        )
+        cfg = _make_config(resolved_path=str(snapshot))
         hw = HardwareProfile(gpus=[GPUInfo(0, int(15.45 * 1024**3), "test")])
         with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
             hybrid = VllmPreflight().recommend(cfg, hw)
         # Same model/GPU but treated as a plain transformer (no state term).
         with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=None):
             dense = VllmPreflight().recommend(cfg, hw)
-        assert hybrid["max_num_seqs"] == 8
-        assert 0 < hybrid["max_model_len"] < _HYBRID_CFG["max_position_embeddings"]
+        assert hybrid == {"max_model_len": -1, "max_num_seqs": 8}
         assert "max_num_seqs" not in dense  # non-hybrid never emits it
 
-    def test_gpu_roomy_keeps_full_context_and_climbs(self, tmp_path):
+    def test_gpu_hybrid_seqs_stay_flat_on_a_roomy_card(self, tmp_path):
+        # Flat, not budgeted: the mamba-block ceiling is self-referential.
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
         cfg = _make_config(resolved_path=str(snapshot))
         hw = HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])
         with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
             rec = VllmPreflight().recommend(cfg, hw)
-        assert rec["max_model_len"] == _HYBRID_CFG["max_position_embeddings"]
-        assert rec["max_num_seqs"] > 8
+        assert rec == {"max_model_len": -1, "max_num_seqs": 8}
 
     def test_cpu_auto_gmu_hybrid_folds_state_into_gmu(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
@@ -1508,14 +1341,15 @@ class TestFitLenWithSliding:
 
 
 class TestSlidingWindowIntegration:
-    """The same model with and without `layer_types` present."""
+    """The same model with and without `layer_types` present. CPU-only: the GPU
+    path hands context sizing to vLLM."""
 
     def test_layer_types_unlocks_far_more_context(self, tmp_path):
-        hw = HardwareProfile(gpus=[GPUInfo(0, 16 * 1024**3, "test"), GPUInfo(1, 16 * 1024**3, "test")])
+        hw = HardwareProfile(ram_bytes=24 * 1024**3, available_ram_bytes=24 * 1024**3)
 
         def _rec(config_json, subdir):
             snapshot = _write_model_snapshot(tmp_path / subdir, config_json=config_json, weight_bytes=10 * 1024**3)
-            cfg = _make_config(resolved_path=str(snapshot), vllm_kwargs={"tensor_parallel_size": 2}, num_gpus=2)
+            cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
             return VllmPreflight().recommend(cfg, hw)["max_model_len"]
 
         (tmp_path / "with").mkdir()
@@ -1529,7 +1363,7 @@ class TestSlidingWindowIntegration:
         assert with_sw % 16 == 0
 
     def test_all_full_layer_types_matches_no_sliding_keys(self, tmp_path):
-        hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test")])
+        hw = HardwareProfile(ram_bytes=12 * 1024**3, available_ram_bytes=12 * 1024**3)
         base = {
             "num_hidden_layers": 32,
             "num_attention_heads": 32,
@@ -1542,10 +1376,11 @@ class TestSlidingWindowIntegration:
 
         def _rec(config_json, subdir):
             (tmp_path / subdir).mkdir()
-            snapshot = _write_model_snapshot(tmp_path / subdir, config_json=config_json, weight_bytes=14 * 1024**3)
-            cfg = _make_config(resolved_path=str(snapshot), vllm_kwargs={"tensor_parallel_size": 1})
+            snapshot = _write_model_snapshot(tmp_path / subdir, config_json=config_json, weight_bytes=6 * 1024**3)
+            cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
             return VllmPreflight().recommend(cfg, hw)["max_model_len"]
 
         uniform = _rec(base, "uniform")
         all_full = _rec({**base, "sliding_window": 4096, "layer_types": ["full_attention"] * 32}, "allfull")
-        assert all_full == uniform
+        # Below the context cap, so the equality is a real fit, not a shared clamp.
+        assert all_full == uniform < base["max_position_embeddings"]

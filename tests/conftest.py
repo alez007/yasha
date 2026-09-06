@@ -375,6 +375,9 @@ def mship_cluster(tmp_path_factory):
             **os.environ,
             "MSHIP_TRUSTED_IDENTITY_HEADER": "X-Mship-Test-Identity",
             "MSHIP_RAY_DASHBOARD": "0.0.0.0",
+            # One visible card, so Ray has nowhere to spread fractional deploys.
+            # No fixture uses tensor/pipeline parallelism, so nothing needs a second.
+            "CUDA_VISIBLE_DEVICES": "0",
         },
         stdout=log_file,
         stderr=subprocess.STDOUT,

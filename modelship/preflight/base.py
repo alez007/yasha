@@ -121,6 +121,25 @@ def detect_gpus() -> list[GPUInfo]:
     return gpus
 
 
+def detect_node_gpus() -> list[GPUInfo]:
+    """GPUs visible to this process, without their free VRAM — `available_bytes`
+    carries the device capacity instead.
+
+    Reading free VRAM through torch needs a CUDA primary context, which costs
+    ~135 MiB per device and lives until the process exits. The driver is
+    unmasked, so it would pay that on every card for the node's lifetime. Use
+    this wherever only the identity or the count matters; `detect_gpus` where
+    the free number does."""
+    gpus = _torch_cuda_discover(read_free_memory=False)
+    if not gpus:
+        gpus = _pynvml_node_discover()
+    if not gpus:
+        gpus = _rocm_smi_node_discover()
+    if not gpus:
+        gpus = _apple_metal_discover()
+    return gpus
+
+
 def detect_ram_bytes() -> int:
     """Total RAM available to *this* process, honoring a container memory cap.
 
@@ -282,7 +301,7 @@ def _cgroup_reclaimable_cache_bytes(stat_paths: tuple[str, ...]) -> int | None:
     return None
 
 
-def _torch_cuda_discover() -> list[GPUInfo]:
+def _torch_cuda_discover(*, read_free_memory: bool = True) -> list[GPUInfo]:
     try:
         import torch
     except Exception:
@@ -296,14 +315,16 @@ def _torch_cuda_discover() -> list[GPUInfo]:
         gpus: list[GPUInfo] = []
         for i in range(torch.cuda.device_count()):
             props = torch.cuda.get_device_properties(i)
-            try:
-                free, _total = torch.cuda.mem_get_info(i)
-                available = int(free)
-            except Exception:
-                # mem_get_info needs a CUDA context. If it fails (e.g. no
-                # context yet and lazy init refuses), fall back to total —
-                # better than nothing, the runtime ValueError will catch it.
-                available = int(props.total_memory)
+            available = int(props.total_memory)
+            if read_free_memory:
+                try:
+                    free, _total = torch.cuda.mem_get_info(i)
+                    available = int(free)
+                except Exception:
+                    # mem_get_info needs a CUDA context. If it fails (e.g. no
+                    # context yet and lazy init refuses), fall back to total —
+                    # better than nothing, the runtime ValueError will catch it.
+                    pass
             # `uuid` on device properties was added in a torch 2.x release; guard for
             # older builds rather than raising out of a hardware-discovery probe.
             uuid = f"GPU-{props.uuid}" if getattr(props, "uuid", None) is not None else None

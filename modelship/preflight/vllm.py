@@ -23,6 +23,9 @@ _DEFAULT_BLOCK_SIZE = 16
 # buffer per sequence slot (sized by max_num_seqs, not max_model_len).
 _MIN_MAX_NUM_SEQS = 8
 
+# vLLM's sentinel for "fit the context to what memory profiling leaves".
+_AUTO_FIT_MAX_MODEL_LEN = -1
+
 # Overhead on top of weight bytes: AWQ/Marlin transposed packs, quant scales,
 # embedding tables, torch.compile artifacts not in safetensors `total_size`.
 _OVERHEAD_WEIGHT_FRACTION = 0.14
@@ -76,159 +79,38 @@ class VllmPreflight:
         return self._recommend_gpu(config, hw)
 
     def _recommend_gpu(self, config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
-        if not hw.gpus:
-            # discover_hardware()'s pynvml fallback finds node-level GPUs even
-            # when this actor owns none; empty means genuinely GPU-less or NVML
-            # discovery failed.
-            logger.info("preflight '%s': skipping — no GPUs discoverable on this node", config.name)
-            return {}
+        rec: dict[str, Any] = {}
+        # vLLM binary-searches the largest context its post-profiling KV pool
+        # holds, per worker. Skipped when set, so the merge has nothing to warn on.
+        if config.vllm_engine_kwargs.max_model_len is None:
+            rec["max_model_len"] = _AUTO_FIT_MAX_MODEL_LEN
 
         model_path = config._resolved_path
         if not model_path:
-            logger.info("preflight '%s': skipping — no resolved model path", config.name)
-            return {}
+            logger.info("preflight '%s': no resolved model path; auto-fit only", config.name)
+            return rec
 
         model_cfg = _load_model_config_json(model_path)
         if model_cfg is None:
             logger.info(
-                "preflight '%s': skipping — config.json not found or unreadable at %s",
+                "preflight '%s': config.json not found or unreadable at %s; auto-fit only",
                 config.name,
                 model_path,
             )
-            return {}
+            return rec
 
-        # Multimodal models often nest text-model geometry under `text_config`;
-        # unwrap before computing KV-cache size.
         text_cfg = _resolve_text_config(model_cfg)
 
-        kv_per_token, max_position_embeddings = _kv_bytes_per_token(text_cfg, model_cfg, config)
-        if kv_per_token is None:
-            logger.warning(
-                "preflight '%s': skipping — config.json missing KV-cache geometry "
-                "(num_hidden_layers/num_key_value_heads/head_dim). Top-level keys=%s, "
-                "architectures=%s",
-                config.name,
-                sorted(model_cfg.keys()),
-                model_cfg.get("architectures"),
-            )
-            return {}
-
-        tp_size = max(config.vllm_engine_kwargs.tensor_parallel_size, 1)
-        pp_size = max(config.vllm_engine_kwargs.pipeline_parallel_size, 1)
-        # PP shards layers across stages. KV cache is per-layer, so per-GPU KV
-        # bytes shrink by 1/pp on top of any TP-driven shrinking of KV heads.
-        kv_per_token_per_gpu = _divide_kv_by_tp(kv_per_token, text_cfg, tp_size) / pp_size
-
-        # Hybrid/SSM models park a fixed recurrent-state buffer per sequence
-        # slot; only full-attention layers hold token-growing KV. None for
-        # ordinary transformers.
-        mamba = _resolve_mamba_state(config, model_path)
-        if mamba is not None:
-            kv_per_token_per_gpu = _correct_kv_for_hybrid(kv_per_token_per_gpu, mamba)
-        # Mutually exclusive with mamba: _correct_kv_for_hybrid already drops
-        # kv/token to the full-attention layers.
-        sliding = _resolve_sliding_window(text_cfg) if mamba is None else None
-
-        weight_bytes = _estimate_weight_footprint(model_path)
-        weight_bytes_per_gpu = weight_bytes / (tp_size * pp_size) if weight_bytes else 0.0
-
-        is_mm = _is_multimodal(model_cfg)
-        mm_tokens_per_item = _estimate_mm_tokens_per_item(model_cfg) if is_mm else None
-
-        # vLLM requires homogeneous GPUs for TP; take the smallest. Fractional
-        # deploys size from total capacity (total_memory * gmu); whole-GPU
-        # deploys size from free.
-        fractional = 0 < config.num_gpus < 1
-        gpu_basis = (
-            min(g.sizing_total_bytes for g in hw.gpus) if fractional else min(g.available_bytes for g in hw.gpus)
-        )
-        # A fractional num_gpus is the fraction; anything else takes the default.
-        gpu_util = resolve_gpu_memory_utilization(config)
-
-        # vLLM's cudagraph profiler returns 0 on the V2 runner, and KV-block
-        # commitment isn't bounded by max_model_len — gpu_util is the only lever.
-        mla = _resolve_mla(text_cfg)
-        mla_workspace_bytes = 0
-        if mla is not None and not config.vllm_engine_kwargs.enforce_eager:
-            dtype_bytes = _resolve_compute_dtype_bytes(text_cfg, model_cfg)
-            mla_workspace_bytes = _mla_chunked_prefill_workspace_bytes(text_cfg, config, dtype_bytes, mla, tp_size)
-            gpu_util = max(gpu_util - _MLA_WORKSPACE_SAFETY_MARGIN * mla_workspace_bytes / gpu_basis, 0.01)
-
-        budget = gpu_basis * gpu_util - weight_bytes_per_gpu - _OVERHEAD_WEIGHT_FRACTION * weight_bytes_per_gpu
-
-        if budget <= 0:
-            logger.warning(
-                "preflight: '%s' has no KV-cache budget on the assigned GPU "
-                "(%s=%.2f GiB, util=%.2f, est. weights/GPU=%.2f GiB). "
-                "Model likely won't fit; deploy will be attempted anyway.",
-                config.name,
-                "share basis (total)" if fractional else "free",
-                gpu_basis / 1024**3,
-                gpu_util,
-                weight_bytes_per_gpu / 1024**3,
-            )
-            return {}
-
-        rec: dict[str, Any]
-        if mamba is not None:
-            # `budget` is the KV+state pool; the shared ladder splits it between
-            # the mamba state (max_num_seqs) and attention KV (max_model_len).
-            target_len = config.vllm_engine_kwargs.max_model_len or max_position_embeddings
-            rec = _apply_hybrid_fit(
-                config.name,
-                budget,
-                mamba.per_seq_state_bytes,
-                kv_per_token_per_gpu,
-                target_len,
-                config.vllm_engine_kwargs.max_num_seqs,
-                mamba.default_max_num_seqs,
-            )
-            if not rec:
-                return {}
-        else:
-            ctx_cap = max_position_embeddings or _UNKNOWN_CONTEXT_LENGTH_CAP
-            if sliding is not None:
-                max_tokens = _fit_len_with_sliding(budget, kv_per_token_per_gpu, sliding, ctx_cap)
-            else:
-                max_tokens = int(budget // kv_per_token_per_gpu)
-            suggested = (max_tokens // _DEFAULT_BLOCK_SIZE) * _DEFAULT_BLOCK_SIZE
-            if max_position_embeddings:
-                suggested = min(suggested, max_position_embeddings)
-            if suggested < _DEFAULT_BLOCK_SIZE:
-                logger.warning(
-                    "preflight: '%s' budget yields max_model_len=%d (< block_size); skipping recommendation",
-                    config.name,
-                    suggested,
-                )
-                return {}
-            rec = {"max_model_len": suggested}
-
-        if mla_workspace_bytes:
-            rec["gpu_memory_utilization"] = round(gpu_util, 4)
-
-        logger.info(
-            "preflight vllm '%s': gpu_%s=%.2f GiB util=%.2f tp=%d pp=%d weights/GPU≈%.2f GiB kv/token=%d B%s → %s",
-            config.name,
-            "share" if fractional else "free",
-            gpu_basis / 1024**3,
-            gpu_util,
-            tp_size,
-            pp_size,
-            weight_bytes_per_gpu / 1024**3,
-            int(kv_per_token_per_gpu),
-            f" hybrid(state {mamba.per_seq_state_bytes / 1024**2:.1f} MiB/seq)"
-            if mamba
-            else (
-                f" swa({sliding.n_sliding_layers}/{sliding.n_total_layers} layers, window {sliding.window})"
-                if sliding
-                else ""
-            ),
-            rec,
-        )
+        # vLLM has no auto-fit for max_num_seqs, and its default overruns the
+        # per-slot mamba block pool.
+        if _resolve_mamba_state(config, model_path) is not None:
+            rec["max_num_seqs"] = _MIN_MAX_NUM_SEQS
+            logger.info("preflight vllm '%s': hybrid/SSM → max_num_seqs=%d", config.name, _MIN_MAX_NUM_SEQS)
 
         # Multimodal: bump `max_num_batched_tokens` to fit one image/audio item
         # per batch.
-        if is_mm:
+        if _is_multimodal(model_cfg):
+            mm_tokens_per_item = _estimate_mm_tokens_per_item(model_cfg)
             mnbt = _recommended_mm_batched_tokens(mm_tokens_per_item)
             rec["max_num_batched_tokens"] = mnbt
             logger.info(
@@ -239,7 +121,43 @@ class VllmPreflight:
                 mm_tokens_per_item if mm_tokens_per_item is not None else "unknown",
             )
 
+        gpu_util = self._mla_gpu_memory_utilization(config, hw, text_cfg, model_cfg)
+        if gpu_util is not None:
+            rec["gpu_memory_utilization"] = gpu_util
+
         return rec
+
+    def _mla_gpu_memory_utilization(
+        self, config: ModelshipModelConfig, hw: HardwareProfile, text_cfg: dict, model_cfg: dict
+    ) -> float | None:
+        """MLA's chunked-prefill workspace sits outside the KV pool, and gpu_util
+        is the only lever that leaves room for it. None for every other model."""
+        mla = _resolve_mla(text_cfg)
+        if mla is None or config.vllm_engine_kwargs.enforce_eager or not hw.gpus:
+            return None
+
+        # TP requires homogeneous GPUs, so take the smallest. Fractional deploys
+        # size from total capacity, whole-GPU deploys from free.
+        fractional = 0 < config.num_gpus < 1
+        gpu_basis = (
+            min(g.sizing_total_bytes for g in hw.gpus) if fractional else min(g.available_bytes for g in hw.gpus)
+        )
+        tp_size = max(config.vllm_engine_kwargs.tensor_parallel_size, 1)
+        dtype_bytes = _resolve_compute_dtype_bytes(text_cfg, model_cfg)
+        workspace_bytes = _mla_chunked_prefill_workspace_bytes(text_cfg, config, dtype_bytes, mla, tp_size)
+
+        # A fractional num_gpus is the fraction; anything else takes the default.
+        gpu_util = resolve_gpu_memory_utilization(config)
+        gpu_util = max(gpu_util - _MLA_WORKSPACE_SAFETY_MARGIN * workspace_bytes / gpu_basis, 0.01)
+        logger.info(
+            "preflight vllm '%s': MLA workspace %.2f GiB on a %.2f GiB %s basis → gpu_memory_utilization=%.4f",
+            config.name,
+            workspace_bytes / 1024**3,
+            gpu_basis / 1024**3,
+            "share (total)" if fractional else "free",
+            gpu_util,
+        )
+        return round(gpu_util, 4)
 
     def _recommend_cpu(self, config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
         model_path = config._resolved_path
@@ -518,18 +436,6 @@ def _mla_chunked_prefill_workspace_bytes(
     # replicated latent cache this buffer does shrink with TP.
     local_heads = max(mla.num_heads // max(tp_size, 1), 1)
     return int(rows * local_heads * (mla.qk_nope_head_dim + mla.v_head_dim) * dtype_bytes)
-
-
-def _divide_kv_by_tp(kv_per_token: int, model_cfg: dict, tp_size: int) -> float:
-    if tp_size <= 1 or _resolve_mla(model_cfg) is not None:
-        # MLA's compressed latent is replicated per TP rank, not head-sharded.
-        return float(kv_per_token)
-    num_kv_heads = model_cfg.get("num_key_value_heads") or model_cfg.get("num_attention_heads") or 0
-    if num_kv_heads and num_kv_heads % tp_size == 0:
-        return kv_per_token / tp_size
-    # GQA edge case: when num_kv_heads doesn't divide tp_size cleanly, vLLM
-    # replicates KV heads across ranks, so per-GPU bytes don't shrink.
-    return float(kv_per_token)
 
 
 # Re-exported for existing call sites/tests that import these from here.

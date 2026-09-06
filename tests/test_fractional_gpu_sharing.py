@@ -1,13 +1,15 @@
 """Two loaders sharing one physical GPU via fractional num_gpus:
 `frac-share-vllm` (num_gpus=0.6) and `frac-share-llama-server` (num_gpus=0.3),
 deployed together so Ray's fractional scheduling packs both onto the same
-physical GPU.
+physical GPU. The cluster fixture pins CUDA_VISIBLE_DEVICES=0 so that packing
+is forced rather than hoped for.
 
 `MODEL_CONFIGS`, `_Deployer`, and the `mship_cluster`/`model_deployer`/`client`
-fixtures live in conftest.py, shared with test_integration.py.
+fixtures live in conftest.py.
 """
 
 import concurrent.futures
+import subprocess
 
 import pytest
 
@@ -18,6 +20,18 @@ class TestFractionalGpuSharing:
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
         model_deployer.deploy("frac-share-vllm", "frac-share-llama-server")
+
+    def test_both_tenants_are_on_one_physical_gpu(self):
+        """The premise the rest of this class rests on. Without it these tests
+        pass just as well with the tenants on separate cards."""
+        result = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=gpu_uuid", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        uuids = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+        assert len(uuids) == 1, f"expected both tenants on one GPU, compute apps span {len(uuids)}: {uuids}"
 
     def test_vllm_tenant_serves_requests(self, client):
         completion = client.chat.completions.create(
