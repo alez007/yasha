@@ -50,7 +50,7 @@ flashinfer JIT-compiles its kernels when vLLM loads a model, so `mship bootstrap
 
 ## `CUDA out of memory` with vLLM
 
-vLLM reserves VRAM based on `num_gpus` (fraction of one GPU) and fits the context to what's left. If a single model uses more than its budget, lower `num_gpus` for other deployments, or set `vllm_engine_kwargs.max_model_len` to cap KV cache size — an explicit value replaces the auto-fit.
+vLLM reserves VRAM based on `num_gpus` — a whole number of GPUs, or a fraction of one when sharing a card — and fits the context to what's left. If a single model uses more than its budget, lower `num_gpus` for other deployments, or set `vllm_engine_kwargs.max_model_len` to cap KV cache size; an explicit value replaces the auto-fit.
 
 ## Deploy stuck pending, never schedules
 
