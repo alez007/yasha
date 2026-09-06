@@ -44,7 +44,7 @@ _DTYPE_BYTES = {
 _MULTIMODAL_BATCHED_TOKENS_FLOOR = 8192
 
 # CPU backend: vLLM's worker reserves `gpu_memory_utilization * total_memory`
-# (raw psutil total) for KV cache and hard-raises if it exceeds available RAM.
+# and hard-raises if it exceeds available RAM.
 _CPU_RAM_UTILIZATION = 0.8
 _CPU_OVERHEAD_FIXED_BYTES = 2 * 1024**3
 # Clamp the auto-picked KV budget to ~4 full-length sequences, so a large RAM
@@ -336,8 +336,10 @@ class VllmPreflight:
             return {}
 
         clamped_kv_bytes = min(kv_budget, _CPU_KV_SEQUENCES * _seq_kv_bytes(kv_per_token, sliding, suggested))
-        recommended_gmu = round(clamped_kv_bytes / denom_ram, 3)
-        recommended_gmu = min(max(recommended_gmu, 0.01), 0.9)
+        # kv_budget took the weights out; add them back so the fraction still
+        # leaves clamped_kv_bytes once vLLM subtracts RSS.
+        reservation = weight_bytes + weight_overhead + _CPU_OVERHEAD_FIXED_BYTES + clamped_kv_bytes
+        recommended_gmu = _cpu_gmu(reservation, denom_ram)
 
         logger.info(
             "preflight vllm cpu '%s': sizing_ram=%.2f GiB weights≈%.2f GiB kv/token=%d B "
@@ -384,10 +386,8 @@ class VllmPreflight:
         # Clamp attention KV to ~a few full-length sequences (kv_budget already
         # had weights set aside, so its remainder after state is the KV room).
         attn_kv = min(kv_budget - state_bytes, _CPU_KV_SEQUENCES * kv_per_token * chosen_len)
-        # Add weights back: vLLM subtracts RSS from gmu*RAM, so the fraction must
-        # cover them for the mandatory state to fit.
         reservation = weight_bytes + weight_overhead + _CPU_OVERHEAD_FIXED_BYTES + state_bytes + max(attn_kv, 0)
-        recommended_gmu = min(max(round(reservation / denom_ram, 3), 0.01), 0.9)
+        recommended_gmu = _cpu_gmu(reservation, denom_ram)
         rec["gpu_memory_utilization"] = recommended_gmu
 
         logger.info(
@@ -401,6 +401,13 @@ class VllmPreflight:
             chosen_len,
         )
         return rec
+
+
+def _cpu_gmu(reservation: float, denom_ram: int) -> float:
+    """Fraction of RAM to reserve. vLLM's CPU worker sizes the KV pool as
+    `gmu * total - process RSS`, so the fraction has to span the weights too,
+    not just the KV bytes."""
+    return min(max(round(reservation / denom_ram, 3), 0.01), 0.9)
 
 
 def _raw_host_ram_bytes(hw: HardwareProfile) -> int:

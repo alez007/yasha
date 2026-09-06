@@ -770,8 +770,9 @@ class TestVllmPreflightCpu:
         with patch("modelship.preflight.vllm._raw_host_ram_bytes", return_value=256 * 1024**3):
             rec = VllmPreflight().recommend(cfg, hw)
         assert rec["max_model_len"] == 2048
-        # kv_per_token=32768B; 4 seqs * 2048 tokens = 256 MiB, / 256 GiB denom ≈ 0.001 → clamped to the 0.01 floor.
-        assert rec["gpu_memory_utilization"] == 0.01
+        # kv_per_token=32768B; 4 seqs * 2048 tokens = 256 MiB of KV, on top of
+        # 1 GiB weights + 14% + the 2 GiB fixed overhead, / 256 GiB denom.
+        assert rec["gpu_memory_utilization"] == 0.013
 
     def test_mixed_node_ignores_discoverable_gpus(self, tmp_path):
         # Same config, but the node-level pynvml view reports GPUs Ray didn't
@@ -822,6 +823,8 @@ class TestVllmPreflightCpu:
         saturated per-sequence size, not `kv_per_token * suggested`."""
         from modelship.preflight.vllm import (
             _CPU_KV_SEQUENCES,
+            _CPU_OVERHEAD_FIXED_BYTES,
+            _OVERHEAD_WEIGHT_FRACTION,
             SlidingWindowInfo,
             _seq_kv_bytes,
         )
@@ -850,9 +853,55 @@ class TestVllmPreflightCpu:
         linear = _CPU_KV_SEQUENCES * kv_per_token * 2048
         assert saturated < linear  # sanity: the two diverge in this scenario
 
-        assert rec["gpu_memory_utilization"] == round(saturated / ram_bytes, 3)
-        wrong_gmu = round(linear / ram_bytes, 3)
+        reserved = weight_bytes * (1 + _OVERHEAD_WEIGHT_FRACTION) + _CPU_OVERHEAD_FIXED_BYTES
+        assert rec["gpu_memory_utilization"] == round((reserved + saturated) / ram_bytes, 3)
+        wrong_gmu = round((reserved + linear) / ram_bytes, 3)
         assert rec["gpu_memory_utilization"] < wrong_gmu
+
+    def test_non_hybrid_gmu_reserves_room_for_process_rss(self, tmp_path):
+        """The KV pool vLLM ends up with is `gmu * total - process RSS`, so a gmu
+        covering only the KV bytes leaves it short of the recommended
+        max_model_len — silently, since preflight still returns a normal
+        recommendation. Regression for the double-deducted weights."""
+        # RSS / on-disk weight bytes, measured on vLLM 0.26.0+cpu with
+        # Qwen/Qwen3-0.6B (1.4 GiB of weights, 2.12 GiB RSS after load).
+        measured_rss_over_weights = 1.51
+
+        cfg_json = {
+            "model_type": "qwen3",
+            "architectures": ["Qwen3ForCausalLM"],
+            "num_hidden_layers": 28,
+            "num_attention_heads": 16,
+            "num_key_value_heads": 8,
+            "hidden_size": 1024,
+            "head_dim": 128,
+            "torch_dtype": "bfloat16",
+            "max_position_embeddings": 40960,
+        }
+        weight_bytes = int(1.4 * 1024**3)
+        snapshot = _write_model_snapshot(tmp_path, config_json=cfg_json, weight_bytes=weight_bytes)
+        cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
+
+        denom_ram = int(24.45 * 1024**3)
+        ram_bytes = int(10.97 * 1024**3)
+        hw = HardwareProfile(ram_bytes=ram_bytes, available_ram_bytes=ram_bytes)
+        with patch("modelship.preflight.vllm._raw_host_ram_bytes", return_value=denom_ram):
+            rec = VllmPreflight().recommend(cfg, hw)
+
+        # A real recommendation, not a "no KV-cache budget" bailout.
+        assert rec
+        gmu = rec["gpu_memory_utilization"]
+        suggested_len = rec["max_model_len"]
+
+        kv_per_token = 2 * 8 * 128 * 2 * 28  # matches cfg_json geometry
+        kv_bytes_needed = kv_per_token * suggested_len
+
+        requested_pool = gmu * denom_ram
+        estimated_rss = measured_rss_over_weights * weight_bytes
+        actual_kv_pool = requested_pool - estimated_rss
+
+        # vLLM's own _check_enough_kv_cache_memory raises below this.
+        assert actual_kv_pool >= kv_bytes_needed
 
 
 class TestDefaultGpuMemoryUtilization:
