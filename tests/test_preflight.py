@@ -748,8 +748,8 @@ class TestVllmPreflightFractionalGpu:
 
 
 class TestVllmPreflightCpu:
-    """`config.num_gpus == 0` routes to `_recommend_cpu`, sized against system RAM;
-    `_raw_host_ram_bytes` is patched so the math doesn't depend on the test machine's RAM."""
+    """`config.num_gpus == 0` routes to `_recommend_cpu`, sized against the RAM on
+    the `HardwareProfile` rather than the test machine's."""
 
     _SMALL_MODEL_CFG: ClassVar[dict] = {
         "num_hidden_layers": 8,
@@ -767,8 +767,7 @@ class TestVllmPreflightCpu:
         snapshot = _write_model_snapshot(tmp_path, config_json=self._SMALL_MODEL_CFG, weight_bytes=1 * 1024**3)
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
         hw = HardwareProfile(ram_bytes=256 * 1024**3, available_ram_bytes=256 * 1024**3)
-        with patch("modelship.preflight.vllm._raw_host_ram_bytes", return_value=256 * 1024**3):
-            rec = VllmPreflight().recommend(cfg, hw)
+        rec = VllmPreflight().recommend(cfg, hw)
         assert rec["max_model_len"] == 2048
         # kv_per_token=32768B; 4 seqs * 2048 tokens = 256 MiB of KV, on top of
         # 1 GiB weights + 14% + the 2 GiB fixed overhead, / 256 GiB denom.
@@ -783,9 +782,8 @@ class TestVllmPreflightCpu:
         hw_mixed = HardwareProfile(
             gpus=[GPUInfo(0, 80 * 1024**3, "test")], ram_bytes=256 * 1024**3, available_ram_bytes=256 * 1024**3
         )
-        with patch("modelship.preflight.vllm._raw_host_ram_bytes", return_value=256 * 1024**3):
-            rec_cpu_only = VllmPreflight().recommend(cfg, hw_cpu_only)
-            rec_mixed = VllmPreflight().recommend(cfg, hw_mixed)
+        rec_cpu_only = VllmPreflight().recommend(cfg, hw_cpu_only)
+        rec_mixed = VllmPreflight().recommend(cfg, hw_mixed)
         assert rec_mixed == rec_cpu_only
 
     def test_unknown_context_length_falls_back_to_cap(self, tmp_path):
@@ -793,25 +791,21 @@ class TestVllmPreflightCpu:
         snapshot = _write_model_snapshot(tmp_path, config_json=cfg_json, weight_bytes=1 * 1024**3)
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
         hw = HardwareProfile(ram_bytes=1024 * 1024**3, available_ram_bytes=1024 * 1024**3)
-        with patch("modelship.preflight.vllm._raw_host_ram_bytes", return_value=1024 * 1024**3):
-            rec = VllmPreflight().recommend(cfg, hw)
+        rec = VllmPreflight().recommend(cfg, hw)
         assert rec["max_model_len"] == 32768
 
     def test_weights_exceed_ram_returns_empty(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=self._SMALL_MODEL_CFG, weight_bytes=64 * 1024**3)
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
         hw = HardwareProfile(ram_bytes=32 * 1024**3, available_ram_bytes=32 * 1024**3)
-        with patch("modelship.preflight.vllm._raw_host_ram_bytes", return_value=32 * 1024**3):
-            assert VllmPreflight().recommend(cfg, hw) == {}
+        assert VllmPreflight().recommend(cfg, hw) == {}
 
     def test_undiscoverable_host_ram_returns_empty(self, tmp_path):
-        # _raw_host_ram_bytes reads raw psutil total independently of hw.ram_bytes
-        # (matches vLLM's own cgroup-blind denominator); a 0 return must not raise on divide.
+        # ram_bytes is the gmu denominator; an unreadable 0 must not divide.
         snapshot = _write_model_snapshot(tmp_path, config_json=self._SMALL_MODEL_CFG, weight_bytes=1 * 1024**3)
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
-        hw = HardwareProfile(ram_bytes=256 * 1024**3, available_ram_bytes=256 * 1024**3)
-        with patch("modelship.preflight.vllm._raw_host_ram_bytes", return_value=0):
-            assert VllmPreflight().recommend(cfg, hw) == {}
+        hw = HardwareProfile(ram_bytes=0, available_ram_bytes=256 * 1024**3)
+        assert VllmPreflight().recommend(cfg, hw) == {}
 
     def test_explicit_gpu_memory_utilization_rejected_on_cpu_deploy(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=self._SMALL_MODEL_CFG, weight_bytes=1 * 1024**3)
@@ -840,8 +834,7 @@ class TestVllmPreflightCpu:
 
         ram_bytes = 6 * 1024**3
         hw = HardwareProfile(ram_bytes=ram_bytes, available_ram_bytes=ram_bytes)
-        with patch("modelship.preflight.vllm._raw_host_ram_bytes", return_value=ram_bytes):
-            rec = VllmPreflight().recommend(cfg, hw)
+        rec = VllmPreflight().recommend(cfg, hw)
 
         # Cap reached confirms _fit_len_with_sliding ran rather than the
         # uniform-attention path.
@@ -883,10 +876,8 @@ class TestVllmPreflightCpu:
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
 
         denom_ram = int(24.45 * 1024**3)
-        ram_bytes = int(10.97 * 1024**3)
-        hw = HardwareProfile(ram_bytes=ram_bytes, available_ram_bytes=ram_bytes)
-        with patch("modelship.preflight.vllm._raw_host_ram_bytes", return_value=denom_ram):
-            rec = VllmPreflight().recommend(cfg, hw)
+        hw = HardwareProfile(ram_bytes=denom_ram, available_ram_bytes=int(10.97 * 1024**3))
+        rec = VllmPreflight().recommend(cfg, hw)
 
         # A real recommendation, not a "no KV-cache budget" bailout.
         assert rec
@@ -902,6 +893,20 @@ class TestVllmPreflightCpu:
 
         # vLLM's own _check_enough_kv_cache_memory raises below this.
         assert actual_kv_pool >= kv_bytes_needed
+
+    def test_gmu_denominator_is_the_container_limit_not_the_host(self, tmp_path):
+        """vLLM's CPU worker clamps its own total to the cgroup limit, so the
+        fraction has to be taken against that cap — against host RAM it would
+        under-reserve by the ratio between the two."""
+        snapshot = _write_model_snapshot(tmp_path, config_json=self._SMALL_MODEL_CFG, weight_bytes=1 * 1024**3)
+        cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
+        free = 8 * 1024**3
+        uncapped = VllmPreflight().recommend(cfg, HardwareProfile(ram_bytes=64 * 1024**3, available_ram_bytes=free))
+        capped = VllmPreflight().recommend(cfg, HardwareProfile(ram_bytes=16 * 1024**3, available_ram_bytes=free))
+
+        # Same reservation either way — only the denominator moved.
+        assert capped["max_model_len"] == uncapped["max_model_len"]
+        assert capped["gpu_memory_utilization"] == pytest.approx(uncapped["gpu_memory_utilization"] * 4, rel=0.01)
 
 
 class TestDefaultGpuMemoryUtilization:
@@ -1379,10 +1384,7 @@ class TestHybridIntegration:
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
         hw = HardwareProfile(ram_bytes=16 * 1024**3, available_ram_bytes=16 * 1024**3)
-        with (
-            patch("modelship.preflight.vllm._raw_host_ram_bytes", return_value=16 * 1024**3),
-            patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()),
-        ):
+        with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
             rec = VllmPreflight().recommend(cfg, hw)
         assert rec["max_num_seqs"] == 8  # tight RAM → floor
         assert 0 < rec["max_model_len"] < _HYBRID_CFG["max_position_embeddings"]

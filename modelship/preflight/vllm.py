@@ -272,9 +272,9 @@ class VllmPreflight:
         weight_bytes = _estimate_weight_footprint(model_path)
         weight_overhead = _OVERHEAD_WEIGHT_FRACTION * weight_bytes
         ctx_cap = max_position_embeddings or _UNKNOWN_CONTEXT_LENGTH_CAP
-        # vLLM's CPU worker multiplies gpu_memory_utilization by the raw,
-        # cgroup-blind host total — match that denominator here.
-        denom_ram = _raw_host_ram_bytes(hw)
+        # vLLM's CPU worker multiplies gpu_memory_utilization by a total that
+        # is clamped to the cgroup limit; hw.ram_bytes is the same quantity.
+        denom_ram = hw.ram_bytes
         if denom_ram <= 0:
             logger.info("preflight '%s': skipping — system RAM not discoverable", config.name)
             return {}
@@ -408,19 +408,6 @@ def _cpu_gmu(reservation: float, denom_ram: int) -> float:
     `gmu * total - process RSS`, so the fraction has to span the weights too,
     not just the KV bytes."""
     return min(max(round(reservation / denom_ram, 3), 0.01), 0.9)
-
-
-def _raw_host_ram_bytes(hw: HardwareProfile) -> int:
-    """vLLM's CPU worker sizes gpu_memory_utilization against raw
-    `psutil.virtual_memory().total`; match that here. Falls back to
-    `hw.ram_bytes` if psutil is unavailable."""
-    try:
-        import psutil
-
-        return int(psutil.virtual_memory().total)
-    except Exception:
-        logger.debug("preflight: psutil total-RAM probe failed; using cgroup-aware fallback", exc_info=True)
-        return hw.ram_bytes
 
 
 def _load_model_config_json(model_path: str) -> dict | None:
