@@ -233,7 +233,7 @@ Two vLLM settings are **not** keys here, because modelship derives them and sett
 |---|---|---|---|
 | `tensor_parallel_size` | int | `1` | GPUs for tensor parallelism |
 | `pipeline_parallel_size` | int | `1` | GPUs for pipeline parallelism |
-| `max_model_len` | int | auto (preflight) | Max sequence length. Preflight sizes this to the actor's hardware — VRAM, or on `num_gpus: 0` host RAM — falling back to vLLM's own default when it declines (missing `config.json`, unreadable KV-cache geometry, etc.) |
+| `max_model_len` | int | auto | Max sequence length. On GPU, preflight passes `-1` and vLLM fits the largest context its own post-profiling memory allows (the min across workers, so TP/PP are covered). On `num_gpus: 0`, preflight sizes it from host RAM instead, falling back to vLLM's own default when it declines (missing `config.json`, unreadable KV-cache geometry, etc.). Setting it explicitly overrides both |
 | `dtype` | string | `auto` | `auto`, `float16`, `bfloat16` |
 | `tokenizer` | string | model default | Custom tokenizer path |
 | `trust_remote_code` | bool | `false` | Allow remote code execution |
