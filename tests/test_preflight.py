@@ -452,19 +452,6 @@ class TestAppleMetalDiscovery:
         mock_metal.assert_not_called()
 
 
-class TestUnifiedMemory:
-    def test_true_when_any_gpu_is_mps(self):
-        hw = HardwareProfile(gpus=[GPUInfo(index=0, available_bytes=1, name="Apple GPU", kind="mps")])
-        assert hw.unified_memory is True
-
-    def test_false_for_cuda_gpus(self):
-        hw = HardwareProfile(gpus=[GPUInfo(index=0, available_bytes=1, name="cuda-gpu")])
-        assert hw.unified_memory is False
-
-    def test_false_when_no_gpus(self):
-        assert HardwareProfile(gpus=[]).unified_memory is False
-
-
 class TestMergeWithUserOverrides:
     def test_recommendation_fills_missing(self):
         result = merge_with_user_overrides({"max_model_len": 4096}, {}, model_name="m")

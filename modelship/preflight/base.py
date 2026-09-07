@@ -37,18 +37,11 @@ class HardwareProfile:
     gpus: list[GPUInfo] = field(default_factory=list)
     ram_bytes: int = 0
     available_ram_bytes: int = 0
-    cpu_count: int = 0
 
     @property
     def sizing_ram_bytes(self) -> int:
         """Free RAM when the probe read it, else total."""
         return self.available_ram_bytes or self.ram_bytes
-
-    @property
-    def unified_memory(self) -> bool:
-        """True when GPU and CPU share one memory pool (Apple Silicon), so weights
-        must be budgeted against it once, not twice."""
-        return any(g.kind == "mps" for g in self.gpus)
 
 
 class BasePreflight(Protocol):
@@ -72,13 +65,10 @@ def get_preflight(loader: ModelLoader) -> BasePreflight | None:
 def discover_hardware(*, read_free_memory: bool = False) -> HardwareProfile:
     """Snapshot the hardware available to this deployment. `read_free_memory` is
     passed through to `detect_gpus`."""
-    import os
-
     return HardwareProfile(
         gpus=detect_gpus(read_free_memory=read_free_memory),
         ram_bytes=detect_ram_bytes(),
         available_ram_bytes=detect_available_ram_bytes(),
-        cpu_count=os.cpu_count() or 0,
     )
 
 
