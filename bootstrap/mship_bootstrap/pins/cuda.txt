@@ -1822,12 +1822,13 @@ torch-c-dlpack-ext==0.1.5 \
     # via
     #   quack-kernels
     #   tilelang
-torchaudio==2.11.0 \
-    --hash=sha256:478110f981e5d40a8d82221732c57a56c85a1d5895fb8fe646e86ee15eded3bd \
-    --hash=sha256:6503c0bdb29daf2e6281bb70ea2dfe2c3553b782b619eb5d73bdadd8a3f7cecf \
-    --hash=sha256:a1cf1acc883bee9cb906a933572fed6a8a933f86ef34e9ea7d803f72317e8c1b \
-    --hash=sha256:bc653defca1c16154398517a1adc98d0fb7f1dd08e58ced217558d213c2c6e29
-    # via vllm
+torchaudio==2.11.0+cu130 \
+    --hash=sha256:3fba988f4301fe13547fe5e99c76d9ae36a27e19ded82eeffed9d2456e12edef \
+    --hash=sha256:7171f810887e7cd1a4763974d5a1f2e1466692404315bb70705e0f49fb3a28e0 \
+    --hash=sha256:f74949f9ace1e4a6cf9468bdb3211b9cfa0af6ea348125471ac71c8621d6c77d
+    # via
+    #   mship-engine
+    #   vllm
 torchcodec==0.15.0 \
     --hash=sha256:3a4b24012f7a7fe962dfee8f06d9c91e9e3fd1f4b6302fdb5b8884a02aca3f37 \
     --hash=sha256:589e127778870c691d8977c08311bf57c4fecb9eb56fa52cf29d9671fe78eb72 \

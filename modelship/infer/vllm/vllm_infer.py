@@ -490,8 +490,18 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             return
 
         # get_chat_template isn't in vLLM's TokenizerLike protocol (it's a plain
-        # HF PreTrainedTokenizer method the real tokenizer always has).
-        template = cast(Any, self.engine.get_tokenizer()).get_chat_template()
+        # HF PreTrainedTokenizer method). It raises on a base model, which carries
+        # no template — leave the pipeline unset instead of killing the replica.
+        try:
+            template = cast(Any, self.engine.get_tokenizer()).get_chat_template()
+        except ValueError as exc:
+            logger.warning(
+                "'%s' has no usable chat template (%s) — the model is deployed but has no reachable "
+                "endpoint, since modelship serves no /v1/completions route",
+                self.model_config.name,
+                exc,
+            )
+            return
 
         # A reasoning parser reads chat_template_kwargs["enable_thinking"] (and
         # similar toggles) and defaults them True when absent, but a template may

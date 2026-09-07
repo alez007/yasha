@@ -52,9 +52,9 @@ class TestPins:
 
     def test_only_accelerator_packages_differ_across_variants(self):
         """uv resolves conflicting extras independently, so variants may diverge."""
-        # torch/torchvision/vllm differ by local version (+cpu vs +cu130).
+        # torch/torchvision/torchaudio/vllm differ by local version (+cpu vs +cu130).
         # setuptools is build-time only.
-        expected = {"torch", "torchvision", "vllm", "setuptools"}
+        expected = {"torch", "torchvision", "torchaudio", "vllm", "setuptools"}
         differing = {pkg for pkg, versions in _pins_by_package().items() if len(set(versions.values())) > 1}
         assert differing == expected
 

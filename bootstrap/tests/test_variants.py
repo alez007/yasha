@@ -157,7 +157,7 @@ class TestVariantDefinitions:
 
     @pytest.mark.parametrize("name", ["cpu", "cuda"])
     def test_pypi_outranks_the_accelerator_indexes(self, name):
-        """Both also serve triton/torchaudio/torchcodec as artifacts the lock never saw."""
+        """Both also serve triton/torchcodec as artifacts the lock never saw."""
         indexes = [a for a in VARIANTS[name].index_args if a.startswith("http")]
         assert indexes[0] == "https://pypi.org/simple"
         assert len(indexes) > 1

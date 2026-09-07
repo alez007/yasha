@@ -53,6 +53,7 @@ metal = [
 cuda = [
     "torch>=2.10.0",
     "torchvision>=0.25.0",
+    "torchaudio>=2.10.0",
     "transformers>=5.5.3",
     "flashinfer-python>=0.6.1",
     "vllm==0.26.0",
@@ -86,6 +87,7 @@ cpu = [
 vllm-cpu = [
     "torch==2.11.0+cpu ; sys_platform == 'linux'",
     "torchvision==0.26.0+cpu ; sys_platform == 'linux'",
+    "torchaudio==2.11.0+cpu ; sys_platform == 'linux'",
     "transformers>=5.5.3",
     "vllm==0.26.0+cpu ; sys_platform == 'linux'",
     "vllm[audio]==0.26.0+cpu ; sys_platform == 'linux'",
@@ -140,6 +142,13 @@ torch = [
   { index = "pytorch-cpu", extra = "vllm-cpu" },
 ]
 torchvision = [
+  { index = "pytorch-cu130", extra = "cuda" },
+  { index = "pytorch-cpu", extra = "vllm-cpu" },
+]
+# vllm pulls torchaudio in transitively, but uv applies sources only to direct
+# dependencies — hence the entries in the extras above. Without this it comes
+# from PyPI, which ships one CUDA-linked build that cannot load on a cpu install.
+torchaudio = [
   { index = "pytorch-cu130", extra = "cuda" },
   { index = "pytorch-cpu", extra = "vllm-cpu" },
 ]
