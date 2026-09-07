@@ -98,7 +98,10 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         user_config = model_config.llama_server_config or LlamaServerConfig()
         user_overrides = user_config.model_dump(exclude_unset=True)
 
-        recommendation = run_preflight(model_config, discover_hardware())
+        # The only loader whose preflight reads free VRAM: `_fit_margin_mib` converts a
+        # fractional num_gpus' share of total into a margin against `llama fit-params`'
+        # free-VRAM basis.
+        recommendation = run_preflight(model_config, discover_hardware(read_free_memory=True))
         if recommendation:
             logger.info("preflight recommendation for '%s': %s", model_config.name, recommendation)
         else:

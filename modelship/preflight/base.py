@@ -4,7 +4,7 @@ import contextlib
 import os
 import re
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
@@ -73,7 +73,7 @@ def get_preflight(loader: ModelLoader) -> BasePreflight | None:
     return _REGISTRY.get(loader)
 
 
-def discover_hardware() -> HardwareProfile:
+def discover_hardware(*, read_free_memory: bool = False) -> HardwareProfile:
     """Snapshot the hardware available to this deployment.
 
     Tries two layers, in order:
@@ -83,56 +83,44 @@ def discover_hardware() -> HardwareProfile:
        GPUs because vLLM ray-backend spawns worker sub-actors that hold them
        (see `deploy/actor_options.py`). Falls back to physical-node GPUs
        because TP workers are co-located on the same node anyway.
+
+    `read_free_memory` is passed through to `detect_gpus`.
     """
     import os
 
     return HardwareProfile(
-        gpus=detect_gpus(),
+        gpus=detect_gpus(read_free_memory=read_free_memory),
         ram_bytes=detect_ram_bytes(),
         available_ram_bytes=detect_available_ram_bytes(),
         cpu_count=os.cpu_count() or 0,
     )
 
 
-def detect_gpus() -> list[GPUInfo]:
-    """GPUs visible to this process, with free VRAM.
+def detect_gpus(*, read_free_memory: bool = False) -> list[GPUInfo]:
+    """GPUs visible to this process.
 
     `torch.cuda` first (honors `CUDA_VISIBLE_DEVICES`, i.e. the actor's assigned
     GPUs); `pynvml` node-level fallback when the actor owns no GPU directly
     (vLLM ray-backend spawns worker sub-actors that hold them). On the driver
-    there's no mask, so this sees all physical GPUs — which is what the profile
-    generator wants for VRAM tiering. Split out of `discover_hardware` so deploy
-    code can read just the GPUs.
+    there's no mask, so this sees all physical GPUs.
 
     Apple Silicon (Metal/MPS) is checked last, and only when neither CUDA probe
     found anything — mirrors the CUDA-first/pynvml-fallback order, and means no
-    CUDA host's behavior changes."""
-    gpus = _torch_cuda_discover()
+    CUDA host's behavior changes.
+
+    `read_free_memory=False` (the default) leaves `available_bytes` carrying the
+    device capacity. True fills in real free VRAM: from NVML on CUDA (no context),
+    from `hipMemGetInfo` on ROCm (one HIP context per device). The node fallbacks
+    below report free either way."""
+    gpus = _torch_cuda_discover(read_free_memory=read_free_memory)
+    if read_free_memory:
+        gpus = _join_nvml_free(gpus)
     if not gpus:
         gpus = _pynvml_node_discover()
         if gpus:
             logger.debug(
                 "preflight: actor has no direct GPU ownership; using node-level pynvml view (%d GPU(s))", len(gpus)
             )
-    if not gpus:
-        gpus = _rocm_smi_node_discover()
-    if not gpus:
-        gpus = _apple_metal_discover()
-    return gpus
-
-
-def detect_node_gpus() -> list[GPUInfo]:
-    """GPUs visible to this process, without their free VRAM — `available_bytes`
-    carries the device capacity instead.
-
-    Reading free VRAM through torch needs a CUDA primary context, which costs
-    ~135 MiB per device and lives until the process exits. The driver is
-    unmasked, so it would pay that on every card for the node's lifetime. Use
-    this wherever only the identity or the count matters; `detect_gpus` where
-    the free number does."""
-    gpus = _torch_cuda_discover(read_free_memory=False)
-    if not gpus:
-        gpus = _pynvml_node_discover()
     if not gpus:
         gpus = _rocm_smi_node_discover()
     if not gpus:
@@ -301,7 +289,7 @@ def _cgroup_reclaimable_cache_bytes(stat_paths: tuple[str, ...]) -> int | None:
     return None
 
 
-def _torch_cuda_discover(*, read_free_memory: bool = True) -> list[GPUInfo]:
+def _torch_cuda_discover(*, read_free_memory: bool = False) -> list[GPUInfo]:
     try:
         import torch
     except Exception:
@@ -316,15 +304,13 @@ def _torch_cuda_discover(*, read_free_memory: bool = True) -> list[GPUInfo]:
         for i in range(torch.cuda.device_count()):
             props = torch.cuda.get_device_properties(i)
             available = int(props.total_memory)
-            if read_free_memory:
+            if read_free_memory and kind == "rocm":
+                # CUDA takes free from `_join_nvml_free`; no NVML equivalent for AMD.
                 try:
                     free, _total = torch.cuda.mem_get_info(i)
                     available = int(free)
                 except Exception:
-                    # mem_get_info needs a CUDA context. If it fails (e.g. no
-                    # context yet and lazy init refuses), fall back to total —
-                    # better than nothing, the runtime ValueError will catch it.
-                    pass
+                    logger.debug("preflight: hipMemGetInfo failed on device %d; using capacity", i, exc_info=True)
             # `uuid` on device properties was added in a torch 2.x release; guard for
             # older builds rather than raising out of a hardware-discovery probe.
             uuid = f"GPU-{props.uuid}" if getattr(props, "uuid", None) is not None else None
@@ -342,6 +328,28 @@ def _torch_cuda_discover(*, read_free_memory: bool = True) -> list[GPUInfo]:
     except Exception:
         logger.debug("preflight: torch.cuda probe failed", exc_info=True)
         return []
+
+
+def _join_nvml_free(gpus: list[GPUInfo]) -> list[GPUInfo]:
+    """Fill `available_bytes` with NVML's free VRAM, matched by uuid.
+
+    NVML needs no CUDA context but enumerates the whole node, so the uuid join is
+    what lines it up with the `CUDA_VISIBLE_DEVICES`-filtered list. `total_bytes`
+    keeps torch's figure: NVML reports nameplate capacity, several hundred MiB
+    above the driver-usable total. Unmatched entries keep the capacity they had."""
+    if not any(g.kind == "cuda" and g.uuid for g in gpus):
+        return gpus
+    free_by_uuid = {g.uuid: g.available_bytes for g in _pynvml_node_discover() if g.uuid}
+    if not free_by_uuid:
+        logger.debug("preflight: NVML reported no GPUs; free VRAM falls back to capacity")
+        return gpus
+    joined = []
+    for gpu in gpus:
+        free = free_by_uuid.get(gpu.uuid) if gpu.kind == "cuda" and gpu.uuid else None
+        if free is None:
+            logger.debug("preflight: no NVML match for GPU %d (%s); using capacity", gpu.index, gpu.uuid)
+        joined.append(gpu if free is None else replace(gpu, available_bytes=free))
+    return joined
 
 
 def _pynvml_node_discover() -> list[GPUInfo]:
@@ -513,25 +521,6 @@ def gpu_share_bytes(config: ModelshipModelConfig, gpu: GPUInfo) -> float:
     return gpu_share_fraction(config) * gpu.sizing_total_bytes
 
 
-def _warn_if_share_overcommitted(config: ModelshipModelConfig, hw: HardwareProfile) -> None:
-    # Declared share may exceed currently-free VRAM (over-budget co-tenant, or a non-Ray process).
-    if not (0 < config.num_gpus < 1):
-        return
-    for gpu in hw.gpus:
-        share = gpu_share_bytes(config, gpu)
-        if gpu.available_bytes < share:
-            logger.warning(
-                "preflight '%s': declared GPU share (%.2f GiB, %.0f%% of GPU %d) exceeds currently free "
-                "VRAM (%.2f GiB) — a co-tenant may be over its own share, or another process is using "
-                "this GPU. The deploy may fail to allocate.",
-                config.name,
-                share / 1024**3,
-                gpu_share_fraction(config) * 100,
-                gpu.index,
-                gpu.available_bytes / 1024**3,
-            )
-
-
 def run_preflight(config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
     """Look up the loader's estimator and run it. Returns `{}` if no estimator
     is registered or the estimator declines (no resolved path, missing config,
@@ -542,8 +531,6 @@ def run_preflight(config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str
             config.name,
         )
         return {}
-
-    _warn_if_share_overcommitted(config, hw)
 
     # Register-on-first-call so importing this module doesn't pull in
     # backend-specific deps (vllm, transformers) when they're not installed.

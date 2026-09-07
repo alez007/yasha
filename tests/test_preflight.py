@@ -113,7 +113,7 @@ class TestGpuDiscoveryUuid:
 
         # torch's uuid has no "GPU-" prefix (unlike pynvml's); the probe adds it so both
         # sources agree with nvidia-smi's own "GPU-<uuid>" format.
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid="GPU-abc123", total_bytes=2048)]
+        assert gpus == [GPUInfo(index=0, available_bytes=2048, name="Test GPU", uuid="GPU-abc123", total_bytes=2048)]
 
     def test_torch_probe_uuid_none_when_attr_missing(self):
         # Older torch builds predate the `uuid` device-properties field.
@@ -130,26 +130,85 @@ class TestGpuDiscoveryUuid:
         with patch.dict(sys.modules, {"torch": mock_torch}):
             gpus = preflight_base._torch_cuda_discover()
 
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid=None, total_bytes=2048)]
+        assert gpus == [GPUInfo(index=0, available_bytes=2048, name="Test GPU", uuid=None, total_bytes=2048)]
 
-    def test_node_probe_never_reads_free_memory(self):
-        """mem_get_info creates a CUDA primary context (~135 MiB per device) that
-        lives until the process exits; the driver has no use for the number."""
-        from modelship.preflight import base as preflight_base
-
+    def _mock_torch(self):
         mock_props = SimpleNamespace(name="Test GPU", total_memory=2048, uuid="abc123")
         mock_torch = MagicMock()
         mock_torch.cuda.is_available.return_value = True
         mock_torch.cuda.device_count.return_value = 2
         mock_torch.cuda.get_device_properties.return_value = mock_props
+        mock_torch.cuda.mem_get_info.return_value = (1024, 2048)
         mock_torch.version.hip = None
+        return mock_torch
 
-        with patch.dict(sys.modules, {"torch": mock_torch}):
-            gpus = preflight_base.detect_node_gpus()
+    def test_detect_gpus_does_not_read_free_memory_by_default(self):
+        """available_bytes carries capacity, so sizing_total_bytes still holds."""
+        from modelship.preflight import base as preflight_base
+
+        mock_torch = self._mock_torch()
+        with (
+            patch.dict(sys.modules, {"torch": mock_torch}),
+            patch.object(preflight_base, "_pynvml_node_discover") as node,
+        ):
+            gpus = preflight_base.detect_gpus()
+
+        node.assert_not_called()
+        assert [g.available_bytes for g in gpus] == [2048, 2048]
+
+    def test_detect_gpus_joins_nvml_free_on_request(self):
+        """Free comes from NVML; total must stay torch's."""
+        from modelship.preflight import base as preflight_base
+
+        mock_torch = self._mock_torch()
+        node_view = [
+            GPUInfo(index=0, available_bytes=700, name="Test GPU", uuid="GPU-abc123", total_bytes=9999),
+            GPUInfo(index=1, available_bytes=500, name="Test GPU", uuid="GPU-other", total_bytes=9999),
+        ]
+        with (
+            patch.dict(sys.modules, {"torch": mock_torch}),
+            patch.object(preflight_base, "_pynvml_node_discover", return_value=node_view),
+        ):
+            gpus = preflight_base.detect_gpus(read_free_memory=True)
 
         mock_torch.cuda.mem_get_info.assert_not_called()
-        # available_bytes carries capacity instead, so sizing_total_bytes still holds.
-        assert [g.available_bytes for g in gpus] == [2048, 2048]
+        assert [g.available_bytes for g in gpus] == [700, 700]
+        # NVML's total is the nameplate figure; sizing must keep torch's.
+        assert [g.total_bytes for g in gpus] == [2048, 2048]
+
+    def test_nvml_join_matches_by_uuid_not_position(self):
+        """NVML lists the whole node, torch only the CUDA_VISIBLE_DEVICES subset,
+        so pairing by index reads the wrong card."""
+        from modelship.preflight import base as preflight_base
+
+        masked = [GPUInfo(index=0, available_bytes=2048, name="B", uuid="GPU-b", total_bytes=2048)]
+        node_view = [
+            GPUInfo(index=0, available_bytes=111, name="A", uuid="GPU-a", total_bytes=2048),
+            GPUInfo(index=1, available_bytes=222, name="B", uuid="GPU-b", total_bytes=2048),
+        ]
+        with patch.object(preflight_base, "_pynvml_node_discover", return_value=node_view):
+            assert preflight_base._join_nvml_free(masked)[0].available_bytes == 222
+
+    def test_nvml_join_keeps_capacity_when_uuid_is_unmatched(self):
+        """An unmatched uuid must degrade to capacity, not pair with another card."""
+        from modelship.preflight import base as preflight_base
+
+        masked = [GPUInfo(index=0, available_bytes=2048, name="B", uuid="MIG-xyz", total_bytes=2048)]
+        node_view = [GPUInfo(index=0, available_bytes=111, name="A", uuid="GPU-a", total_bytes=2048)]
+        with patch.object(preflight_base, "_pynvml_node_discover", return_value=node_view):
+            assert preflight_base._join_nvml_free(masked)[0].available_bytes == 2048
+
+    def test_rocm_still_reads_free_through_torch(self):
+        """No NVML equivalent for AMD, so ROCm keeps the hipMemGetInfo path."""
+        from modelship.preflight import base as preflight_base
+
+        mock_torch = self._mock_torch()
+        mock_torch.version.hip = "6.2"
+        with patch.dict(sys.modules, {"torch": mock_torch}):
+            gpus = preflight_base.detect_gpus(read_free_memory=True)
+
+        assert mock_torch.cuda.mem_get_info.call_count == 2
+        assert [g.available_bytes for g in gpus] == [1024, 1024]
 
     def test_torch_probe_derives_rocm_kind_from_hip_version(self):
         """ROCm PyTorch maps torch.cuda onto HIP; torch.version.hip is the only
@@ -167,7 +226,7 @@ class TestGpuDiscoveryUuid:
         with patch.dict(sys.modules, {"torch": mock_torch}):
             gpus = preflight_base._torch_cuda_discover()
 
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="MI300X", uuid=None, kind="rocm", total_bytes=2048)]
+        assert gpus == [GPUInfo(index=0, available_bytes=2048, name="MI300X", uuid=None, kind="rocm", total_bytes=2048)]
 
     def test_torch_probe_defaults_to_cuda_kind_when_hip_unset(self):
         from modelship.preflight import base as preflight_base
