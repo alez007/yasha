@@ -4,7 +4,7 @@ import contextlib
 import os
 import re
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
@@ -16,10 +16,10 @@ logger = get_logger("preflight")
 @dataclass(frozen=True)
 class GPUInfo:
     index: int
-    available_bytes: int  # free VRAM at preflight time, not the device's total capacity
+    available_bytes: int  # free VRAM when the probe read it, else capacity
     name: str
-    uuid: str | None = None  # e.g. "GPU-<uuid>"; None when the probe can't read it (see per-probe notes)
-    kind: str = "cuda"  # "cuda" | "rocm" | "xpu" | "mps" (Apple Silicon unified-memory GPU)
+    uuid: str | None = None  # "GPU-<uuid>"; None when the probe can't read it
+    kind: str = "cuda"  # "cuda" | "rocm" | "xpu" | "mps"
     total_bytes: int = 0  # device capacity; 0 when the probe couldn't read it
 
     @property
@@ -30,29 +30,18 @@ class GPUInfo:
 
 @dataclass(frozen=True)
 class HardwareProfile:
-    """Per-actor view of the hardware Ray has assigned. GPU indices here are
-    CUDA-visible indices (i.e. already filtered through `CUDA_VISIBLE_DEVICES`),
-    except for an "mps" GPUInfo, which is always index 0 (Apple Silicon exposes a
-    single unified device, no CUDA_VISIBLE_DEVICES-style filtering applies)."""
+    """Per-actor view of the hardware Ray assigned. GPU indices are CUDA-visible,
+    i.e. already filtered through `CUDA_VISIBLE_DEVICES`; an "mps" GPUInfo is
+    always index 0."""
 
     gpus: list[GPUInfo] = field(default_factory=list)
     ram_bytes: int = 0
     available_ram_bytes: int = 0
-    cpu_count: int = 0
 
     @property
     def sizing_ram_bytes(self) -> int:
-        """RAM a loader should size itself against: free RAM when known, else total.
-        Free reflects what's left after co-resident models, so a model deployed last
-        doesn't oversize and OOM its neighbours; total is the fallback when the
-        available probe read nothing."""
+        """Free RAM when the probe read it, else total."""
         return self.available_ram_bytes or self.ram_bytes
-
-    @property
-    def unified_memory(self) -> bool:
-        """True when GPU and CPU share one physical memory pool (Apple Silicon).
-        Callers must budget weights against a single pool, never twice."""
-        return any(g.kind == "mps" for g in self.gpus)
 
 
 class BasePreflight(Protocol):
@@ -73,41 +62,31 @@ def get_preflight(loader: ModelLoader) -> BasePreflight | None:
     return _REGISTRY.get(loader)
 
 
-def discover_hardware() -> HardwareProfile:
-    """Snapshot the hardware available to this deployment.
-
-    Tries two layers, in order:
-    1. `torch.cuda` (honors `CUDA_VISIBLE_DEVICES`) — accurate when Ray
-       gave the actor direct GPU ownership (single-GPU, or vLLM mp backend).
-    2. `pynvml` at the node level — needed when the actor itself owns no
-       GPUs because vLLM ray-backend spawns worker sub-actors that hold them
-       (see `deploy/actor_options.py`). Falls back to physical-node GPUs
-       because TP workers are co-located on the same node anyway.
-    """
-    import os
-
+def discover_hardware(*, read_free_memory: bool = False) -> HardwareProfile:
+    """Snapshot the hardware available to this deployment. `read_free_memory` is
+    passed through to `detect_gpus`."""
     return HardwareProfile(
-        gpus=detect_gpus(),
+        gpus=detect_gpus(read_free_memory=read_free_memory),
         ram_bytes=detect_ram_bytes(),
         available_ram_bytes=detect_available_ram_bytes(),
-        cpu_count=os.cpu_count() or 0,
     )
 
 
-def detect_gpus() -> list[GPUInfo]:
-    """GPUs visible to this process, with free VRAM.
+def detect_gpus(*, read_free_memory: bool = False) -> list[GPUInfo]:
+    """GPUs visible to this process.
 
-    `torch.cuda` first (honors `CUDA_VISIBLE_DEVICES`, i.e. the actor's assigned
-    GPUs); `pynvml` node-level fallback when the actor owns no GPU directly
-    (vLLM ray-backend spawns worker sub-actors that hold them). On the driver
-    there's no mask, so this sees all physical GPUs — which is what the profile
-    generator wants for VRAM tiering. Split out of `discover_hardware` so deploy
-    code can read just the GPUs.
+    `torch.cuda` first, which honors `CUDA_VISIBLE_DEVICES`; the node-level probes
+    are fallbacks for when the actor owns no GPU directly, as with vLLM's ray
+    backend where worker sub-actors hold them. Metal is checked last so no CUDA
+    host reaches it.
 
-    Apple Silicon (Metal/MPS) is checked last, and only when neither CUDA probe
-    found anything — mirrors the CUDA-first/pynvml-fallback order, and means no
-    CUDA host's behavior changes."""
-    gpus = _torch_cuda_discover()
+    `read_free_memory=False` (the default) leaves `available_bytes` carrying
+    capacity. True fills in free VRAM: from NVML on CUDA (no context), from
+    `hipMemGetInfo` on ROCm (one HIP context per device). The node fallbacks
+    report free either way."""
+    gpus = _torch_cuda_discover(read_free_memory=read_free_memory)
+    if read_free_memory:
+        gpus = _join_nvml_free(gpus)
     if not gpus:
         gpus = _pynvml_node_discover()
         if gpus:
@@ -121,33 +100,12 @@ def detect_gpus() -> list[GPUInfo]:
     return gpus
 
 
-def detect_node_gpus() -> list[GPUInfo]:
-    """GPUs visible to this process, without their free VRAM — `available_bytes`
-    carries the device capacity instead.
-
-    Reading free VRAM through torch needs a CUDA primary context, which costs
-    ~135 MiB per device and lives until the process exits. The driver is
-    unmasked, so it would pay that on every card for the node's lifetime. Use
-    this wherever only the identity or the count matters; `detect_gpus` where
-    the free number does."""
-    gpus = _torch_cuda_discover(read_free_memory=False)
-    if not gpus:
-        gpus = _pynvml_node_discover()
-    if not gpus:
-        gpus = _rocm_smi_node_discover()
-    if not gpus:
-        gpus = _apple_metal_discover()
-    return gpus
-
-
 def detect_ram_bytes() -> int:
     """Total RAM available to *this* process, honoring a container memory cap.
 
-    psutil reads /proc/meminfo, which the kernel does NOT namespace per
-    container — so inside a memory-capped container it reports the HOST's RAM,
-    not the cgroup limit. Sizing a model against host RAM would OOM-kill a capped
-    container. The real ceiling lives in the cgroup pseudo-files; we take the
-    tighter of psutil and the cgroup limit. Returns 0 if RAM can't be read."""
+    psutil reads /proc/meminfo, which the kernel does not namespace per container,
+    so under a cap it reports the host's RAM. The real ceiling is in the cgroup
+    pseudo-files; take the tighter of the two. 0 when neither is readable."""
     host_total = 0
     try:
         import psutil
@@ -161,13 +119,9 @@ def detect_ram_bytes() -> int:
 def detect_available_ram_bytes() -> int:
     """RAM currently *free* for new allocations, honoring a container memory cap.
 
-    Same host-vs-cgroup reconciliation as `detect_ram_bytes`, but for headroom
-    rather than the ceiling — lets a model size against what's left after
-    co-resident models, not the whole box. `psutil.virtual_memory().available`
-    is cache-aware (counts reclaimable page cache as free) but NOT
-    cgroup-namespaced, so inside a cap it reads the host's headroom and
-    overestimates; we take the tighter of it and the cgroup's own headroom.
-    Returns 0 only if neither signal is readable."""
+    Same host-vs-cgroup reconciliation as `detect_ram_bytes`, on headroom rather
+    than the ceiling. `psutil.virtual_memory().available` counts reclaimable page
+    cache as free but is not cgroup-namespaced, so under a cap it overestimates."""
     host_available = 0
     try:
         import psutil
@@ -179,13 +133,11 @@ def detect_available_ram_bytes() -> int:
 
 
 def _tighter_ram(host_bytes: int, cgroup_bytes: int | None, *, what: str) -> int:
-    """Reconcile a host psutil reading with the cgroup's: take the tighter when
-    both are present, fall back to whichever is readable, 0 if neither is. Shared
-    by the total and available probes (only the two inputs differ)."""
-    if cgroup_bytes is None:
-        return host_bytes  # uncapped or unreadable cgroup — trust the host value
+    """Take the tighter of a host psutil reading and the cgroup's, falling back to
+    whichever is readable, 0 if neither is."""
+    if cgroup_bytes is None:  # uncapped or unreadable cgroup
+        return host_bytes
     if host_bytes <= 0:
-        # psutil failed but the cgroup value is readable — use it rather than 0.
         logger.debug("preflight: psutil unavailable; using cgroup %s %.2f GiB", what, cgroup_bytes / 1024**3)
         return cgroup_bytes
     if cgroup_bytes < host_bytes:
@@ -198,10 +150,8 @@ def _tighter_ram(host_bytes: int, cgroup_bytes: int | None, *, what: str) -> int
     return min(host_bytes, cgroup_bytes)
 
 
-# cgroup v1 reports "unlimited" as a near-INT64_MAX sentinel: PAGE_COUNTER_MAX
-# (LONG_MAX rounded down to the page size) = 0x7FFFFFFFFFFFF000, and some kernels
-# report LONG_MAX itself. Both are >= this value. No real machine has ~9.2 EiB of
-# RAM, so treating anything this large as "no limit" has zero false positives.
+# cgroup v1's "unlimited" sentinel: PAGE_COUNTER_MAX (LONG_MAX rounded down to the
+# page size); some kernels report LONG_MAX instead. Both are >= this value.
 _CGROUP_V1_UNLIMITED = 0x7FFFFFFFFFFFF000
 
 
@@ -211,13 +161,10 @@ def _cgroup_memory_limit_bytes(
         "/sys/fs/cgroup/memory/memory.limit_in_bytes",  # cgroup v1
     ),
 ) -> int | None:
-    """Return the container's memory ceiling from cgroup, or None if unlimited
-    or not containerized. Checks cgroup v2 (`memory.max` == "max") then v1
-    (`memory.limit_in_bytes` == the near-INT64_MAX sentinel). Detecting the v1
-    sentinel here — rather than relying on the caller's `min()` with psutil — keeps
-    the value safe even when psutil is unavailable (e.g. `detect_ram_bytes`'s
-    fallback). Returns None on any read/parse failure so the caller keeps the host
-    value. `paths` is a parameter only so tests can point it at temp files."""
+    """The container's memory ceiling from cgroup, or None if unlimited, not
+    containerized, or unreadable. The v1 sentinel is resolved here rather than by
+    the caller's `min()`, so the value stays safe when psutil is unavailable.
+    `paths` is a parameter only so tests can point it at temp files."""
     for path in paths:
         try:
             with open(path) as f:
@@ -246,14 +193,13 @@ def _cgroup_memory_available_bytes(
         "/sys/fs/cgroup/memory/memory.stat",  # cgroup v1
     ),
 ) -> int | None:
-    """Free RAM inside the container's memory cgroup, or None when uncapped/unreadable.
+    """Free RAM inside the container's memory cgroup, or None when uncapped or
+    unreadable.
 
-    `limit - current + reclaimable`: current usage counts page cache, but the kernel
-    will evict reclaimable file cache under pressure so it isn't really "used". We
-    add back `inactive_file + active_file` (v2; `total_*_file` v1) from memory.stat.
-    If memory.stat is unreadable we treat reclaimable as 0 — conservative (smaller
-    headroom). Each pseudo-file read is isolated; a parse failure skips that signal
-    rather than raising. `*_paths` are parameters only so tests can use temp files."""
+    `limit - current + reclaimable`: current usage counts page cache, which the
+    kernel evicts under pressure, so the evictable part is added back. Unreadable
+    memory.stat means reclaimable 0, i.e. smaller headroom. `*_paths` are
+    parameters only so tests can use temp files."""
     limit = _cgroup_memory_limit_bytes()
     if limit is None:  # uncapped — defer to the host (psutil) reading
         return None
@@ -276,13 +222,12 @@ def _read_first_int(paths: tuple[str, ...]) -> int | None:
 
 
 def _cgroup_reclaimable_cache_bytes(stat_paths: tuple[str, ...]) -> int | None:
-    """Sum the evictable file-cache from memory.stat. None if no memory.stat is
-    readable; 0 if it's readable but lists no cache keys.
+    """Sum the evictable file-cache from memory.stat. None when no memory.stat is
+    readable, 0 when it lists no cache keys.
 
-    cgroup v1 lists BOTH the hierarchical `total_*_file` and the per-cgroup
-    `*_file` lines, so summing all keys double-counts. We prefer the `total_*`
-    pair when present (v1, hierarchical — the right figure under a cap) and fall
-    back to the plain `inactive_file`/`active_file` pair (v2 has only those)."""
+    cgroup v1 lists both the hierarchical `total_*_file` and per-cgroup `*_file`
+    lines, so summing every key double-counts; prefer the `total_*` pair and fall
+    back to `inactive_file`/`active_file`, which is all v2 has."""
     for path in stat_paths:
         try:
             with open(path) as f:
@@ -301,7 +246,7 @@ def _cgroup_reclaimable_cache_bytes(stat_paths: tuple[str, ...]) -> int | None:
     return None
 
 
-def _torch_cuda_discover(*, read_free_memory: bool = True) -> list[GPUInfo]:
+def _torch_cuda_discover(*, read_free_memory: bool = False) -> list[GPUInfo]:
     try:
         import torch
     except Exception:
@@ -316,17 +261,14 @@ def _torch_cuda_discover(*, read_free_memory: bool = True) -> list[GPUInfo]:
         for i in range(torch.cuda.device_count()):
             props = torch.cuda.get_device_properties(i)
             available = int(props.total_memory)
-            if read_free_memory:
+            if read_free_memory and kind == "rocm":
+                # CUDA takes free from `_join_nvml_free`; no NVML equivalent for AMD.
                 try:
                     free, _total = torch.cuda.mem_get_info(i)
                     available = int(free)
                 except Exception:
-                    # mem_get_info needs a CUDA context. If it fails (e.g. no
-                    # context yet and lazy init refuses), fall back to total —
-                    # better than nothing, the runtime ValueError will catch it.
-                    pass
-            # `uuid` on device properties was added in a torch 2.x release; guard for
-            # older builds rather than raising out of a hardware-discovery probe.
+                    logger.debug("preflight: hipMemGetInfo failed on device %d; using capacity", i, exc_info=True)
+            # `props.uuid` is absent on older torch builds.
             uuid = f"GPU-{props.uuid}" if getattr(props, "uuid", None) is not None else None
             gpus.append(
                 GPUInfo(
@@ -344,14 +286,33 @@ def _torch_cuda_discover(*, read_free_memory: bool = True) -> list[GPUInfo]:
         return []
 
 
-def _pynvml_node_discover() -> list[GPUInfo]:
-    """Query the physical node's GPUs via NVML. Ignores `CUDA_VISIBLE_DEVICES`
-    so we can see GPUs Ray will hand to vLLM worker sub-actors.
+def _join_nvml_free(gpus: list[GPUInfo]) -> list[GPUInfo]:
+    """Fill `available_bytes` with NVML's free VRAM, matched by uuid.
 
-    Imports `pynvml`, which on modern installs resolves to NVIDIA's official
-    `nvidia-ml-py` package (the abandoned third-party `pynvml` package was
-    deprecated in 2023; both register the same module name). `nvidia-ml-py`
-    is already pinned transitively by vllm/torch."""
+    NVML needs no CUDA context but enumerates the whole node, so the uuid join is
+    what lines it up with the `CUDA_VISIBLE_DEVICES`-filtered list. `total_bytes`
+    keeps torch's figure — NVML reports nameplate capacity, several hundred MiB
+    above the driver-usable total. Unmatched entries keep their capacity."""
+    if not any(g.kind == "cuda" and g.uuid for g in gpus):
+        return gpus
+    free_by_uuid = {g.uuid: g.available_bytes for g in _pynvml_node_discover() if g.uuid}
+    if not free_by_uuid:
+        logger.debug("preflight: NVML reported no GPUs; free VRAM falls back to capacity")
+        return gpus
+    joined = []
+    for gpu in gpus:
+        free = free_by_uuid.get(gpu.uuid) if gpu.kind == "cuda" and gpu.uuid else None
+        if free is None:
+            logger.debug("preflight: no NVML match for GPU %d (%s); using capacity", gpu.index, gpu.uuid)
+        joined.append(gpu if free is None else replace(gpu, available_bytes=free))
+    return joined
+
+
+def _pynvml_node_discover() -> list[GPUInfo]:
+    """The physical node's GPUs via NVML, ignoring `CUDA_VISIBLE_DEVICES`.
+
+    `pynvml` is the module name of NVIDIA's `nvidia-ml-py`, pinned transitively by
+    vllm/torch; the deprecated third-party package of that name registers it too."""
     try:
         import pynvml
     except Exception:
@@ -436,24 +397,18 @@ def _rocm_smi_node_discover() -> list[GPUInfo]:
     return gpus
 
 
-# Conservative fraction of total RAM assumed usable by Metal when the
-# `iogpu.wired_limit_mb` sysctl reads 0 (its default, meaning "OS decides").
-# macOS's real default working-set cap is undocumented and version-dependent,
-# so this is a guess, not a measured fact — prefer torch.mps when available
-# (see below), which reports the OS's own recommendation directly.
+# Fraction of total RAM assumed usable by Metal when `iogpu.wired_limit_mb` reads 0
+# (its default). macOS's real cap is undocumented, so this is a guess — the
+# torch.mps path below reports the OS's own figure and is preferred.
 _METAL_DEFAULT_WORKING_SET_FRACTION = 0.7
 
 
 def _apple_metal_discover() -> list[GPUInfo]:
-    """Apple Silicon's unified-memory GPU, exposed as a single synthetic
-    GPUInfo (index 0, kind="mps"). Intel Macs are deliberately excluded —
-    torch MPS is Apple-Silicon-only in practice.
+    """Apple Silicon's unified-memory GPU as a single synthetic GPUInfo (index 0,
+    kind="mps"). Intel Macs are excluded; torch MPS is Apple-Silicon-only.
 
-    Prefers `torch.mps.recommended_max_memory()` when torch happens to be
-    importable (an OS-reported figure, not a guess); falls back to a sysctl +
-    psutil heuristic otherwise, since llama_server-only installs have no torch
-    at all. Both paths are torch-optional by design — this must not force a
-    torch dependency onto a loader that doesn't need one."""
+    Prefers `torch.mps.recommended_max_memory()`, an OS-reported figure, and falls
+    back to sysctl + psutil so the probe works without torch installed."""
     import platform
 
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -513,25 +468,6 @@ def gpu_share_bytes(config: ModelshipModelConfig, gpu: GPUInfo) -> float:
     return gpu_share_fraction(config) * gpu.sizing_total_bytes
 
 
-def _warn_if_share_overcommitted(config: ModelshipModelConfig, hw: HardwareProfile) -> None:
-    # Declared share may exceed currently-free VRAM (over-budget co-tenant, or a non-Ray process).
-    if not (0 < config.num_gpus < 1):
-        return
-    for gpu in hw.gpus:
-        share = gpu_share_bytes(config, gpu)
-        if gpu.available_bytes < share:
-            logger.warning(
-                "preflight '%s': declared GPU share (%.2f GiB, %.0f%% of GPU %d) exceeds currently free "
-                "VRAM (%.2f GiB) — a co-tenant may be over its own share, or another process is using "
-                "this GPU. The deploy may fail to allocate.",
-                config.name,
-                share / 1024**3,
-                gpu_share_fraction(config) * 100,
-                gpu.index,
-                gpu.available_bytes / 1024**3,
-            )
-
-
 def run_preflight(config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
     """Look up the loader's estimator and run it. Returns `{}` if no estimator
     is registered or the estimator declines (no resolved path, missing config,
@@ -543,10 +479,7 @@ def run_preflight(config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str
         )
         return {}
 
-    _warn_if_share_overcommitted(config, hw)
-
-    # Register-on-first-call so importing this module doesn't pull in
-    # backend-specific deps (vllm, transformers) when they're not installed.
+    # Register on first call so importing this module doesn't pull in vllm etc.
     _ensure_registered()
 
     impl = get_preflight(config.loader)

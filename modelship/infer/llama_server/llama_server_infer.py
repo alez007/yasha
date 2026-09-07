@@ -98,7 +98,7 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         user_config = model_config.llama_server_config or LlamaServerConfig()
         user_overrides = user_config.model_dump(exclude_unset=True)
 
-        recommendation = run_preflight(model_config, discover_hardware())
+        recommendation = run_preflight(model_config, discover_hardware(read_free_memory=True))
         if recommendation:
             logger.info("preflight recommendation for '%s': %s", model_config.name, recommendation)
         else:

@@ -71,7 +71,7 @@ def main(argv: list[str] | None = None) -> None:
     from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
     from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
     from modelship.openai.compaction_crypto import ensure_key_seeded
-    from modelship.preflight import detect_node_gpus
+    from modelship.preflight import detect_gpus
     from modelship.state import MemoryStateStore, get_state_store
 
     # Captured before the unconditional env write below clobbers it — True only when
@@ -149,7 +149,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # This node's own physical GPUs, independent of Ray's cluster-wide tally above —
     # lets an operator verify co-located containers got distinct physical cards.
-    for gpu in detect_node_gpus():
+    for gpu in detect_gpus():
         logger.info(
             "This node sees GPU %d: %s (uuid=%s, %.2f GiB)",
             gpu.index,

@@ -113,7 +113,7 @@ class TestGpuDiscoveryUuid:
 
         # torch's uuid has no "GPU-" prefix (unlike pynvml's); the probe adds it so both
         # sources agree with nvidia-smi's own "GPU-<uuid>" format.
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid="GPU-abc123", total_bytes=2048)]
+        assert gpus == [GPUInfo(index=0, available_bytes=2048, name="Test GPU", uuid="GPU-abc123", total_bytes=2048)]
 
     def test_torch_probe_uuid_none_when_attr_missing(self):
         # Older torch builds predate the `uuid` device-properties field.
@@ -130,26 +130,85 @@ class TestGpuDiscoveryUuid:
         with patch.dict(sys.modules, {"torch": mock_torch}):
             gpus = preflight_base._torch_cuda_discover()
 
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid=None, total_bytes=2048)]
+        assert gpus == [GPUInfo(index=0, available_bytes=2048, name="Test GPU", uuid=None, total_bytes=2048)]
 
-    def test_node_probe_never_reads_free_memory(self):
-        """mem_get_info creates a CUDA primary context (~135 MiB per device) that
-        lives until the process exits; the driver has no use for the number."""
-        from modelship.preflight import base as preflight_base
-
+    def _mock_torch(self):
         mock_props = SimpleNamespace(name="Test GPU", total_memory=2048, uuid="abc123")
         mock_torch = MagicMock()
         mock_torch.cuda.is_available.return_value = True
         mock_torch.cuda.device_count.return_value = 2
         mock_torch.cuda.get_device_properties.return_value = mock_props
+        mock_torch.cuda.mem_get_info.return_value = (1024, 2048)
         mock_torch.version.hip = None
+        return mock_torch
 
-        with patch.dict(sys.modules, {"torch": mock_torch}):
-            gpus = preflight_base.detect_node_gpus()
+    def test_detect_gpus_does_not_read_free_memory_by_default(self):
+        """available_bytes carries capacity, so sizing_total_bytes still holds."""
+        from modelship.preflight import base as preflight_base
+
+        mock_torch = self._mock_torch()
+        with (
+            patch.dict(sys.modules, {"torch": mock_torch}),
+            patch.object(preflight_base, "_pynvml_node_discover") as node,
+        ):
+            gpus = preflight_base.detect_gpus()
+
+        node.assert_not_called()
+        assert [g.available_bytes for g in gpus] == [2048, 2048]
+
+    def test_detect_gpus_joins_nvml_free_on_request(self):
+        """Free comes from NVML; total must stay torch's."""
+        from modelship.preflight import base as preflight_base
+
+        mock_torch = self._mock_torch()
+        node_view = [
+            GPUInfo(index=0, available_bytes=700, name="Test GPU", uuid="GPU-abc123", total_bytes=9999),
+            GPUInfo(index=1, available_bytes=500, name="Test GPU", uuid="GPU-other", total_bytes=9999),
+        ]
+        with (
+            patch.dict(sys.modules, {"torch": mock_torch}),
+            patch.object(preflight_base, "_pynvml_node_discover", return_value=node_view),
+        ):
+            gpus = preflight_base.detect_gpus(read_free_memory=True)
 
         mock_torch.cuda.mem_get_info.assert_not_called()
-        # available_bytes carries capacity instead, so sizing_total_bytes still holds.
-        assert [g.available_bytes for g in gpus] == [2048, 2048]
+        assert [g.available_bytes for g in gpus] == [700, 700]
+        # NVML's total is the nameplate figure; sizing must keep torch's.
+        assert [g.total_bytes for g in gpus] == [2048, 2048]
+
+    def test_nvml_join_matches_by_uuid_not_position(self):
+        """NVML lists the whole node, torch only the CUDA_VISIBLE_DEVICES subset,
+        so pairing by index reads the wrong card."""
+        from modelship.preflight import base as preflight_base
+
+        masked = [GPUInfo(index=0, available_bytes=2048, name="B", uuid="GPU-b", total_bytes=2048)]
+        node_view = [
+            GPUInfo(index=0, available_bytes=111, name="A", uuid="GPU-a", total_bytes=2048),
+            GPUInfo(index=1, available_bytes=222, name="B", uuid="GPU-b", total_bytes=2048),
+        ]
+        with patch.object(preflight_base, "_pynvml_node_discover", return_value=node_view):
+            assert preflight_base._join_nvml_free(masked)[0].available_bytes == 222
+
+    def test_nvml_join_keeps_capacity_when_uuid_is_unmatched(self):
+        """An unmatched uuid must degrade to capacity, not pair with another card."""
+        from modelship.preflight import base as preflight_base
+
+        masked = [GPUInfo(index=0, available_bytes=2048, name="B", uuid="MIG-xyz", total_bytes=2048)]
+        node_view = [GPUInfo(index=0, available_bytes=111, name="A", uuid="GPU-a", total_bytes=2048)]
+        with patch.object(preflight_base, "_pynvml_node_discover", return_value=node_view):
+            assert preflight_base._join_nvml_free(masked)[0].available_bytes == 2048
+
+    def test_rocm_still_reads_free_through_torch(self):
+        """No NVML equivalent for AMD, so ROCm keeps the hipMemGetInfo path."""
+        from modelship.preflight import base as preflight_base
+
+        mock_torch = self._mock_torch()
+        mock_torch.version.hip = "6.2"
+        with patch.dict(sys.modules, {"torch": mock_torch}):
+            gpus = preflight_base.detect_gpus(read_free_memory=True)
+
+        assert mock_torch.cuda.mem_get_info.call_count == 2
+        assert [g.available_bytes for g in gpus] == [1024, 1024]
 
     def test_torch_probe_derives_rocm_kind_from_hip_version(self):
         """ROCm PyTorch maps torch.cuda onto HIP; torch.version.hip is the only
@@ -167,7 +226,7 @@ class TestGpuDiscoveryUuid:
         with patch.dict(sys.modules, {"torch": mock_torch}):
             gpus = preflight_base._torch_cuda_discover()
 
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="MI300X", uuid=None, kind="rocm", total_bytes=2048)]
+        assert gpus == [GPUInfo(index=0, available_bytes=2048, name="MI300X", uuid=None, kind="rocm", total_bytes=2048)]
 
     def test_torch_probe_defaults_to_cuda_kind_when_hip_unset(self):
         from modelship.preflight import base as preflight_base
@@ -393,19 +452,6 @@ class TestAppleMetalDiscovery:
         mock_metal.assert_not_called()
 
 
-class TestUnifiedMemory:
-    def test_true_when_any_gpu_is_mps(self):
-        hw = HardwareProfile(gpus=[GPUInfo(index=0, available_bytes=1, name="Apple GPU", kind="mps")])
-        assert hw.unified_memory is True
-
-    def test_false_for_cuda_gpus(self):
-        hw = HardwareProfile(gpus=[GPUInfo(index=0, available_bytes=1, name="cuda-gpu")])
-        assert hw.unified_memory is False
-
-    def test_false_when_no_gpus(self):
-        assert HardwareProfile(gpus=[]).unified_memory is False
-
-
 class TestMergeWithUserOverrides:
     def test_recommendation_fills_missing(self):
         result = merge_with_user_overrides({"max_model_len": 4096}, {}, model_name="m")
@@ -616,14 +662,15 @@ class TestVllmPreflight:
         assert "max_model_len" not in VllmPreflight().recommend(cfg, hw)
 
 
-class TestVllmPreflightFractionalGpu:
-    """0 < num_gpus < 1 shares one physical GPU; the MLA workspace haircut sizes
-    from total capacity * gpu_memory_utilization (which equals the fraction), not
-    from free VRAM."""
+class TestVllmPreflightMlaHaircutBasis:
+    """The MLA workspace haircut turns bytes into a gpu_memory_utilization delta,
+    and gmu multiplies the device total — so free VRAM never enters it, on a
+    fractional deploy or a whole-GPU one."""
 
-    def test_haircut_derives_from_total_not_available(self, tmp_path):
+    @pytest.mark.parametrize("num_gpus,ceiling", [(0.5, 0.5), (1, 0.9)])
+    def test_haircut_derives_from_total_not_available(self, tmp_path, num_gpus, ceiling):
         snapshot = _write_model_snapshot(tmp_path, config_json=_MLA_CFG, weight_bytes=4 * 1024**3)
-        cfg = _make_config(resolved_path=str(snapshot), num_gpus=0.5)
+        cfg = _make_config(resolved_path=str(snapshot), num_gpus=num_gpus)
         hw_roomy_free = HardwareProfile(gpus=[GPUInfo(0, 79 * 1024**3, "test", total_bytes=80 * 1024**3)])
         hw_tight_free = HardwareProfile(gpus=[GPUInfo(0, 1 * 1024**3, "test", total_bytes=80 * 1024**3)])
 
@@ -631,7 +678,7 @@ class TestVllmPreflightFractionalGpu:
         rec_tight = VllmPreflight().recommend(cfg, hw_tight_free)
 
         assert rec_roomy == rec_tight
-        assert 0 < rec_roomy["gpu_memory_utilization"] < 0.5
+        assert 0 < rec_roomy["gpu_memory_utilization"] < ceiling
 
 
 class TestVllmPreflightCpu:

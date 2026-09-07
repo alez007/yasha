@@ -801,7 +801,7 @@ class TestValidateNodeGpuReservation:
 
         with (
             patch.dict(os.environ, {"MSHIP_NODE_NUM_GPUS": "1"}, clear=False),
-            patch.object(serve_utils, "detect_node_gpus", return_value=self._fake_gpus(2)),
+            patch.object(serve_utils, "detect_gpus", return_value=self._fake_gpus(2)),
         ):
             serve_utils._validate_node_gpu_reservation()  # no raise
 
@@ -810,7 +810,7 @@ class TestValidateNodeGpuReservation:
 
         with (
             patch.dict(os.environ, {"MSHIP_NODE_NUM_GPUS": "2"}, clear=False),
-            patch.object(serve_utils, "detect_node_gpus", return_value=self._fake_gpus(2)),
+            patch.object(serve_utils, "detect_gpus", return_value=self._fake_gpus(2)),
         ):
             serve_utils._validate_node_gpu_reservation()  # no raise
 
@@ -819,7 +819,7 @@ class TestValidateNodeGpuReservation:
 
         with (
             patch.dict(os.environ, {"MSHIP_NODE_NUM_GPUS": "2"}, clear=False),
-            patch.object(serve_utils, "detect_node_gpus", return_value=self._fake_gpus(1)),
+            patch.object(serve_utils, "detect_gpus", return_value=self._fake_gpus(1)),
             pytest.raises(RuntimeError, match="exceeds the 1 GPU"),
         ):
             serve_utils._validate_node_gpu_reservation()
@@ -829,7 +829,7 @@ class TestValidateNodeGpuReservation:
 
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch.object(serve_utils, "detect_node_gpus") as mock_detect,
+            patch.object(serve_utils, "detect_gpus") as mock_detect,
         ):
             os.environ.pop("MSHIP_NODE_NUM_GPUS", None)
             serve_utils._validate_node_gpu_reservation()
@@ -844,7 +844,7 @@ class TestValidateNodeGpuReservation:
                 {"MSHIP_USE_EXISTING_RAY_CLUSTER": "false", "MSHIP_NODE_NUM_GPUS": "2"},
                 clear=False,
             ),
-            patch.object(serve_utils, "detect_node_gpus", return_value=self._fake_gpus(1)),
+            patch.object(serve_utils, "detect_gpus", return_value=self._fake_gpus(1)),
             patch.object(serve_utils.ray, "init") as mock_init,
             pytest.raises(RuntimeError, match="exceeds the 1 GPU"),
         ):
@@ -861,7 +861,7 @@ class TestValidateNodeGpuReservation:
                 {"MSHIP_USE_EXISTING_RAY_CLUSTER": "true", "MSHIP_NODE_NUM_GPUS": "99"},
                 clear=False,
             ),
-            patch.object(serve_utils, "detect_node_gpus") as mock_detect,
+            patch.object(serve_utils, "detect_gpus") as mock_detect,
             patch.object(serve_utils.ray, "init"),
         ):
             serve_utils.connect_ray(20)

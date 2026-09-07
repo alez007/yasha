@@ -136,12 +136,9 @@ class VllmPreflight:
         if mla is None or config.vllm_engine_kwargs.enforce_eager or not hw.gpus:
             return None
 
-        # TP requires homogeneous GPUs, so take the smallest. Fractional deploys
-        # size from total capacity, whole-GPU deploys from free.
-        fractional = 0 < config.num_gpus < 1
-        gpu_basis = (
-            min(g.sizing_total_bytes for g in hw.gpus) if fractional else min(g.available_bytes for g in hw.gpus)
-        )
+        # TP requires homogeneous GPUs, so take the smallest. gmu multiplies the
+        # device total, so the haircut divides by that same basis.
+        gpu_basis = min(g.sizing_total_bytes for g in hw.gpus)
         tp_size = max(config.vllm_engine_kwargs.tensor_parallel_size, 1)
         dtype_bytes = _resolve_compute_dtype_bytes(text_cfg, model_cfg)
         workspace_bytes = _mla_chunked_prefill_workspace_bytes(text_cfg, config, dtype_bytes, mla, tp_size)
@@ -150,11 +147,10 @@ class VllmPreflight:
         gpu_util = resolve_gpu_memory_utilization(config)
         gpu_util = max(gpu_util - _MLA_WORKSPACE_SAFETY_MARGIN * workspace_bytes / gpu_basis, 0.01)
         logger.info(
-            "preflight vllm '%s': MLA workspace %.2f GiB on a %.2f GiB %s basis → gpu_memory_utilization=%.4f",
+            "preflight vllm '%s': MLA workspace %.2f GiB on a %.2f GiB GPU → gpu_memory_utilization=%.4f",
             config.name,
             workspace_bytes / 1024**3,
             gpu_basis / 1024**3,
-            "share (total)" if fractional else "free",
             gpu_util,
         )
         return round(gpu_util, 4)

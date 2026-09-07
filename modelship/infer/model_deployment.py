@@ -36,6 +36,7 @@ from modelship.openai.protocol import (
     TranscriptionRequest,
     TranslationRequest,
 )
+from modelship.utils.accelerator import detect_accelerator
 
 logger = get_logger("infer.deployment")
 
@@ -52,6 +53,24 @@ def _reject_unsupported_darwin_loader(config: ModelshipModelConfig) -> None:
         raise RuntimeError(
             f"loader={config.loader.value} is not supported on macOS/Apple Silicon (model '{config.name}'). "
             "Use loader: llama_server for GGUF models on Metal."
+        )
+
+
+# No loader offloads to AMD or Intel GPUs: vllm ships CUDA-only wheels here, and the
+# llama.cpp/ggml binaries are built for CPU, CUDA and Metal.
+_UNSUPPORTED_ACCELERATORS = {"rocm": "AMD (ROCm)", "xpu": "Intel (XPU)"}
+
+
+def _reject_unsupported_accelerator(config: ModelshipModelConfig) -> None:
+    """Checked on the actor's platform, not the driver's."""
+    if config.num_gpus <= 0:
+        return
+    vendor = _UNSUPPORTED_ACCELERATORS.get(detect_accelerator())
+    if vendor is not None:
+        raise RuntimeError(
+            f"this node's GPU is {vendor}, which no modelship loader can offload to "
+            f"(model '{config.name}' asks for num_gpus={config.num_gpus}). "
+            "Set num_gpus: 0 to run on CPU."
         )
 
 
@@ -171,6 +190,7 @@ class ModelDeployment:
         self.infer: BaseInfer
         try:
             _reject_unsupported_darwin_loader(config)
+            _reject_unsupported_accelerator(config)
             # Must run before the loader is constructed: preflight (which
             # needs the model file on disk) runs synchronously inside a
             # loader's own __init__, so `_resolved_path` has to be populated
