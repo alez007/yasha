@@ -16,9 +16,9 @@ _VLLM_CPU_INDEX = "https://wheels.vllm.ai/0.26.0/cpu"
 
 
 def _index_args(*accelerator_indexes: str) -> tuple[str, ...]:
-    """PyPI outranks the accelerator indexes, which also serve triton, torchaudio and
-    torchcodec at the locked versions but as different artifacts — the lock's hashes
-    are PyPI's, so a wrong-index pick fails `uv pip sync` outright. `unsafe-first-match`
+    """PyPI outranks the accelerator indexes, which also serve triton and torchcodec
+    at the locked versions but as different artifacts — the lock's hashes are PyPI's,
+    so a wrong-index pick fails `uv pip sync` outright. `unsafe-first-match`
     (not `first-index`) so a package PyPI carries at another version still falls
     through; the pinned hashes are what make it safe."""
     indexes = (_PYPI_INDEX, *accelerator_indexes)
