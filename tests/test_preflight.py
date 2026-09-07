@@ -616,14 +616,15 @@ class TestVllmPreflight:
         assert "max_model_len" not in VllmPreflight().recommend(cfg, hw)
 
 
-class TestVllmPreflightFractionalGpu:
-    """0 < num_gpus < 1 shares one physical GPU; the MLA workspace haircut sizes
-    from total capacity * gpu_memory_utilization (which equals the fraction), not
-    from free VRAM."""
+class TestVllmPreflightMlaHaircutBasis:
+    """The MLA workspace haircut turns bytes into a gpu_memory_utilization delta,
+    and gmu multiplies the device total — so free VRAM never enters it, on a
+    fractional deploy or a whole-GPU one."""
 
-    def test_haircut_derives_from_total_not_available(self, tmp_path):
+    @pytest.mark.parametrize("num_gpus,ceiling", [(0.5, 0.5), (1, 0.9)])
+    def test_haircut_derives_from_total_not_available(self, tmp_path, num_gpus, ceiling):
         snapshot = _write_model_snapshot(tmp_path, config_json=_MLA_CFG, weight_bytes=4 * 1024**3)
-        cfg = _make_config(resolved_path=str(snapshot), num_gpus=0.5)
+        cfg = _make_config(resolved_path=str(snapshot), num_gpus=num_gpus)
         hw_roomy_free = HardwareProfile(gpus=[GPUInfo(0, 79 * 1024**3, "test", total_bytes=80 * 1024**3)])
         hw_tight_free = HardwareProfile(gpus=[GPUInfo(0, 1 * 1024**3, "test", total_bytes=80 * 1024**3)])
 
@@ -631,7 +632,7 @@ class TestVllmPreflightFractionalGpu:
         rec_tight = VllmPreflight().recommend(cfg, hw_tight_free)
 
         assert rec_roomy == rec_tight
-        assert 0 < rec_roomy["gpu_memory_utilization"] < 0.5
+        assert 0 < rec_roomy["gpu_memory_utilization"] < ceiling
 
 
 class TestVllmPreflightCpu:
