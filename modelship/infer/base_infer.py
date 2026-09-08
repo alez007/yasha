@@ -1,10 +1,13 @@
 import asyncio
 import contextlib
+import os
 import struct
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Callable, Coroutine
-from typing import Any, TypeVar
+from typing import Any, NoReturn, TypeVar
 
+import ray
+from ray import serve
 from ray.exceptions import RayActorError
 
 from modelship.infer import infer_config
@@ -36,6 +39,9 @@ from modelship.openai.protocol import (
 from modelship.openai.protocol.responses.streaming import ResponsesStreamTranslator
 
 logger = get_logger("infer")
+
+# Bounds how long a dying replica waits on the coordinator before exiting anyway.
+_DEATH_REPORT_TIMEOUT_S = 5.0
 
 _NOT_SUPPORTED = ErrorResponse(
     error=ErrorInfo(message="model does not support this action", type="invalid_request_error")
@@ -330,6 +336,29 @@ class BaseInfer[Prepared](ABC):
         except Exception as exc:
             logger.warning("Unexpected error polling disconnect registry; assuming clients connected: %r", exc)
             return []
+
+    def backend_died(self, reason: str) -> NoReturn:
+        """Kill this replica after telling the deploy coordinator why. Serve replaces
+        the replica; the coordinator counts the deaths and retires the deployment
+        once they stop being worth replacing. Never returns."""
+        try:
+            from modelship.infer.deploy_coordinator import get_or_create_coordinator
+
+            config = self.model_config
+            ceiling = config.autoscaling_config.max_replicas if config.autoscaling_config else config.num_replicas
+            ray.get(
+                get_or_create_coordinator().report_replica_death.remote(
+                    os.environ.get("MSHIP_GATEWAY_NAME", ""),
+                    serve.get_replica_context().app_name,
+                    ceiling,
+                    reason,
+                ),
+                timeout=_DEATH_REPORT_TIMEOUT_S,
+            )
+        except Exception:
+            logger.exception("Failed to report backend death for '%s'", self.model_config.name)
+        logger.error("Exiting actor for '%s': %s", self.model_config.name, reason)
+        os._exit(1)
 
     @abstractmethod
     def shutdown(self) -> None:

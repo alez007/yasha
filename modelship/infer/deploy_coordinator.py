@@ -47,6 +47,11 @@ logger = get_logger("deploy_coordinator")
 COORDINATOR_ACTOR_NAME = "modelship-deploy-coordinator"
 COORDINATOR_NAMESPACE = "modelship"
 
+# Ray Serve's own retry cap stops applying once a replica has gone healthy, so
+# deaths after that point are counted here instead.
+_DEATHS_PER_REPLICA = 3
+_REPLICA_DEATH_WINDOW_S = 600.0
+
 _LIVENESS_POLL_INTERVAL_S = 5.0
 _LIVENESS_CALL_TIMEOUT_S = 3.0
 _LIVENESS_TIMEOUT_STRIKES = 3
@@ -76,6 +81,53 @@ class DeployCoordinator:
         self._held_since: float = 0.0
         self._watcher_task: asyncio.Task | None = None
         self._fatal_errors: dict[str, str] = {}
+        self._deaths: dict[str, list[float]] = {}
+
+    async def report_replica_death(
+        self,
+        gateway_name: str,
+        deployment_name: str,
+        replica_ceiling: int,
+        reason: str,
+    ) -> None:
+        """Count one post-startup backend death. Past the strike limit the
+        deployment is retired, since nothing else stops Serve replacing the
+        replica. The reporting replica exits either way."""
+        now = time.time()
+        recent = [t for t in self._deaths.get(deployment_name, []) if now - t < _REPLICA_DEATH_WINDOW_S]
+        recent.append(now)
+        self._deaths[deployment_name] = recent
+        limit = _DEATHS_PER_REPLICA * max(replica_ceiling, 1)
+        if len(recent) < limit:
+            logger.warning(
+                "Replica death %d of %d for %s: %s",
+                len(recent),
+                limit,
+                deployment_name,
+                reason,
+            )
+            return
+        logger.error(
+            "Retiring %s after %d replica death(s) within %ds; last: %s",
+            deployment_name,
+            len(recent),
+            int(_REPLICA_DEATH_WINDOW_S),
+            reason,
+        )
+        self._deaths.pop(deployment_name, None)
+        await self._retire(gateway_name, deployment_name)
+
+    async def _retire(self, gateway_name: str, deployment_name: str) -> None:
+        """Unregister first so replicas stop routing, then delete. serve.delete
+        blocks on the app's teardown, so it runs off this actor's event loop."""
+        from modelship.deploy.removal import delete_apps_quietly
+        from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
+
+        try:
+            await get_or_create_replica_coordinator().unregister_deployment.remote(gateway_name, deployment_name)
+        except Exception:
+            logger.exception("Failed to unregister retired deployment %s", deployment_name)
+        await asyncio.to_thread(delete_apps_quietly, [deployment_name])
 
     def report_fatal_error(self, deployment_name: str, reason: str) -> None:
         self._fatal_errors[deployment_name] = reason

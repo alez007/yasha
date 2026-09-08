@@ -1,6 +1,5 @@
 import asyncio
 import io
-import os
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -432,10 +431,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         completion here means the engine core died on its own."""
         if future.cancelled():
             return
-        logger.error(
-            "vllm engine core for '%s' died — exiting actor", self.model_config.name, exc_info=future.exception()
-        )
-        os._exit(1)
+        exc = future.exception()
+        logger.error("vllm engine core for '%s' died", self.model_config.name, exc_info=exc)
+        self.backend_died(f"vllm engine core died: {exc}")
 
     async def warmup(self) -> None:
         logger.info("Warming up vllm model: %s", self.model_config.name)
