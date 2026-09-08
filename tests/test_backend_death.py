@@ -1,10 +1,13 @@
 """BaseInfer.backend_died: the replica's report-then-exit path for a backend that
 died after startup."""
 
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import ray.serve.context
+from ray import serve
 
 from modelship.infer import base_infer
 from modelship.infer.base_infer import BaseInfer
@@ -45,6 +48,22 @@ def harness(monkeypatch):
 
 def _report(coordinator):
     return coordinator.report_replica_death.remote.call_args
+
+
+class TestReplicaContextCrossesThreads:
+    """llama_server reports from its process-watcher thread, so the app name has to
+    be readable there. Ray stores the replica context in a module global, not the
+    ContextVar it uses for request state — this fails if that ever changes."""
+
+    def test_the_app_name_is_readable_from_another_thread(self, monkeypatch):
+        monkeypatch.setattr(
+            ray.serve.context, "_INTERNAL_REPLICA_CONTEXT", SimpleNamespace(app_name="qwen-aaaa"), raising=False
+        )
+        seen: list[str] = []
+        thread = threading.Thread(target=lambda: seen.append(serve.get_replica_context().app_name))
+        thread.start()
+        thread.join()
+        assert seen == ["qwen-aaaa"]
 
 
 class TestBackendDied:
