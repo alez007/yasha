@@ -105,6 +105,21 @@ class TestExpectedFollowsTheRegistry:
         await coord.unregister_deployment("gw", "qwen-aaaa")
         assert (await coord.get_routing("gw"))["expected"] == ["qwen"]
 
+    @pytest.mark.asyncio
+    async def test_a_never_registered_deployment_drops_by_model_name(self, coord):
+        # A crash loop that never reaches serve.run's return registers nothing, so
+        # the model name can only come from the caller.
+        await coord.set_expected("gw", ["qwen", "kokoro"])
+        await coord.unregister_deployment("gw", "qwen-aaaa", "qwen")
+        assert (await coord.get_routing("gw"))["expected"] == ["kokoro"]
+
+    @pytest.mark.asyncio
+    async def test_a_passed_model_name_still_respects_a_live_sibling(self, coord):
+        await coord.set_expected("gw", ["qwen"])
+        await coord.register_deployment("gw", "qwen-bbbb", "qwen")
+        await coord.unregister_deployment("gw", "qwen-aaaa", "qwen")
+        assert (await coord.get_routing("gw"))["expected"] == ["qwen"]
+
 
 class TestWaitForChange:
     @pytest.mark.asyncio

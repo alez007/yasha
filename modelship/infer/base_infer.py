@@ -348,6 +348,7 @@ class BaseInfer[Prepared](ABC):
                 get_or_create_coordinator().report_replica_death.remote(
                     os.environ.get("MSHIP_GATEWAY_NAME", ""),
                     serve.get_replica_context().app_name,
+                    config.name,
                     ceiling,
                     reason,
                 ),

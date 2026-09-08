@@ -71,7 +71,7 @@ class TestBackendDied:
     def test_reports_then_exits(self, harness):
         with pytest.raises(_ExitError):
             _infer().backend_died("engine core died")
-        assert _report(harness).args == ("gw", "qwen-aaaa", 1, "engine core died")
+        assert _report(harness).args == ("gw", "qwen-aaaa", "qwen", 1, "engine core died")
         base_infer.os._exit.assert_called_once_with(1)
 
     def test_exits_even_when_the_report_fails(self, harness, monkeypatch):
@@ -88,12 +88,12 @@ class TestBackendDied:
     def test_a_fixed_replica_count_is_the_ceiling(self, harness):
         with pytest.raises(_ExitError):
             _infer(num_replicas=3).backend_died("engine core died")
-        assert _report(harness).args[2] == 3
+        assert _report(harness).args[3] == 3
 
     def test_autoscaling_reports_its_max(self, harness):
         with pytest.raises(_ExitError):
             _infer(autoscaling_config={"min_replicas": 1, "max_replicas": 6}).backend_died("engine core died")
-        assert _report(harness).args[2] == 6
+        assert _report(harness).args[3] == 6
 
 
 class TestVllmEngineDeath:

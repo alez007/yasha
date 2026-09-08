@@ -114,18 +114,20 @@ class ReplicaCoordinator:
         await self._persist()
         self._bump(gateway_name)
 
-    async def unregister_deployment(self, gateway_name: str, deployment_name: str) -> None:
+    async def unregister_deployment(
+        self, gateway_name: str, deployment_name: str, model_name: str | None = None
+    ) -> None:
         """Drop the deployment, and the model's `_expected` entry with it once no
-        other deployment serves that name."""
-        gw = self._registry.get(gateway_name)
-        if gw is not None:
-            model_name = gw.pop(deployment_name, None)
-            if model_name is not None and model_name not in gw.values():
-                expected = self._expected.get(gateway_name)
-                if expected is not None:
-                    self._expected[gateway_name] = [m for m in expected if m != model_name]
-            if not gw:
-                del self._registry[gateway_name]
+        other deployment serves that name. `model_name` is only needed when the
+        deployment never registered — otherwise it comes from the registry."""
+        gw = self._registry.get(gateway_name) or {}
+        model_name = gw.pop(deployment_name, None) or model_name
+        if model_name is not None and model_name not in gw.values():
+            expected = self._expected.get(gateway_name)
+            if expected is not None:
+                self._expected[gateway_name] = [m for m in expected if m != model_name]
+        if not gw:
+            self._registry.pop(gateway_name, None)
         await self._persist()
         self._bump(gateway_name)
 

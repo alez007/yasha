@@ -466,11 +466,14 @@ def start_gateway(gateway_name: str, serve_logging_config: LoggingConfig, route_
     )
 
 
-def seed_expected_models(replica_coordinator, gateway_name: str, yml_conf: ModelshipConfig) -> None:
+def seed_expected_models(
+    replica_coordinator, gateway_name: str, yml_conf: ModelshipConfig, exclude: set[str] | None = None
+) -> None:
     # Record the full desired set on the replica coordinator (the gateway's
     # readiness baseline) — already-deployed models also count toward "ready".
     # Bumping the generation makes every replica adopt it via its watch loop.
+    names = [c.name for c in yml_conf.models if c.name not in (exclude or set())]
     try:
-        ray.get(replica_coordinator.set_expected.remote(gateway_name, [c.name for c in yml_conf.models]))
+        ray.get(replica_coordinator.set_expected.remote(gateway_name, names))
     except Exception:
         logger.exception("Failed to seed expected model list on coordinator (non-fatal).")

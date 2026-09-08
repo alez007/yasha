@@ -30,7 +30,7 @@ class TestReplicaDeathCounting:
         coord = self._coord()
         with patch.object(coord, "_retire", new=AsyncMock()) as retire:
             for _ in range(deploy_coordinator._DEATHS_PER_REPLICA - 1):
-                await coord.report_replica_death("gw", "qwen-aaaa", 1, "engine died")
+                await coord.report_replica_death("gw", "qwen-aaaa", "qwen", 1, "engine died")
         retire.assert_not_called()
 
     @pytest.mark.asyncio
@@ -38,15 +38,15 @@ class TestReplicaDeathCounting:
         coord = self._coord()
         with patch.object(coord, "_retire", new=AsyncMock()) as retire:
             for _ in range(deploy_coordinator._DEATHS_PER_REPLICA):
-                await coord.report_replica_death("gw", "qwen-aaaa", 1, "engine died")
-        retire.assert_awaited_once_with("gw", "qwen-aaaa")
+                await coord.report_replica_death("gw", "qwen-aaaa", "qwen", 1, "engine died")
+        retire.assert_awaited_once_with("gw", "qwen-aaaa", "qwen")
 
     @pytest.mark.asyncio
     async def test_the_limit_scales_with_the_replica_count(self):
         coord = self._coord()
         with patch.object(coord, "_retire", new=AsyncMock()) as retire:
             for _ in range(deploy_coordinator._DEATHS_PER_REPLICA * 4):
-                await coord.report_replica_death("gw", "qwen-aaaa", 4, "engine died")
+                await coord.report_replica_death("gw", "qwen-aaaa", "qwen", 4, "engine died")
         assert retire.await_count == 1
 
     @pytest.mark.asyncio
@@ -54,7 +54,7 @@ class TestReplicaDeathCounting:
         coord = self._coord()
         coord._deaths["qwen-aaaa"] = deploy_coordinator._DEATHS_PER_REPLICA - 1
         with patch.object(coord, "_retire", new=AsyncMock()) as retire:
-            await coord.report_replica_death("gw", "qwen-aaaa", 1, "engine died")
+            await coord.report_replica_death("gw", "qwen-aaaa", "qwen", 1, "engine died")
         retire.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -63,7 +63,7 @@ class TestReplicaDeathCounting:
         with patch.object(coord, "_retire", new=AsyncMock()) as retire:
             for name in ("qwen-aaaa", "kokoro-bbbb"):
                 for _ in range(deploy_coordinator._DEATHS_PER_REPLICA - 1):
-                    await coord.report_replica_death("gw", name, 1, "engine died")
+                    await coord.report_replica_death("gw", name, "m", 1, "engine died")
         retire.assert_not_called()
 
     @pytest.mark.asyncio
@@ -79,8 +79,8 @@ class TestReplicaDeathCounting:
             ),
             patch("modelship.deploy.removal.serve.delete", side_effect=lambda n: calls.append(("delete", n))),
         ):
-            await coord._retire("gw", "qwen-aaaa")
-        assert calls == [("unregister", "gw", "qwen-aaaa"), ("delete", "qwen-aaaa")]
+            await coord._retire("gw", "qwen-aaaa", "qwen")
+        assert calls == [("unregister", "gw", "qwen-aaaa", "qwen"), ("delete", "qwen-aaaa")]
 
     @pytest.mark.asyncio
     async def test_a_failed_unregister_still_deletes(self):
@@ -94,5 +94,5 @@ class TestReplicaDeathCounting:
             ),
             patch("modelship.deploy.removal.serve.delete") as delete,
         ):
-            await coord._retire("gw", "qwen-aaaa")
+            await coord._retire("gw", "qwen-aaaa", "qwen")
         delete.assert_called_once_with("qwen-aaaa")

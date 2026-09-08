@@ -84,6 +84,7 @@ class DeployCoordinator:
         self,
         gateway_name: str,
         deployment_name: str,
+        model_name: str,
         replica_ceiling: int,
         reason: str,
     ) -> None:
@@ -99,16 +100,18 @@ class DeployCoordinator:
             return
         logger.error("Retiring %s after %d replica death(s); last: %s", deployment_name, deaths, reason)
         self._deaths.pop(deployment_name, None)
-        await self._retire(gateway_name, deployment_name)
+        await self._retire(gateway_name, deployment_name, model_name)
 
-    async def _retire(self, gateway_name: str, deployment_name: str) -> None:
+    async def _retire(self, gateway_name: str, deployment_name: str, model_name: str) -> None:
         """Unregister first so replicas stop routing, then delete. serve.delete
         blocks on the app's teardown, so it runs off this actor's event loop."""
         from modelship.deploy.removal import delete_apps_quietly
         from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
 
         try:
-            await get_or_create_replica_coordinator().unregister_deployment.remote(gateway_name, deployment_name)
+            await get_or_create_replica_coordinator().unregister_deployment.remote(
+                gateway_name, deployment_name, model_name
+            )
         except Exception:
             logger.exception("Failed to unregister retired deployment %s", deployment_name)
         await asyncio.to_thread(delete_apps_quietly, [deployment_name])

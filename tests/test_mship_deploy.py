@@ -1537,3 +1537,36 @@ class TestPruneRaySessions:
         proc = subprocess.Popen(["true"])
         proc.wait()
         assert serve_utils._pid_alive(proc.pid) is False
+
+
+class TestSeedExpectedModels:
+    """The readiness baseline the gateway's /readyz measures against."""
+
+    @staticmethod
+    def _conf():
+        from modelship.infer.infer_config import ModelshipConfig
+
+        return ModelshipConfig.model_validate(
+            {
+                "models": [
+                    {"name": n, "model": f"org/{n}", "usecase": "generate", "loader": "vllm"}
+                    for n in ("qwen", "kokoro")
+                ]
+            }
+        )
+
+    def _seed(self, **kwargs) -> list[str]:
+        from modelship.deploy import serve_utils
+
+        replica_coordinator = MagicMock()
+        with patch("modelship.deploy.serve_utils.ray.get"):
+            serve_utils.seed_expected_models(replica_coordinator, "gw", self._conf(), **kwargs)
+        return replica_coordinator.set_expected.remote.call_args.args[1]
+
+    def test_seeds_every_configured_model(self):
+        assert self._seed() == ["qwen", "kokoro"]
+
+    def test_excluded_models_are_left_out(self):
+        # A model the driver gave up on: still in the effective config for a later
+        # retry, but nothing is pursuing it now, so /readyz must stop waiting.
+        assert self._seed(exclude={"qwen"}) == ["kokoro"]
