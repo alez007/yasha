@@ -433,7 +433,8 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             return
         exc = future.exception()
         logger.error("vllm engine core for '%s' died", self.model_config.name, exc_info=exc)
-        self.backend_died(f"vllm engine core died: {exc}")
+        # The handler can also just return, which is still a death but carries no exception.
+        self.backend_died(f"vllm engine core died: {exc}" if exc else "vllm engine core exited without raising")
 
     async def warmup(self) -> None:
         logger.info("Warming up vllm model: %s", self.model_config.name)

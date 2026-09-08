@@ -1,6 +1,7 @@
 """BaseInfer.backend_died: the replica's report-then-exit path for a backend that
 died after startup."""
 
+import asyncio
 import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -93,3 +94,40 @@ class TestBackendDied:
         with pytest.raises(_ExitError):
             _infer(autoscaling_config={"min_replicas": 1, "max_replicas": 6}).backend_died("engine core died")
         assert _report(harness).args[2] == 6
+
+
+class TestVllmEngineDeath:
+    """_on_engine_output_handler_done turns a completed output_handler into a
+    backend_died call; shutdown() cancels the handler, which is not a death."""
+
+    @staticmethod
+    def _fire(future: asyncio.Future) -> list[str]:
+        from modelship.infer.vllm.vllm_infer import VllmInfer
+
+        infer = object.__new__(VllmInfer)
+        infer.model_config = ModelshipModelConfig.model_validate(
+            {"name": "qwen", "model": "org/qwen", "usecase": "generate", "loader": "vllm"}
+        )
+        reasons: list[str] = []
+        with patch.object(VllmInfer, "backend_died", lambda _self, reason: reasons.append(reason)):
+            infer._on_engine_output_handler_done(future)
+        return reasons
+
+    @staticmethod
+    def _future() -> asyncio.Future:
+        return asyncio.new_event_loop().create_future()
+
+    def test_an_exception_is_carried_into_the_reason(self):
+        future = self._future()
+        future.set_exception(RuntimeError("engine core exploded"))
+        assert self._fire(future) == ["vllm engine core died: engine core exploded"]
+
+    def test_a_clean_return_still_reports_a_death(self):
+        future = self._future()
+        future.set_result(None)
+        assert self._fire(future) == ["vllm engine core exited without raising"]
+
+    def test_a_cancelled_handler_is_our_own_shutdown(self):
+        future = self._future()
+        future.cancel()
+        assert self._fire(future) == []
