@@ -52,14 +52,13 @@ def main(argv: list[str] | None = None) -> None:
         to_config,
         write_effective,
     )
+    from modelship.deploy.removal import delete_apps_quietly, remove_apps
     from modelship.deploy.serve_utils import (
         connect_ray,
-        delete_apps_quietly,
         gateway_route_prefix,
         get_existing_apps,
         leave_ray_cluster,
         make_operator_id,
-        remove_apps,
         seed_expected_models,
         shutdown_ray,
         start_gateway,
@@ -340,6 +339,9 @@ def main(argv: list[str] | None = None) -> None:
                 DEPLOY_MODELS_CHANGED_TOTAL.inc(count, tags={"gateway": gateway_name, "action": action})
 
         if fatally_failed:
+            if not phantom_gateway:
+                failed_names = {cfg.name for cfg, _ in fatally_failed}
+                seed_expected_models(replica_coord, gateway_name, yml_conf, exclude=failed_names)
             logger.error(
                 "%d model(s) failed to deploy — fix config and redeploy (they remain in the effective config "
                 "and will be retried on the next deploy/self-heal):",

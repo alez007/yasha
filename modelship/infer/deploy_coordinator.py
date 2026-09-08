@@ -47,6 +47,8 @@ logger = get_logger("deploy_coordinator")
 COORDINATOR_ACTOR_NAME = "modelship-deploy-coordinator"
 COORDINATOR_NAMESPACE = "modelship"
 
+_DEATHS_PER_REPLICA = 3
+
 _LIVENESS_POLL_INTERVAL_S = 5.0
 _LIVENESS_CALL_TIMEOUT_S = 3.0
 _LIVENESS_TIMEOUT_STRIKES = 3
@@ -76,6 +78,43 @@ class DeployCoordinator:
         self._held_since: float = 0.0
         self._watcher_task: asyncio.Task | None = None
         self._fatal_errors: dict[str, str] = {}
+        self._deaths: dict[str, int] = {}
+
+    async def report_replica_death(
+        self,
+        gateway_name: str,
+        deployment_name: str,
+        model_name: str,
+        replica_ceiling: int,
+        reason: str,
+    ) -> None:
+        """Count one backend death against `deployment_name`, retiring it past
+        `_DEATHS_PER_REPLICA * replica_ceiling`. The count is never reset by time,
+        only by a redeploy — the key carries the config fingerprint. The reporting
+        replica exits whatever this returns."""
+        deaths = self._deaths.get(deployment_name, 0) + 1
+        self._deaths[deployment_name] = deaths
+        limit = _DEATHS_PER_REPLICA * max(replica_ceiling, 1)
+        if deaths < limit:
+            logger.warning("Replica death %d of %d for %s: %s", deaths, limit, deployment_name, reason)
+            return
+        logger.error("Retiring %s after %d replica death(s); last: %s", deployment_name, deaths, reason)
+        self._deaths.pop(deployment_name, None)
+        await self._retire(gateway_name, deployment_name, model_name)
+
+    async def _retire(self, gateway_name: str, deployment_name: str, model_name: str) -> None:
+        """Unregister first so replicas stop routing, then delete. serve.delete
+        blocks on the app's teardown, so it runs off this actor's event loop."""
+        from modelship.deploy.removal import delete_apps_quietly
+        from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
+
+        try:
+            await get_or_create_replica_coordinator().unregister_deployment.remote(
+                gateway_name, deployment_name, model_name
+            )
+        except Exception:
+            logger.exception("Failed to unregister retired deployment %s", deployment_name)
+        await asyncio.to_thread(delete_apps_quietly, [deployment_name])
 
     def report_fatal_error(self, deployment_name: str, reason: str) -> None:
         self._fatal_errors[deployment_name] = reason

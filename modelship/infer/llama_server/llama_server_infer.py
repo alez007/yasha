@@ -225,8 +225,8 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         rc = proc.wait()
         if self._shutting_down:
             return
-        logger.error("llama-server for '%s' exited unexpectedly (rc=%s) — exiting actor", self.model_config.name, rc)
-        os._exit(1)
+        logger.error("llama-server for '%s' exited unexpectedly (rc=%s)", self.model_config.name, rc)
+        self.backend_died(f"llama-server exited (rc={rc})")
 
     async def _launch(self, binary: str, model_path: str) -> None:
         loop = asyncio.get_running_loop()

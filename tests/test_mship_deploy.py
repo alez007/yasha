@@ -650,27 +650,26 @@ class TestReservationTotals:
 
 
 class TestRemoveApps:
-    # remove_apps is defined in serve_utils (mship_deploy imports it lazily inside
-    # main() now, so it's no longer a mship_deploy module attribute).
+    # remove_apps lives in deploy.removal, not serve_utils.
     def test_noop_on_empty_list(self):
-        from modelship.deploy import serve_utils
+        from modelship.deploy import removal
 
         replica_coordinator = MagicMock()
-        with patch("modelship.deploy.serve_utils.serve.delete") as mock_delete:
-            serve_utils.remove_apps([], replica_coordinator, "gw")
+        with patch("modelship.deploy.removal.serve.delete") as mock_delete:
+            removal.remove_apps([], replica_coordinator, "gw")
         replica_coordinator.unregister_deployment.remote.assert_not_called()
         mock_delete.assert_not_called()
 
     def test_unregisters_then_deletes(self):
-        from modelship.deploy import serve_utils
+        from modelship.deploy import removal
 
         replica_coordinator = MagicMock()
         apps = ["qwen-aaaaaaaaaa", "kokoro-bbbbbbbbbb"]
         with (
-            patch("modelship.deploy.serve_utils.ray.get") as mock_get,
-            patch("modelship.deploy.serve_utils.serve.delete") as mock_delete,
+            patch("modelship.deploy.removal.ray.get") as mock_get,
+            patch("modelship.deploy.removal.serve.delete") as mock_delete,
         ):
-            serve_utils.remove_apps(apps, replica_coordinator, "gw")
+            removal.remove_apps(apps, replica_coordinator, "gw")
 
         # Each app is dropped from the replica coordinator's registry (bumping the
         # gateway generation so replicas stop routing) before serve.delete tears it down.
@@ -680,14 +679,14 @@ class TestRemoveApps:
         assert mock_delete.call_args_list == [(("qwen-aaaaaaaaaa",),), (("kokoro-bbbbbbbbbb",),)]
 
     def test_continues_on_serve_delete_error(self):
-        from modelship.deploy import serve_utils
+        from modelship.deploy import removal
 
         replica_coordinator = MagicMock()
         with (
-            patch("modelship.deploy.serve_utils.ray.get"),
-            patch("modelship.deploy.serve_utils.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete,
+            patch("modelship.deploy.removal.ray.get"),
+            patch("modelship.deploy.removal.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete,
         ):
-            serve_utils.remove_apps(["a-1234567890", "b-1234567890"], replica_coordinator, "gw")
+            removal.remove_apps(["a-1234567890", "b-1234567890"], replica_coordinator, "gw")
         # Both deletes attempted even though the first raised.
         assert mock_delete.call_count == 2
 
@@ -1538,3 +1537,36 @@ class TestPruneRaySessions:
         proc = subprocess.Popen(["true"])
         proc.wait()
         assert serve_utils._pid_alive(proc.pid) is False
+
+
+class TestSeedExpectedModels:
+    """The readiness baseline the gateway's /readyz measures against."""
+
+    @staticmethod
+    def _conf():
+        from modelship.infer.infer_config import ModelshipConfig
+
+        return ModelshipConfig.model_validate(
+            {
+                "models": [
+                    {"name": n, "model": f"org/{n}", "usecase": "generate", "loader": "vllm"}
+                    for n in ("qwen", "kokoro")
+                ]
+            }
+        )
+
+    def _seed(self, **kwargs) -> list[str]:
+        from modelship.deploy import serve_utils
+
+        replica_coordinator = MagicMock()
+        with patch("modelship.deploy.serve_utils.ray.get"):
+            serve_utils.seed_expected_models(replica_coordinator, "gw", self._conf(), **kwargs)
+        return replica_coordinator.set_expected.remote.call_args.args[1]
+
+    def test_seeds_every_configured_model(self):
+        assert self._seed() == ["qwen", "kokoro"]
+
+    def test_excluded_models_are_left_out(self):
+        # A model the driver gave up on: still in the effective config for a later
+        # retry, but nothing is pursuing it now, so /readyz must stop waiting.
+        assert self._seed(exclude={"qwen"}) == ["kokoro"]

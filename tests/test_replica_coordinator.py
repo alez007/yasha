@@ -71,6 +71,56 @@ class TestRoutingRegistry:
         assert routing["models"] == {"qwen-aaaa": "qwen", "kokoro-bbbb": "kokoro"}
 
 
+class TestExpectedFollowsTheRegistry:
+    """`_expected` is what /readyz measures against, so it has to track the registry."""
+
+    @pytest.mark.asyncio
+    async def test_unregister_drops_the_model_from_expected(self, coord):
+        await coord.set_expected("gw", ["qwen", "kokoro"])
+        await coord.register_deployment("gw", "qwen-aaaa", "qwen")
+        await coord.unregister_deployment("gw", "qwen-aaaa")
+        assert (await coord.get_routing("gw"))["expected"] == ["kokoro"]
+
+    @pytest.mark.asyncio
+    async def test_another_deployment_for_the_model_keeps_it_expected(self, coord):
+        await coord.set_expected("gw", ["qwen"])
+        await coord.register_deployment("gw", "qwen-aaaa", "qwen")
+        # Bypass register_deployment's same-name eviction to get two live at once.
+        coord._registry["gw"]["qwen-bbbb"] = "qwen"
+        await coord.unregister_deployment("gw", "qwen-aaaa")
+        assert (await coord.get_routing("gw"))["expected"] == ["qwen"]
+
+    @pytest.mark.asyncio
+    async def test_blue_green_cutover_keeps_the_model_expected(self, coord):
+        await coord.set_expected("gw", ["qwen"])
+        await coord.register_deployment("gw", "qwen-aaaa", "qwen")
+        await coord.register_deployment("gw", "qwen-bbbb", "qwen")  # evicts qwen-aaaa
+        await coord.unregister_deployment("gw", "qwen-aaaa")  # driver's late delete
+        assert (await coord.get_routing("gw"))["expected"] == ["qwen"]
+        assert (await coord.get_routing("gw"))["models"] == {"qwen-bbbb": "qwen"}
+
+    @pytest.mark.asyncio
+    async def test_unregistering_an_unknown_deployment_touches_nothing(self, coord):
+        await coord.set_expected("gw", ["qwen"])
+        await coord.unregister_deployment("gw", "qwen-aaaa")
+        assert (await coord.get_routing("gw"))["expected"] == ["qwen"]
+
+    @pytest.mark.asyncio
+    async def test_a_never_registered_deployment_drops_by_model_name(self, coord):
+        # A crash loop that never reaches serve.run's return registers nothing, so
+        # the model name can only come from the caller.
+        await coord.set_expected("gw", ["qwen", "kokoro"])
+        await coord.unregister_deployment("gw", "qwen-aaaa", "qwen")
+        assert (await coord.get_routing("gw"))["expected"] == ["kokoro"]
+
+    @pytest.mark.asyncio
+    async def test_a_passed_model_name_still_respects_a_live_sibling(self, coord):
+        await coord.set_expected("gw", ["qwen"])
+        await coord.register_deployment("gw", "qwen-bbbb", "qwen")
+        await coord.unregister_deployment("gw", "qwen-aaaa", "qwen")
+        assert (await coord.get_routing("gw"))["expected"] == ["qwen"]
+
+
 class TestWaitForChange:
     @pytest.mark.asyncio
     async def test_returns_immediately_when_already_advanced(self, coord):
