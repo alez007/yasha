@@ -29,6 +29,7 @@ def _infer(**overrides) -> _Infer:
     raw = {"name": "qwen", "model": "org/qwen", "usecase": "generate", "loader": "vllm", **overrides}
     obj = object.__new__(_Infer)
     obj.model_config = ModelshipModelConfig.model_validate(raw)
+    obj._coordinator = None
     return obj
 
 
@@ -42,7 +43,6 @@ def harness(monkeypatch):
     monkeypatch.setattr(base_infer.os, "_exit", MagicMock(side_effect=_ExitError))
     monkeypatch.setattr(base_infer.os, "environ", {"MSHIP_GATEWAY_NAME": "gw"})
     monkeypatch.setattr(base_infer.serve, "get_replica_context", lambda: SimpleNamespace(app_name="qwen-aaaa"))
-    monkeypatch.setattr(base_infer.ray, "get", MagicMock())
     with patch("modelship.infer.deploy_coordinator.get_or_create_coordinator", return_value=coordinator):
         yield coordinator
 
@@ -74,16 +74,18 @@ class TestBackendDied:
         assert _report(harness).args == ("gw", "qwen-aaaa", "qwen", 1, "engine core died")
         base_infer.os._exit.assert_called_once_with(1)
 
-    def test_exits_even_when_the_report_fails(self, harness, monkeypatch):
-        monkeypatch.setattr(base_infer.ray, "get", MagicMock(side_effect=TimeoutError("coordinator wedged")))
+    def test_exits_even_when_the_report_fails(self, harness):
+        harness.report_replica_death.remote.side_effect = RuntimeError("coordinator wedged")
         with pytest.raises(_ExitError):
             _infer().backend_died("engine core died")
         base_infer.os._exit.assert_called_once_with(1)
 
-    def test_the_report_is_bounded_by_a_timeout(self, harness):
+    def test_the_report_is_submitted_not_awaited(self, harness):
+        # Serve retries an ActorDiedError; anything that keeps this replica alive
+        # with a dead backend turns that retry into a 502 for the client instead.
         with pytest.raises(_ExitError):
             _infer().backend_died("engine core died")
-        assert base_infer.ray.get.call_args.kwargs["timeout"] == base_infer._DEATH_REPORT_TIMEOUT_S
+        harness.report_replica_death.remote.assert_called_once()
 
     def test_a_fixed_replica_count_is_the_ceiling(self, harness):
         with pytest.raises(_ExitError):

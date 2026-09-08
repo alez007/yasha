@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any, NoReturn, TypeVar
 
-import ray
 from ray import serve
 from ray.exceptions import RayActorError
 
@@ -39,8 +38,6 @@ from modelship.openai.protocol import (
 from modelship.openai.protocol.responses.streaming import ResponsesStreamTranslator
 
 logger = get_logger("infer")
-
-_DEATH_REPORT_TIMEOUT_S = 5.0
 
 _NOT_SUPPORTED = ErrorResponse(
     error=ErrorInfo(message="model does not support this action", type="invalid_request_error")
@@ -85,6 +82,8 @@ class BaseInfer[Prepared](ABC):
         # each request polling the DisconnectRegistry actor independently.
         self._watched: dict[str, asyncio.Event] = {}
         self._pump_task: asyncio.Task[None] | None = None
+        # DeployCoordinator handle, resolved on first use.
+        self._coordinator: Any = None
 
     def _get_memory_fraction(self) -> float | None:
         """Return the GPU memory fraction if explicitly set and < 1.0, otherwise None."""
@@ -338,26 +337,31 @@ class BaseInfer[Prepared](ABC):
 
     def backend_died(self, reason: str) -> NoReturn:
         """Report the death to the deploy coordinator, then kill this replica.
-        Never returns; a failed report is logged and exits anyway."""
-        try:
-            from modelship.infer.deploy_coordinator import get_or_create_coordinator
+        Never returns; a failed report is logged and exits anyway.
 
+        The report is submitted, not awaited: Serve retries an ActorDiedError, so
+        time spent alive with a dead backend turns that retry into a client 502."""
+        try:
             config = self.model_config
             ceiling = config.autoscaling_config.max_replicas if config.autoscaling_config else config.num_replicas
-            ray.get(
-                get_or_create_coordinator().report_replica_death.remote(
-                    os.environ.get("MSHIP_GATEWAY_NAME", ""),
-                    serve.get_replica_context().app_name,
-                    config.name,
-                    ceiling,
-                    reason,
-                ),
-                timeout=_DEATH_REPORT_TIMEOUT_S,
+            self._deploy_coordinator().report_replica_death.remote(
+                os.environ.get("MSHIP_GATEWAY_NAME", ""),
+                serve.get_replica_context().app_name,
+                config.name,
+                ceiling,
+                reason,
             )
         except Exception:
             logger.exception("Failed to report backend death for '%s'", self.model_config.name)
         logger.error("Exiting actor for '%s': %s", self.model_config.name, reason)
         os._exit(1)
+
+    def _deploy_coordinator(self):
+        if self._coordinator is None:
+            from modelship.infer.deploy_coordinator import get_or_create_coordinator
+
+            self._coordinator = get_or_create_coordinator()
+        return self._coordinator
 
     @abstractmethod
     def shutdown(self) -> None:
