@@ -15,8 +15,7 @@ from modelship.logging import get_logger
 logger = get_logger("startup")
 
 _DEPLOY_RETRY_SLEEP_S = 2.0
-# Attempts a model gets before the driver stops retrying it. Only a pass where the
-# deploy actually ran and raised consumes one; a capacity skip never does.
+# Only a pass that reached serve.run and raised consumes one; a skip never does.
 _MAX_TRANSIENT_FAILURES = 3
 _WAITING_LOG_EVERY_N_PASSES = 30  # with 2s sleep, log "still waiting" once per minute
 
@@ -35,10 +34,8 @@ class DeployPlan:
 
     models_to_add: list[ModelshipModelConfig]
     apps_to_remove: list[str]
-    # Previously-effective deployments that are no longer desired AND aren't live
-    # (no Serve app to delete) — e.g. reloaded from the durable registry after a
-    # cluster restart. They have no app to delete, but their stale coordinator
-    # registry entry must still be dropped or the gateway routes to a ghost.
+    # Dropped deployments with no live app to delete — only their stale coordinator
+    # registry entry needs clearing, or the gateway routes to a ghost.
     registry_only_drop: list[str]
 
 
@@ -48,18 +45,14 @@ def compute_deploy_plan(
     prev_effective_names: set[str],
     gateway_name: str,
 ) -> DeployPlan:
-    """Diff the desired effective set against what's live. The deploy ALWAYS
-    reconciles live -> desired (the merge verb already folded additive/reconcile
-    into `desired_conf`). Deployment names are `{model}-{fingerprint}`, so
-    a pure set comparison detects renames and config drift.
+    """Diff the desired effective set against what's live. The merge verb already
+    folded additive/reconcile into `desired_conf`, so this always reconciles
+    live -> desired. Deployment names are `{model}-{fingerprint}`, so a set
+    comparison detects renames and config drift.
 
-    Removal is scoped to `prev_effective_names` — the deployments that were under
-    THIS gateway's effective management before this run — intersected with what's
-    actually live. This is what keeps reconcile non-destructive: legacy/un-tracked
-    deployments (e.g. live models from before the effective config existed) and
-    other gateways' apps are never removed; only models the effective set itself
-    dropped are. An empty prev-effective set (migration / fresh install) therefore
-    removes nothing."""
+    Removal is `prev_effective_names & existing_apps`: only deployments THIS
+    gateway previously managed are removed, never untracked ones or another
+    gateway's. An empty prev-effective set removes nothing."""
 
     # Sort key: footprint desc, whole-GPU before fractional, larger fraction first.
     def _gpu_footprint(c: ModelshipModelConfig) -> tuple[int, bool, float]:
@@ -76,10 +69,8 @@ def compute_deploy_plan(
 
     desired_names = {c.deployment_name(gateway_name) for c in sorted_models}
 
-    # All previously-effective deployments this run drops, split by liveness:
-    # the live ones get serve.delete + registry drop; the rest (tracked but not
-    # live — typically resurrected from the durable registry onto a fresh cluster)
-    # get a registry-only drop so the gateway stops routing to a non-existent app.
+    # Split the dropped set by liveness: live ones get serve.delete + a registry
+    # drop, the rest a registry-only drop.
     dropped = prev_effective_names - desired_names
     apps_to_remove = sorted(dropped & existing_apps)
     registry_only_drop = sorted(dropped - existing_apps)
@@ -92,8 +83,8 @@ def compute_deploy_plan(
             registry_only_drop,
         )
 
-    # Skip configs already live under their fingerprint — makes re-runs idempotent
-    # and adopts a matching un-tracked deployment instead of redeploying it.
+    # Already live under its fingerprint -> skip, so re-runs are idempotent and a
+    # matching untracked deployment is adopted rather than redeployed.
     models_to_add = [c for c in sorted_models if c.deployment_name(gateway_name) not in existing_apps]
     if models_to_add:
         logger.info(
@@ -139,8 +130,7 @@ def try_reserve_and_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> 
     if not reserved:
         return "skipped", None
 
-    # Replica sizing: autoscaling_config and a fixed num_replicas are mutually
-    # exclusive (enforced at config validation) — pass exactly one to Serve.
+    # Mutually exclusive, enforced at config validation — pass Serve exactly one.
     if config.autoscaling_config is not None:
         scaling_opts: dict = {"autoscaling_config": config.autoscaling_config.to_serve_dict()}
     else:
@@ -161,9 +151,8 @@ def try_reserve_and_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> 
             route_prefix=None,
         )
         logger.info("Model ready: %s (deployment: %s)", config.name, deployment_name)
-        # Record ownership in the replica coordinator — the single source of truth.
-        # This bumps the gateway's generation, so every gateway replica's watch loop
-        # picks the new deployment up (the driver never pushes to replicas directly).
+        # Registering bumps the gateway's generation; replica watch loops pick the
+        # deployment up from there, so the driver never pushes to them.
         try:
             ray.get(ctx.replica_coordinator.register_deployment.remote(ctx.gateway_name, deployment_name, config.name))
         except Exception:
@@ -193,9 +182,8 @@ def try_reserve_and_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> 
         )
         return "transient", f"{type(exc).__name__}: {exc}"
     finally:
-        # Ray may already be shut down (e.g. SIGINT cleanup ran shutdown_ray);
-        # the OperatorProbe death-detection will free the lock either way once
-        # the driver dies.
+        # Ray may already be shut down; OperatorProbe death-detection frees the
+        # lock either way once the driver dies.
         if ray.is_initialized():
             try:
                 ray.get(ctx.coordinator.release.remote(ctx.operator_id))
@@ -207,20 +195,16 @@ def run_deploy_loop(
     models: list[ModelshipModelConfig],
     ctx: DeployContext,
 ) -> tuple[int, list[tuple[ModelshipModelConfig, str]]]:
-    """Retry-pass loop: each pass tries every not-yet-deployed model. Models
-    whose resources don't currently fit (or whose reservation is rejected
-    because another operator holds the lock) are skipped and retried on the
-    next pass, indefinitely — waiting for a node to join is legitimate.
-    Placeable models deploy in configured order (TP>1 first).
+    """Retry-pass loop: each pass tries every not-yet-deployed model, in configured
+    order (TP>1 first). A model skipped for resources or a held lock is retried
+    indefinitely. One whose deploy raises gets `_MAX_TRANSIENT_FAILURES` attempts,
+    the pass sleep doubling each time, then is given up on as fatal — without the
+    cap it holds this loop, and the caller's removals and effective-config write,
+    forever.
 
-    A model whose deploy actually runs and raises gets `_MAX_TRANSIENT_FAILURES`
-    attempts, the pass sleep doubling each time, then is given up on as fatal.
-    Without that cap one crash-looping model holds this loop forever, and the
-    caller's app removals and effective-config write never run.
-
-    Returns (pass_count, fatally_failed) where fatally_failed pairs each
-    permanently-failed config with its error detail — the caller logs each one
-    and keeps it in the effective config, so a later deploy retries it."""
+    Returns (pass_count, fatally_failed), pairing each permanently-failed config
+    with its error detail. The caller logs them and keeps them in the effective
+    config, so a later deploy retries."""
     remaining = list(models)
     fatally_failed: list[tuple[ModelshipModelConfig, str]] = []
     failures: dict[str, int] = {}
@@ -268,8 +252,7 @@ def run_deploy_loop(
                 )
 
         if remaining:
-            # Back off only for models that have actually failed; a pure capacity
-            # wait keeps the base cadence.
+            # Back off only for models that failed; a capacity wait keeps the base cadence.
             worst = max(failures.get(c.deployment_name(ctx.gateway_name), 0) for c in remaining)
             time.sleep(_DEPLOY_RETRY_SLEEP_S * 2**worst)
 
