@@ -52,14 +52,13 @@ def main(argv: list[str] | None = None) -> None:
         to_config,
         write_effective,
     )
+    from modelship.deploy.removal import delete_apps_quietly, remove_apps
     from modelship.deploy.serve_utils import (
         connect_ray,
-        delete_apps_quietly,
         gateway_route_prefix,
         get_existing_apps,
         leave_ray_cluster,
         make_operator_id,
-        remove_apps,
         seed_expected_models,
         shutdown_ray,
         start_gateway,

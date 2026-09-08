@@ -8,6 +8,7 @@ from ray import serve
 from ray.serve.schema import LoggingConfig
 
 from modelship.deploy.actor_options import build_deployment_options, total_cpu_reservation, total_gpu_reservation
+from modelship.deploy.removal import delete_apps_quietly
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.infer.model_deployment import ModelDeployment
 from modelship.logging import get_logger
@@ -18,14 +19,6 @@ _DEPLOY_RETRY_SLEEP_S = 2.0
 # Only a pass that reached serve.run and raised consumes one; a skip never does.
 _MAX_TRANSIENT_FAILURES = 3
 _WAITING_LOG_EVERY_N_PASSES = 30  # with 2s sleep, log "still waiting" once per minute
-
-
-def _delete_failed_app(deployment_name: str) -> None:
-    """serve.run leaves the application behind when it raises."""
-    try:
-        serve.delete(deployment_name)
-    except Exception:
-        logger.exception("Failed to delete failed deployment: %s", deployment_name)
 
 
 @dataclass
@@ -173,7 +166,8 @@ def try_reserve_and_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> 
                 deployment_name,
                 fatal_err,
             )
-            _delete_failed_app(deployment_name)
+            # serve.run leaves the application behind when it raises.
+            delete_apps_quietly([deployment_name])
             return "fatal", str(fatal_err)
         logger.exception(
             "Deploy failed for %s (deployment=%s); will retry next pass.",
@@ -234,7 +228,7 @@ def run_deploy_loop(
                         deployment_name,
                         detail,
                     )
-                    _delete_failed_app(deployment_name)
+                    delete_apps_quietly([deployment_name])
                     fatally_failed.append((config, detail or ""))
                     remaining.remove(config)
                     made_progress = True
