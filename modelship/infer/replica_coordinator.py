@@ -115,8 +115,8 @@ class ReplicaCoordinator:
         self._bump(gateway_name)
 
     async def unregister_deployment(self, gateway_name: str, deployment_name: str) -> None:
-        """Drop the deployment, and with it the model's readiness entry once no other
-        deployment serves that name — otherwise /readyz reports it pending forever."""
+        """Drop the deployment, and the model's `_expected` entry with it once no
+        other deployment serves that name."""
         gw = self._registry.get(gateway_name)
         if gw is not None:
             model_name = gw.pop(deployment_name, None)

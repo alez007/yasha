@@ -20,9 +20,6 @@ def test_get_or_create_sets_max_restarts():
 
 
 class TestReplicaDeathCounting:
-    """Ray Serve replaces a replica that dies after going healthy, with no cap of its
-    own — the coordinator counts those deaths and retires the deployment."""
-
     @staticmethod
     def _coord():
         # The plain class behind @ray.remote; its methods are ordinary coroutines.
@@ -54,8 +51,6 @@ class TestReplicaDeathCounting:
 
     @pytest.mark.asyncio
     async def test_the_count_is_not_time_windowed(self):
-        # A crash-loop cycle is dominated by model load, so a window short enough to
-        # be meaningful would age strikes out before a slow model reached the limit.
         coord = self._coord()
         coord._deaths["qwen-aaaa"] = deploy_coordinator._DEATHS_PER_REPLICA - 1
         with patch.object(coord, "_retire", new=AsyncMock()) as retire:

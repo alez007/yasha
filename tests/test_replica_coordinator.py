@@ -72,8 +72,7 @@ class TestRoutingRegistry:
 
 
 class TestExpectedFollowsTheRegistry:
-    """A model kept in `expected` after its last deployment is gone leaves /readyz
-    reporting it pending forever."""
+    """`_expected` is what /readyz measures against, so it has to track the registry."""
 
     @pytest.mark.asyncio
     async def test_unregister_drops_the_model_from_expected(self, coord):

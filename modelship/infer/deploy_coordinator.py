@@ -47,9 +47,6 @@ logger = get_logger("deploy_coordinator")
 COORDINATOR_ACTOR_NAME = "modelship-deploy-coordinator"
 COORDINATOR_NAMESPACE = "modelship"
 
-# Ray Serve's own retry cap stops applying once a replica has gone healthy, so
-# deaths after that point are counted here instead. Counted for the life of the
-# deployment: the key carries the config fingerprint, so a redeploy starts over.
 _DEATHS_PER_REPLICA = 3
 
 _LIVENESS_POLL_INTERVAL_S = 5.0
@@ -90,9 +87,10 @@ class DeployCoordinator:
         replica_ceiling: int,
         reason: str,
     ) -> None:
-        """Count one post-startup backend death. Past the strike limit the
-        deployment is retired, since nothing else stops Serve replacing the
-        replica. The reporting replica exits either way."""
+        """Count one backend death against `deployment_name`, retiring it past
+        `_DEATHS_PER_REPLICA * replica_ceiling`. The count is never reset by time,
+        only by a redeploy — the key carries the config fingerprint. The reporting
+        replica exits whatever this returns."""
         deaths = self._deaths.get(deployment_name, 0) + 1
         self._deaths[deployment_name] = deaths
         limit = _DEATHS_PER_REPLICA * max(replica_ceiling, 1)

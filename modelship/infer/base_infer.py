@@ -40,7 +40,6 @@ from modelship.openai.protocol.responses.streaming import ResponsesStreamTransla
 
 logger = get_logger("infer")
 
-# Bounds how long a dying replica waits on the coordinator before exiting anyway.
 _DEATH_REPORT_TIMEOUT_S = 5.0
 
 _NOT_SUPPORTED = ErrorResponse(
@@ -338,9 +337,8 @@ class BaseInfer[Prepared](ABC):
             return []
 
     def backend_died(self, reason: str) -> NoReturn:
-        """Kill this replica after telling the deploy coordinator why. Serve replaces
-        the replica; the coordinator counts the deaths and retires the deployment
-        once they stop being worth replacing. Never returns."""
+        """Report the death to the deploy coordinator, then kill this replica.
+        Never returns; a failed report is logged and exits anyway."""
         try:
             from modelship.infer.deploy_coordinator import get_or_create_coordinator
 
