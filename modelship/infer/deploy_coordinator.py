@@ -48,9 +48,9 @@ COORDINATOR_ACTOR_NAME = "modelship-deploy-coordinator"
 COORDINATOR_NAMESPACE = "modelship"
 
 # Ray Serve's own retry cap stops applying once a replica has gone healthy, so
-# deaths after that point are counted here instead.
+# deaths after that point are counted here instead. Counted for the life of the
+# deployment: the key carries the config fingerprint, so a redeploy starts over.
 _DEATHS_PER_REPLICA = 3
-_REPLICA_DEATH_WINDOW_S = 600.0
 
 _LIVENESS_POLL_INTERVAL_S = 5.0
 _LIVENESS_CALL_TIMEOUT_S = 3.0
@@ -81,7 +81,7 @@ class DeployCoordinator:
         self._held_since: float = 0.0
         self._watcher_task: asyncio.Task | None = None
         self._fatal_errors: dict[str, str] = {}
-        self._deaths: dict[str, list[float]] = {}
+        self._deaths: dict[str, int] = {}
 
     async def report_replica_death(
         self,
@@ -93,27 +93,13 @@ class DeployCoordinator:
         """Count one post-startup backend death. Past the strike limit the
         deployment is retired, since nothing else stops Serve replacing the
         replica. The reporting replica exits either way."""
-        now = time.time()
-        recent = [t for t in self._deaths.get(deployment_name, []) if now - t < _REPLICA_DEATH_WINDOW_S]
-        recent.append(now)
-        self._deaths[deployment_name] = recent
+        deaths = self._deaths.get(deployment_name, 0) + 1
+        self._deaths[deployment_name] = deaths
         limit = _DEATHS_PER_REPLICA * max(replica_ceiling, 1)
-        if len(recent) < limit:
-            logger.warning(
-                "Replica death %d of %d for %s: %s",
-                len(recent),
-                limit,
-                deployment_name,
-                reason,
-            )
+        if deaths < limit:
+            logger.warning("Replica death %d of %d for %s: %s", deaths, limit, deployment_name, reason)
             return
-        logger.error(
-            "Retiring %s after %d replica death(s) within %ds; last: %s",
-            deployment_name,
-            len(recent),
-            int(_REPLICA_DEATH_WINDOW_S),
-            reason,
-        )
+        logger.error("Retiring %s after %d replica death(s); last: %s", deployment_name, deaths, reason)
         self._deaths.pop(deployment_name, None)
         await self._retire(gateway_name, deployment_name)
 

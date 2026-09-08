@@ -1,7 +1,6 @@
 """Tests for the deploy coordinator's cross-operator mutex actor factory; routing-registry
 concerns live in test_replica_coordinator.py. Reserve/release/liveness paths are untested."""
 
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -54,14 +53,14 @@ class TestReplicaDeathCounting:
         assert retire.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_deaths_older_than_the_window_are_forgotten(self):
+    async def test_the_count_is_not_time_windowed(self):
+        # A crash-loop cycle is dominated by model load, so a window short enough to
+        # be meaningful would age strikes out before a slow model reached the limit.
         coord = self._coord()
-        stale = time.time() - deploy_coordinator._REPLICA_DEATH_WINDOW_S - 1
-        coord._deaths["qwen-aaaa"] = [stale] * 99
+        coord._deaths["qwen-aaaa"] = deploy_coordinator._DEATHS_PER_REPLICA - 1
         with patch.object(coord, "_retire", new=AsyncMock()) as retire:
             await coord.report_replica_death("gw", "qwen-aaaa", 1, "engine died")
-        retire.assert_not_called()
-        assert coord._deaths["qwen-aaaa"] == [pytest.approx(time.time(), abs=5)]
+        retire.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_deployments_are_counted_separately(self):
