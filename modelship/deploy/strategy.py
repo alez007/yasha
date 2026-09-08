@@ -15,7 +15,18 @@ from modelship.logging import get_logger
 logger = get_logger("startup")
 
 _DEPLOY_RETRY_SLEEP_S = 2.0
+# Attempts a model gets before the driver stops retrying it. Only a pass where the
+# deploy actually ran and raised consumes one; a capacity skip never does.
+_MAX_TRANSIENT_FAILURES = 3
 _WAITING_LOG_EVERY_N_PASSES = 30  # with 2s sleep, log "still waiting" once per minute
+
+
+def _delete_failed_app(deployment_name: str) -> None:
+    """serve.run leaves the application behind when it raises."""
+    try:
+        serve.delete(deployment_name)
+    except Exception:
+        logger.exception("Failed to delete failed deployment: %s", deployment_name)
 
 
 @dataclass
@@ -110,8 +121,9 @@ class DeployContext:
 
 def try_reserve_and_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> tuple[str, str | None]:
     """One attempt at deploying *config*. Returns (status, detail) where status is:
-    "skipped" (no progress, retry), "deployed", "transient" (deploy raised; retry),
-    "fatal" (deployment reported a permanent error; skip permanently)."""
+    "skipped" (no progress, retry), "deployed", "transient" (deploy raised; retry,
+    detail is the exception), "fatal" (deployment reported a permanent error; skip
+    permanently)."""
     deploy_opts = build_deployment_options(config)
     deployment_name = config.deployment_name(ctx.gateway_name)
 
@@ -157,7 +169,7 @@ def try_reserve_and_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> 
         except Exception:
             logger.exception("Failed to record %s in deploy registry", deployment_name)
         return "deployed", None
-    except Exception:
+    except Exception as exc:
         # Did the deployment actively report a fatal init error before dying?
         try:
             fatal_err = ray.get(ctx.coordinator.pop_fatal_error.remote(deployment_name), timeout=2.0)
@@ -172,17 +184,14 @@ def try_reserve_and_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> 
                 deployment_name,
                 fatal_err,
             )
-            try:
-                serve.delete(deployment_name)
-            except Exception:
-                logger.exception("Failed to delete failed deployment: %s", deployment_name)
+            _delete_failed_app(deployment_name)
             return "fatal", str(fatal_err)
         logger.exception(
             "Deploy failed for %s (deployment=%s); will retry next pass.",
             config.name,
             deployment_name,
         )
-        return "transient", None
+        return "transient", f"{type(exc).__name__}: {exc}"
     finally:
         # Ray may already be shut down (e.g. SIGINT cleanup ran shutdown_ray);
         # the OperatorProbe death-detection will free the lock either way once
@@ -201,14 +210,20 @@ def run_deploy_loop(
     """Retry-pass loop: each pass tries every not-yet-deployed model. Models
     whose resources don't currently fit (or whose reservation is rejected
     because another operator holds the lock) are skipped and retried on the
-    next pass. Placeable models deploy in configured order (TP>1 first).
+    next pass, indefinitely — waiting for a node to join is legitimate.
+    Placeable models deploy in configured order (TP>1 first).
+
+    A model whose deploy actually runs and raises gets `_MAX_TRANSIENT_FAILURES`
+    attempts, the pass sleep doubling each time, then is given up on as fatal.
+    Without that cap one crash-looping model holds this loop forever, and the
+    caller's app removals and effective-config write never run.
 
     Returns (pass_count, fatally_failed) where fatally_failed pairs each
-    permanently-failed config with its error detail — the caller logs the name
-    and evicts the deployment from the effective config so a re-assert doesn't
-    retry it forever."""
+    permanently-failed config with its error detail — the caller logs each one
+    and keeps it in the effective config, so a later deploy retries it."""
     remaining = list(models)
     fatally_failed: list[tuple[ModelshipModelConfig, str]] = []
+    failures: dict[str, int] = {}
     pass_count = 0
     passes_with_no_progress = 0
 
@@ -216,6 +231,7 @@ def run_deploy_loop(
         pass_count += 1
         made_progress = False
         for config in list(remaining):
+            deployment_name = config.deployment_name(ctx.gateway_name)
             status, detail = try_reserve_and_deploy(config, ctx)
             if status == "deployed":
                 remaining.remove(config)
@@ -224,7 +240,21 @@ def run_deploy_loop(
                 fatally_failed.append((config, detail or ""))
                 remaining.remove(config)
                 made_progress = True
-            # "skipped" / "transient" -> stay in `remaining` for the next pass
+            elif status == "transient":
+                failures[deployment_name] = failures.get(deployment_name, 0) + 1
+                if failures[deployment_name] >= _MAX_TRANSIENT_FAILURES:
+                    logger.error(
+                        "Giving up on model '%s' after %d failed attempt(s) (deployment=%s): %s",
+                        config.name,
+                        failures[deployment_name],
+                        deployment_name,
+                        detail,
+                    )
+                    _delete_failed_app(deployment_name)
+                    fatally_failed.append((config, detail or ""))
+                    remaining.remove(config)
+                    made_progress = True
+            # "skipped" -> stays in `remaining` for the next pass
 
         if made_progress:
             passes_with_no_progress = 0
@@ -238,6 +268,9 @@ def run_deploy_loop(
                 )
 
         if remaining:
-            time.sleep(_DEPLOY_RETRY_SLEEP_S)
+            # Back off only for models that have actually failed; a pure capacity
+            # wait keeps the base cadence.
+            worst = max(failures.get(c.deployment_name(ctx.gateway_name), 0) for c in remaining)
+            time.sleep(_DEPLOY_RETRY_SLEEP_S * 2**worst)
 
     return pass_count, fatally_failed
