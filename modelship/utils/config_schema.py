@@ -74,7 +74,8 @@ class _StrictModel(BaseModel):
 class VllmEngineConfig(_StrictModel):
     tensor_parallel_size: int = 1
     pipeline_parallel_size: int = 1
-    max_model_len: int | None = None
+    # Unset means vLLM fits the context to memory; the sentinel for that is derived.
+    max_model_len: int | None = Field(default=None, ge=1)
     dtype: str = "auto"
     tokenizer: str | None = None
     trust_remote_code: bool = False

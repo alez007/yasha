@@ -112,6 +112,14 @@ from modelship.utils import base_request_id
 
 logger = get_logger("infer.vllm")
 
+# vLLM's sentinel for "fit the context to what memory profiling leaves".
+_AUTO_FIT_MAX_MODEL_LEN = -1
+
+
+def resolve_max_model_len(engine_kwargs: VllmEngineConfig) -> int:
+    """Derived, not a config key: the schema takes a real length or nothing."""
+    return engine_kwargs.max_model_len or _AUTO_FIT_MAX_MODEL_LEN
+
 
 def _to_error_response(
     err: VllmValidationError | VllmErrorResponse | Exception | str,
@@ -352,7 +360,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             model=self._model_path,
             tensor_parallel_size=self.vllm_engine_kwargs.tensor_parallel_size,
             pipeline_parallel_size=self.vllm_engine_kwargs.pipeline_parallel_size,
-            max_model_len=cast("int", self.vllm_engine_kwargs.max_model_len),
+            max_model_len=resolve_max_model_len(self.vllm_engine_kwargs),
             dtype=cast("VllmModelDType", self.vllm_engine_kwargs.dtype),
             tokenizer=self.vllm_engine_kwargs.tokenizer,
             trust_remote_code=self.vllm_engine_kwargs.trust_remote_code,

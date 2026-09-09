@@ -718,3 +718,42 @@ class TestPreRayImportChain:
         code = f"import sys; import {module}; print({heavy!r} in sys.modules)"
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
         assert result.stdout.strip() == "False", f"{module} imports {heavy}"
+
+
+class TestMaxModelLenValidation:
+    """A context length or nothing. vLLM's -1 auto-fit sentinel is derived by the
+    actor, so preflight's `x or fallback` reads can never see a negative."""
+
+    def _cfg(self, value):
+        from modelship.utils.config_schema import VllmEngineConfig
+
+        return VllmEngineConfig(max_model_len=value)
+
+    def test_a_positive_context_length_is_accepted(self):
+        assert self._cfg(4096).max_model_len == 4096
+
+    def test_unset_stays_none(self):
+        from modelship.utils.config_schema import VllmEngineConfig
+
+        assert VllmEngineConfig().max_model_len is None
+
+    @pytest.mark.parametrize("value", [0, -1, -2, -7])
+    def test_non_positive_values_are_rejected(self, value):
+        with pytest.raises(ValidationError):
+            self._cfg(value)
+
+
+class TestResolveMaxModelLen:
+    """The engine-side half of the split: unset becomes vLLM's auto-fit sentinel."""
+
+    def test_a_set_length_passes_through(self):
+        from modelship.infer.vllm.vllm_infer import resolve_max_model_len
+        from modelship.utils.config_schema import VllmEngineConfig
+
+        assert resolve_max_model_len(VllmEngineConfig(max_model_len=8192)) == 8192
+
+    def test_unset_becomes_the_auto_fit_sentinel(self):
+        from modelship.infer.vllm.vllm_infer import _AUTO_FIT_MAX_MODEL_LEN, resolve_max_model_len
+        from modelship.utils.config_schema import VllmEngineConfig
+
+        assert resolve_max_model_len(VllmEngineConfig()) == _AUTO_FIT_MAX_MODEL_LEN

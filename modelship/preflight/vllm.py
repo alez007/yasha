@@ -23,9 +23,6 @@ _DEFAULT_BLOCK_SIZE = 16
 # buffer per sequence slot (sized by max_num_seqs, not max_model_len).
 _MIN_MAX_NUM_SEQS = 8
 
-# vLLM's sentinel for "fit the context to what memory profiling leaves".
-_AUTO_FIT_MAX_MODEL_LEN = -1
-
 # Overhead on top of weight bytes: AWQ/Marlin transposed packs, quant scales,
 # embedding tables, torch.compile artifacts not in safetensors `total_size`.
 _OVERHEAD_WEIGHT_FRACTION = 0.14
@@ -80,11 +77,6 @@ class VllmPreflight:
 
     def _recommend_gpu(self, config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
         rec: dict[str, Any] = {}
-        # vLLM binary-searches the largest context its post-profiling KV pool
-        # holds, per worker. Skipped when set, so the merge has nothing to warn on.
-        if config.vllm_engine_kwargs.max_model_len is None:
-            rec["max_model_len"] = _AUTO_FIT_MAX_MODEL_LEN
-
         model_path = config._resolved_path
         if not model_path:
             logger.info("preflight '%s': no resolved model path; auto-fit only", config.name)
