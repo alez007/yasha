@@ -718,3 +718,24 @@ class TestPreRayImportChain:
         code = f"import sys; import {module}; print({heavy!r} in sys.modules)"
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
         assert result.stdout.strip() == "False", f"{module} imports {heavy}"
+
+
+class TestMaxModelLenValidation:
+    def _cfg(self, value):
+        from modelship.utils.config_schema import VllmEngineConfig
+
+        return VllmEngineConfig(max_model_len=value)
+
+    def test_a_positive_context_length_is_accepted(self):
+        assert self._cfg(4096).max_model_len == 4096
+
+    def test_the_auto_fit_sentinel_is_accepted(self):
+        from modelship.utils.config_schema import AUTO_FIT_MAX_MODEL_LEN
+
+        assert self._cfg(AUTO_FIT_MAX_MODEL_LEN).max_model_len == AUTO_FIT_MAX_MODEL_LEN
+
+    @pytest.mark.parametrize("value", [0, -2, -7])
+    def test_other_non_positive_values_are_rejected(self, value):
+        # Without this they reach vLLM verbatim and preflight reads them as "unset".
+        with pytest.raises(ValidationError, match="positive context length"):
+            self._cfg(value)

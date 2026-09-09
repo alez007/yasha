@@ -13,6 +13,7 @@ from modelship.preflight._mla import MLAInfo
 from modelship.preflight._mla import kv_bytes_per_token as mla_kv_bytes_per_token
 from modelship.preflight._sliding_window import SlidingWindowInfo, fit_len_with_sliding, seq_kv_bytes
 from modelship.preflight.base import HardwareProfile
+from modelship.utils.config_schema import AUTO_FIT_MAX_MODEL_LEN
 
 logger = get_logger("preflight.vllm")
 
@@ -22,9 +23,6 @@ _DEFAULT_BLOCK_SIZE = 16
 # Concurrency floor for hybrid/SSM models: vLLM parks a fixed recurrent-state
 # buffer per sequence slot (sized by max_num_seqs, not max_model_len).
 _MIN_MAX_NUM_SEQS = 8
-
-# vLLM's sentinel for "fit the context to what memory profiling leaves".
-_AUTO_FIT_MAX_MODEL_LEN = -1
 
 # Overhead on top of weight bytes: AWQ/Marlin transposed packs, quant scales,
 # embedding tables, torch.compile artifacts not in safetensors `total_size`.
@@ -70,9 +68,9 @@ _MLA_WORKSPACE_SAFETY_MARGIN = 1.1
 
 
 def _user_context_length(config: ModelshipModelConfig) -> int | None:
-    """The user's max_model_len as a length — None for `_AUTO_FIT_MAX_MODEL_LEN`."""
+    """The user's max_model_len as a length — None for `AUTO_FIT_MAX_MODEL_LEN`."""
     value = config.vllm_engine_kwargs.max_model_len
-    return value if value is not None and value > 0 else None
+    return None if value == AUTO_FIT_MAX_MODEL_LEN else value
 
 
 class VllmPreflight:
@@ -89,7 +87,7 @@ class VllmPreflight:
         # vLLM binary-searches the largest context its post-profiling KV pool
         # holds, per worker. Skipped when set, so the merge has nothing to warn on.
         if config.vllm_engine_kwargs.max_model_len is None:
-            rec["max_model_len"] = _AUTO_FIT_MAX_MODEL_LEN
+            rec["max_model_len"] = AUTO_FIT_MAX_MODEL_LEN
 
         model_path = config._resolved_path
         if not model_path:
