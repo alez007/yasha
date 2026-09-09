@@ -577,12 +577,10 @@ class TestVllmPreflight:
     _ACTOR_POPPED = frozenset({"gpu_memory_utilization"})
 
     def test_recommendation_survives_the_actor_merge(self, tmp_path):
-        """Every shape whose recommendation reaches VllmEngineConfig, including the
-        two that recommend a derived gpu_memory_utilization (MLA on GPU, and CPU) —
-        a dense GPU deploy is the only one that never emits it."""
+        """Whatever preflight emits must construct a VllmEngineConfig, since the
+        actor revalidates the merged dict. A dense GPU deploy emits nothing at all
+        (see test_context_recommendation_ignores_hardware)."""
         cases = (
-            ("dense/40GiB", _DENSE_CFG, 1, HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])),
-            ("dense/80GiB", _DENSE_CFG, 1, HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])),
             ("mla/40GiB", _MLA_CFG, 1, HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])),
             ("dense/cpu", _DENSE_CFG, 0, HardwareProfile(ram_bytes=64 * 1024**3)),
         )
@@ -620,27 +618,26 @@ class TestVllmPreflight:
         assert "gpu_memory_utilization" not in recs["gpu"]
         assert "gpu_memory_utilization" in recs["cpu"]
 
-    def test_no_gpus_still_recommends_auto_fit(self):
+    def test_no_gpus_leaves_the_context_unset(self):
         # num_gpus > 0 means Ray reserved one, whatever discovery reports.
         cfg = _make_config(resolved_path="/nonexistent")
-        assert VllmPreflight().recommend(cfg, HardwareProfile()) == {"max_model_len": -1}
+        assert VllmPreflight().recommend(cfg, HardwareProfile()) == {}
 
-    def test_no_resolved_path_still_recommends_auto_fit(self):
+    def test_no_resolved_path_leaves_the_context_unset(self):
         cfg = _make_config()
         hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test")])
-        assert VllmPreflight().recommend(cfg, hw) == {"max_model_len": -1}
+        assert VllmPreflight().recommend(cfg, hw) == {}
 
-    def test_missing_config_json_still_recommends_auto_fit(self, tmp_path):
+    def test_missing_config_json_leaves_the_context_unset(self, tmp_path):
         cfg = _make_config(resolved_path=str(tmp_path))
         hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test")])
-        assert VllmPreflight().recommend(cfg, hw) == {"max_model_len": -1}
+        assert VllmPreflight().recommend(cfg, hw) == {}
 
-    def test_missing_geometry_still_recommends_auto_fit(self, tmp_path):
-        # Auto-fit reads no geometry.
+    def test_missing_geometry_leaves_the_context_unset(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json={"torch_dtype": "bfloat16"}, weight_bytes=1024)
         cfg = _make_config(resolved_path=str(snapshot))
         hw = HardwareProfile(gpus=[GPUInfo(0, 80 * 1024**3, "test")])
-        assert VllmPreflight().recommend(cfg, hw) == {"max_model_len": -1}
+        assert VllmPreflight().recommend(cfg, hw) == {}
 
     def test_context_recommendation_ignores_hardware(self, tmp_path):
         # A tight card, a roomy one and a half-share all get the same answer.
@@ -652,7 +649,7 @@ class TestVllmPreflight:
             )
             for num_gpus, free_gib in ((1, 16), (1, 80), (0.5, 80))
         ]
-        assert recs == [{"max_model_len": -1}] * 3
+        assert recs == [{}] * 3
 
     def test_user_set_max_model_len_is_left_alone(self, tmp_path):
         # The merge discards ours here, so emitting it would only log a warning.
@@ -954,8 +951,7 @@ class TestMultimodal:
         )
         hw = HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test"), GPUInfo(1, 24 * 1024**3, "test")])
         rec = VllmPreflight().recommend(cfg, hw)
-        assert rec["max_model_len"] == -1
-        # Also recognised as multimodal → max_num_batched_tokens is set.
+        # Recognised as multimodal → max_num_batched_tokens is set.
         assert "max_num_batched_tokens" in rec
 
     @pytest.mark.parametrize(
@@ -1098,17 +1094,6 @@ class TestMlaKvCache:
         config = _make_config(vllm_kwargs={"max_model_len": 1024, "max_num_seqs": 8192})
         row_bytes = mla.num_heads * (mla.qk_nope_head_dim + mla.v_head_dim) * 2
         assert _mla_chunked_prefill_workspace_bytes(_MLA_CFG, config, 2, mla, 1) == 8192 * 16 * row_bytes
-
-    def test_the_auto_fit_sentinel_is_not_read_as_a_context_length(self):
-        # -1 is truthy, so `max_model_len or max_position_embeddings` used to pick it
-        # and 8 * -1 lost to the pages term — an 8x under-sized workspace.
-        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
-
-        mla = _resolve_mla(_MLA_CFG)
-        assert mla is not None
-        unset = _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 1)
-        auto_fit = _make_config(vllm_kwargs={"max_model_len": -1})
-        assert _mla_chunked_prefill_workspace_bytes(_MLA_CFG, auto_fit, 2, mla, 1) == unset
 
     def test_mla_chunked_prefill_workspace_matches_deepseek_v2_lite_oom(self):
         # Anchored against a real DeepSeek-V2-Lite-AWQ OOM: PyTorch reported
@@ -1259,7 +1244,7 @@ class TestHybridIntegration:
         # Same model/GPU but treated as a plain transformer (no state term).
         with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=None):
             dense = VllmPreflight().recommend(cfg, hw)
-        assert hybrid == {"max_model_len": -1, "max_num_seqs": 8}
+        assert hybrid == {"max_num_seqs": 8}
         assert "max_num_seqs" not in dense  # non-hybrid never emits it
 
     def test_gpu_hybrid_seqs_stay_flat_on_a_roomy_card(self, tmp_path):
@@ -1269,7 +1254,7 @@ class TestHybridIntegration:
         hw = HardwareProfile(gpus=[GPUInfo(0, 40 * 1024**3, "test")])
         with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
             rec = VllmPreflight().recommend(cfg, hw)
-        assert rec == {"max_model_len": -1, "max_num_seqs": 8}
+        assert rec == {"max_num_seqs": 8}
 
     def test_cpu_auto_gmu_hybrid_folds_state_into_gmu(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
@@ -1280,19 +1265,6 @@ class TestHybridIntegration:
         assert rec["max_num_seqs"] == 8  # tight RAM → floor
         assert 0 < rec["max_model_len"] < _HYBRID_CFG["max_position_embeddings"]
         assert "gpu_memory_utilization" in rec  # auto path still sizes the fraction
-
-    def test_cpu_hybrid_auto_fit_sentinel_matches_an_unset_context(self, tmp_path):
-        # -1 used to reach _apply_hybrid_fit as the target, which skipped the fit
-        # ladder (budget >= negative target) and spent the whole budget on seqs.
-        snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
-        hw = HardwareProfile(ram_bytes=16 * 1024**3, available_ram_bytes=16 * 1024**3)
-        recs = []
-        for kwargs in ({}, {"max_model_len": -1}):
-            cfg = _make_config(resolved_path=str(snapshot), num_gpus=0, vllm_kwargs=kwargs)
-            with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
-                recs.append(VllmPreflight().recommend(cfg, hw))
-        assert recs[0] == recs[1]
-        assert recs[1]["max_num_seqs"] == 8
 
     def test_explicit_gpu_memory_utilization_rejected_on_cpu_hybrid_deploy(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)

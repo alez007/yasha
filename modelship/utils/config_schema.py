@@ -7,7 +7,7 @@ import os
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from modelship.logging import get_logger
 from modelship.utils import is_pathy
@@ -71,14 +71,11 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-# vLLM's sentinel for "fit the context to what memory profiling leaves".
-AUTO_FIT_MAX_MODEL_LEN = -1
-
-
 class VllmEngineConfig(_StrictModel):
     tensor_parallel_size: int = 1
     pipeline_parallel_size: int = 1
-    max_model_len: int | None = None
+    # Unset means vLLM fits the context to memory; the sentinel for that is derived.
+    max_model_len: int | None = Field(default=None, ge=1)
     dtype: str = "auto"
     tokenizer: str | None = None
     trust_remote_code: bool = False
@@ -106,16 +103,6 @@ class VllmEngineConfig(_StrictModel):
                 if key in data:
                     raise ValueError(f"vllm_engine_kwargs.{key} cannot be set: {reason}")
         return data
-
-    @field_validator("max_model_len")
-    @classmethod
-    def check_max_model_len(cls, value: int | None) -> int | None:
-        if value is not None and value < 1 and value != AUTO_FIT_MAX_MODEL_LEN:
-            raise ValueError(
-                f"vllm_engine_kwargs.max_model_len must be a positive context length or "
-                f"{AUTO_FIT_MAX_MODEL_LEN} (let vLLM fit it to available memory); got {value}."
-            )
-        return value
 
 
 class DiffusersConfig(_StrictModel):
