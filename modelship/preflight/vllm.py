@@ -257,7 +257,7 @@ class VllmPreflight:
             suggested,
             recommended_gmu,
         )
-        return {"max_model_len": suggested, "gpu_memory_utilization": recommended_gmu}
+        return {"gpu_memory_utilization": recommended_gmu}
 
     def _recommend_cpu_auto_gmu_hybrid(
         self,
@@ -286,7 +286,7 @@ class VllmPreflight:
         if not rec:
             return {}
 
-        chosen_len = rec["max_model_len"]
+        chosen_len = rec.pop("max_model_len")
         chosen_seqs = rec.get("max_num_seqs", config.vllm_engine_kwargs.max_num_seqs or _MIN_MAX_NUM_SEQS)
         state_bytes = mamba.per_seq_state_bytes * chosen_seqs
         # Clamp attention KV to ~a few full-length sequences (kv_budget already

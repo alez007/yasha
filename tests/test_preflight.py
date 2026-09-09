@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -699,7 +701,7 @@ class TestVllmPreflightCpu:
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
         hw = HardwareProfile(ram_bytes=256 * 1024**3, available_ram_bytes=256 * 1024**3)
         rec = VllmPreflight().recommend(cfg, hw)
-        assert rec["max_model_len"] == 2048
+        assert "max_model_len" not in rec  # auto-fit: preflight only emits gpu_memory_utilization
         # kv_per_token=32768B; 4 seqs * 2048 tokens = 256 MiB of KV, on top of
         # 1 GiB weights + 14% + the 2 GiB fixed overhead, / 256 GiB denom.
         assert rec["gpu_memory_utilization"] == 0.013
@@ -723,7 +725,7 @@ class TestVllmPreflightCpu:
         cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
         hw = HardwareProfile(ram_bytes=1024 * 1024**3, available_ram_bytes=1024 * 1024**3)
         rec = VllmPreflight().recommend(cfg, hw)
-        assert rec["max_model_len"] == 32768
+        assert "max_model_len" not in rec  # auto-fit: preflight only emits gpu_memory_utilization
 
     def test_weights_exceed_ram_returns_empty(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=self._SMALL_MODEL_CFG, weight_bytes=64 * 1024**3)
@@ -767,9 +769,10 @@ class TestVllmPreflightCpu:
         hw = HardwareProfile(ram_bytes=ram_bytes, available_ram_bytes=ram_bytes)
         rec = VllmPreflight().recommend(cfg, hw)
 
-        # Cap reached confirms _fit_len_with_sliding ran rather than the
-        # uniform-attention path.
-        assert rec["max_model_len"] == 2048
+        # Auto-fit: preflight only emits gpu_memory_utilization now. The 2048
+        # cap (confirming _fit_len_with_sliding ran rather than the
+        # uniform-attention path) is still exercised via the gmu assertion below.
+        assert "max_model_len" not in rec
 
         kv_per_token = 2 * 8 * 128 * 2 * 8  # matches _SMALL_MODEL_CFG geometry
         sliding = SlidingWindowInfo(n_full_layers=2, n_sliding_layers=6, n_total_layers=8, window=64)
@@ -812,8 +815,12 @@ class TestVllmPreflightCpu:
 
         # A real recommendation, not a "no KV-cache budget" bailout.
         assert rec
+        assert "max_model_len" not in rec  # auto-fit: preflight only emits gpu_memory_utilization
         gmu = rec["gpu_memory_utilization"]
-        suggested_len = rec["max_model_len"]
+        # KV budget affords more than the full context (verified: this is what
+        # drove the 40,960 CPU auto-fit result on Qwen3-0.6B), so preflight's
+        # internal `suggested` caps at max_position_embeddings.
+        suggested_len = cfg_json["max_position_embeddings"]
 
         kv_per_token = 2 * 8 * 128 * 2 * 28  # matches cfg_json geometry
         kv_bytes_needed = kv_per_token * suggested_len
@@ -836,7 +843,8 @@ class TestVllmPreflightCpu:
         capped = VllmPreflight().recommend(cfg, HardwareProfile(ram_bytes=16 * 1024**3, available_ram_bytes=free))
 
         # Same reservation either way — only the denominator moved.
-        assert capped["max_model_len"] == uncapped["max_model_len"]
+        assert "max_model_len" not in capped  # auto-fit: preflight only emits gpu_memory_utilization
+        assert "max_model_len" not in uncapped
         assert capped["gpu_memory_utilization"] == pytest.approx(uncapped["gpu_memory_utilization"] * 4, rel=0.01)
 
 
@@ -1263,8 +1271,57 @@ class TestHybridIntegration:
         with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
             rec = VllmPreflight().recommend(cfg, hw)
         assert rec["max_num_seqs"] == 8  # tight RAM → floor
-        assert 0 < rec["max_model_len"] < _HYBRID_CFG["max_position_embeddings"]
+        assert "max_model_len" not in rec  # auto-fit: preflight only emits gpu_memory_utilization
         assert "gpu_memory_utilization" in rec  # auto path still sizes the fraction
+
+    def test_cpu_hybrid_pop_preserves_max_num_seqs_and_gmu(self, tmp_path):
+        """`_recommend_cpu_auto_gmu_hybrid` pops `max_model_len` out of the dict
+        `_apply_hybrid_fit` returns (arm A) rather than just reading it, so the
+        final rec must drop the key while `max_num_seqs` — the whole reason the
+        hybrid branch exists, since vLLM has no auto-fit for it and its default
+        overruns the mamba block pool — and `gpu_memory_utilization` (sized off
+        arm A's `max_model_len` before it's discarded) come through unchanged."""
+        from modelship.preflight.vllm import (
+            _CPU_KV_SEQUENCES,
+            _CPU_OVERHEAD_FIXED_BYTES,
+            _CPU_RAM_UTILIZATION,
+            _OVERHEAD_WEIGHT_FRACTION,
+            _correct_kv_for_hybrid,
+            _cpu_gmu,
+        )
+
+        snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
+        cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
+        hw = HardwareProfile(ram_bytes=16 * 1024**3, available_ram_bytes=16 * 1024**3)
+
+        # Arm A: _apply_hybrid_fit's own dict, pre-pop. Pinned rather than
+        # computed by the real fit ladder, so the arithmetic below is exact.
+        arm_a = {"max_model_len": 8192, "max_num_seqs": 24}
+        mamba = _mamba_info()
+
+        with (
+            patch("modelship.preflight.vllm._resolve_mamba_state", return_value=mamba),
+            patch("modelship.preflight.vllm._apply_hybrid_fit", return_value=dict(arm_a)),
+        ):
+            rec = VllmPreflight().recommend(cfg, hw)
+
+        assert "max_model_len" not in rec  # popped, not just read
+        assert rec["max_num_seqs"] == arm_a["max_num_seqs"]  # untouched by the pop
+
+        weight_bytes = 8 * 1024**3
+        weight_overhead = _OVERHEAD_WEIGHT_FRACTION * weight_bytes
+        kv_per_token_full = 2 * 8 * 128 * 2 * 32  # matches _HYBRID_CFG geometry
+        kv_per_token = _correct_kv_for_hybrid(kv_per_token_full, mamba)
+        kv_budget = (
+            hw.sizing_ram_bytes * _CPU_RAM_UTILIZATION - weight_bytes - weight_overhead - _CPU_OVERHEAD_FIXED_BYTES
+        )
+        state_bytes = mamba.per_seq_state_bytes * arm_a["max_num_seqs"]
+        attn_kv = min(kv_budget - state_bytes, _CPU_KV_SEQUENCES * kv_per_token * arm_a["max_model_len"])
+        reservation = weight_bytes + weight_overhead + _CPU_OVERHEAD_FIXED_BYTES + state_bytes + max(attn_kv, 0)
+        expected_gmu = _cpu_gmu(reservation, hw.ram_bytes)
+        # gmu sized off arm A's chosen_len — proves it was consumed before the
+        # pop discarded the key, not read afterward as None/missing.
+        assert rec["gpu_memory_utilization"] == expected_gmu
 
     def test_explicit_gpu_memory_utilization_rejected_on_cpu_hybrid_deploy(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
@@ -1383,6 +1440,48 @@ class TestFitLenWithSliding:
         assert _fit_len_with_sliding(budget, kv_per_token, sw, 32768) == 32768
 
 
+class _RecordCapture(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+def _cpu_suggested_len(config_json, weight_bytes, hw, model_dir):
+    """`suggested` max_model_len is auto-fit now — preflight no longer returns
+    it (H-b) — so pull it back out of the `preflight vllm cpu '<name>':` info
+    log, the same number a human reads off a real container's logs per the
+    H-b handoff. Returns (suggested_len, rec).
+
+    Attaches a handler directly to the emitting logger rather than using
+    `caplog`: `modelship.logging.configure_logging()` sets `propagate=False`
+    on the `modelship` logger, and that flag is process-global and sticky —
+    once any test in the session triggers it (e.g. test_logging.py), caplog's
+    root-logger capture stops seeing anything under `modelship.*` for every
+    test that runs after, in that same pytest process.
+    """
+    snapshot = _write_model_snapshot(model_dir, config_json=config_json, weight_bytes=weight_bytes)
+    cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
+    logger = logging.getLogger("modelship.preflight.vllm")
+    capture = _RecordCapture()
+    orig_level = logger.level
+    logger.setLevel(logging.INFO)
+    logger.addHandler(capture)
+    try:
+        rec = VllmPreflight().recommend(cfg, hw)
+    finally:
+        logger.removeHandler(capture)
+        logger.setLevel(orig_level)
+    match = next(
+        re.search(r"suggested max_model_len=(\d+)", r.getMessage())
+        for r in capture.records
+        if "suggested max_model_len=" in r.getMessage()
+    )
+    return int(match.group(1)), rec
+
+
 class TestSlidingWindowIntegration:
     """The same model with and without `layer_types` present. CPU-only: the GPU
     path hands context sizing to vLLM."""
@@ -1390,18 +1489,20 @@ class TestSlidingWindowIntegration:
     def test_layer_types_unlocks_far_more_context(self, tmp_path):
         hw = HardwareProfile(ram_bytes=24 * 1024**3, available_ram_bytes=24 * 1024**3)
 
-        def _rec(config_json, subdir):
-            snapshot = _write_model_snapshot(tmp_path / subdir, config_json=config_json, weight_bytes=10 * 1024**3)
-            cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
-            return VllmPreflight().recommend(cfg, hw)["max_model_len"]
-
         (tmp_path / "with").mkdir()
         (tmp_path / "without").mkdir()
-        with_sw = _rec(_gemma4_shaped_config(layer_types=True), "with")
-        without_sw = _rec(
-            {k: v for k, v in _gemma4_shaped_config(layer_types=False).items() if k != "sliding_window"}, "without"
+        with_sw, rec_with = _cpu_suggested_len(
+            _gemma4_shaped_config(layer_types=True), 10 * 1024**3, hw, tmp_path / "with"
+        )
+        without_sw, rec_without = _cpu_suggested_len(
+            {k: v for k, v in _gemma4_shaped_config(layer_types=False).items() if k != "sliding_window"},
+            10 * 1024**3,
+            hw,
+            tmp_path / "without",
         )
 
+        assert "max_model_len" not in rec_with  # auto-fit: preflight only emits gpu_memory_utilization
+        assert "max_model_len" not in rec_without
         assert with_sw > without_sw * 4
         assert with_sw % 16 == 0
 
@@ -1417,13 +1518,17 @@ class TestSlidingWindowIntegration:
             "max_position_embeddings": 32768,
         }
 
-        def _rec(config_json, subdir):
-            (tmp_path / subdir).mkdir()
-            snapshot = _write_model_snapshot(tmp_path / subdir, config_json=config_json, weight_bytes=6 * 1024**3)
-            cfg = _make_config(resolved_path=str(snapshot), num_gpus=0)
-            return VllmPreflight().recommend(cfg, hw)["max_model_len"]
+        (tmp_path / "uniform").mkdir()
+        (tmp_path / "allfull").mkdir()
+        uniform, rec_uniform = _cpu_suggested_len(base, 6 * 1024**3, hw, tmp_path / "uniform")
+        all_full, rec_all_full = _cpu_suggested_len(
+            {**base, "sliding_window": 4096, "layer_types": ["full_attention"] * 32},
+            6 * 1024**3,
+            hw,
+            tmp_path / "allfull",
+        )
 
-        uniform = _rec(base, "uniform")
-        all_full = _rec({**base, "sliding_window": 4096, "layer_types": ["full_attention"] * 32}, "allfull")
+        assert "max_model_len" not in rec_uniform  # auto-fit: preflight only emits gpu_memory_utilization
+        assert "max_model_len" not in rec_all_full
         # Below the context cap, so the equality is a real fit, not a shared clamp.
         assert all_full == uniform < base["max_position_embeddings"]
