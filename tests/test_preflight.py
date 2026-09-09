@@ -1099,6 +1099,17 @@ class TestMlaKvCache:
         row_bytes = mla.num_heads * (mla.qk_nope_head_dim + mla.v_head_dim) * 2
         assert _mla_chunked_prefill_workspace_bytes(_MLA_CFG, config, 2, mla, 1) == 8192 * 16 * row_bytes
 
+    def test_the_auto_fit_sentinel_is_not_read_as_a_context_length(self):
+        # -1 is truthy, so `max_model_len or max_position_embeddings` used to pick it
+        # and 8 * -1 lost to the pages term — an 8x under-sized workspace.
+        from modelship.preflight.vllm import _mla_chunked_prefill_workspace_bytes, _resolve_mla
+
+        mla = _resolve_mla(_MLA_CFG)
+        assert mla is not None
+        unset = _mla_chunked_prefill_workspace_bytes(_MLA_CFG, _make_config(), 2, mla, 1)
+        auto_fit = _make_config(vllm_kwargs={"max_model_len": -1})
+        assert _mla_chunked_prefill_workspace_bytes(_MLA_CFG, auto_fit, 2, mla, 1) == unset
+
     def test_mla_chunked_prefill_workspace_matches_deepseek_v2_lite_oom(self):
         # Anchored against a real DeepSeek-V2-Lite-AWQ OOM: PyTorch reported
         # "Tried to allocate 512.00 MiB" for exactly this buffer.
@@ -1269,6 +1280,19 @@ class TestHybridIntegration:
         assert rec["max_num_seqs"] == 8  # tight RAM → floor
         assert 0 < rec["max_model_len"] < _HYBRID_CFG["max_position_embeddings"]
         assert "gpu_memory_utilization" in rec  # auto path still sizes the fraction
+
+    def test_cpu_hybrid_auto_fit_sentinel_matches_an_unset_context(self, tmp_path):
+        # -1 used to reach _apply_hybrid_fit as the target, which skipped the fit
+        # ladder (budget >= negative target) and spent the whole budget on seqs.
+        snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)
+        hw = HardwareProfile(ram_bytes=16 * 1024**3, available_ram_bytes=16 * 1024**3)
+        recs = []
+        for kwargs in ({}, {"max_model_len": -1}):
+            cfg = _make_config(resolved_path=str(snapshot), num_gpus=0, vllm_kwargs=kwargs)
+            with patch("modelship.preflight.vllm._resolve_mamba_state", return_value=_mamba_info()):
+                recs.append(VllmPreflight().recommend(cfg, hw))
+        assert recs[0] == recs[1]
+        assert recs[1]["max_num_seqs"] == 8
 
     def test_explicit_gpu_memory_utilization_rejected_on_cpu_hybrid_deploy(self, tmp_path):
         snapshot = _write_model_snapshot(tmp_path, config_json=_HYBRID_CFG, weight_bytes=8 * 1024**3)

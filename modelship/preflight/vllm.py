@@ -69,6 +69,12 @@ _VLLM_DEFAULT_MAX_NUM_SEQS = 128
 _MLA_WORKSPACE_SAFETY_MARGIN = 1.1
 
 
+def _user_context_length(config: ModelshipModelConfig) -> int | None:
+    """The user's max_model_len as a length — None for `_AUTO_FIT_MAX_MODEL_LEN`."""
+    value = config.vllm_engine_kwargs.max_model_len
+    return value if value is not None and value > 0 else None
+
+
 class VllmPreflight:
     def recommend(self, config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
         # Branch on the reservation, not hardware discoverability —
@@ -281,7 +287,7 @@ class VllmPreflight:
         """Hybrid on the auto-gmu path: splits kv_budget between mamba state and
         attention KV, then back-computes a gmu covering weights + state + KV
         (vLLM sizes CPU KV budget as gmu*RAM - RSS)."""
-        target_len = config.vllm_engine_kwargs.max_model_len or ctx_cap
+        target_len = _user_context_length(config) or ctx_cap
         rec = _apply_hybrid_fit(
             config.name,
             kv_budget,
@@ -420,9 +426,7 @@ def _mla_chunked_prefill_workspace_bytes(
     """MLA's decompressed-K/V scratch buffer, sized by context length —
     mirrors vLLM's `determine_chunked_prefill_workspace_size`."""
     max_model_len = (
-        config.vllm_engine_kwargs.max_model_len
-        or text_cfg.get("max_position_embeddings")
-        or _UNKNOWN_CONTEXT_LENGTH_CAP
+        _user_context_length(config) or text_cfg.get("max_position_embeddings") or _UNKNOWN_CONTEXT_LENGTH_CAP
     )
     # Larger of 8 full-length requests and 4 pages per slot, capped, then
     # re-floored at one page per slot — that floor is applied after the cap.
